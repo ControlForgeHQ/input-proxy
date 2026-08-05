@@ -22,7 +22,7 @@ The proxy should preserve the source device’s capabilities and forward its eve
 - Run one proxy process per source device.
 - Keep the core application independent of Wayland, DRM, compositors, systemd, and udev configuration.
 - Do not perform coordinate transformation, gesture interpretation, key remapping, or event filtering.
-- Do not automatically discover devices.
+- Normal proxy mode must not automatically discover or select devices.
 - Normal proxy mode must never modify system configuration.
 - Installation functionality may modify system configuration only when explicitly invoked.
 - Prefer small, explicit, maintainable code over abstraction or feature breadth.
