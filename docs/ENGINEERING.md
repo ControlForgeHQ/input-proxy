@@ -114,3 +114,13 @@ When a change reasonably fits more than one category, choose the prefix that bes
 ## Incremental development
 
 Implement functionality in small, reviewable increments. Each pull request should produce a working, buildable project and leave the repository in a releasable state whenever practical.
+
+
+## Hardware validation
+
+When hardware-dependent functionality cannot be validated in the implementation environment:
+
+- Implement hardware-independent regression tests where practical.
+- Clearly report what could not be validated.
+- Do not fabricate or infer hardware validation.
+- Hardware validation may be completed separately before merge.
