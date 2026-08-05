@@ -109,3 +109,8 @@ Preferred prefixes include:
 | `chore:` | Repository maintenance, tooling, templates, and other non-functional changes |
 
 When a change reasonably fits more than one category, choose the prefix that best describes the primary purpose of the commit.
+
+
+## Incremental development
+
+Implement functionality in small, reviewable increments. Each pull request should produce a working, buildable project and leave the repository in a releasable state whenever practical.
