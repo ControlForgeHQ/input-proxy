@@ -23,7 +23,8 @@ The proxy should preserve the source device’s capabilities and forward its eve
 - Keep the core application independent of Wayland, DRM, compositors, systemd, and udev configuration.
 - Do not perform coordinate transformation, gesture interpretation, key remapping, or event filtering.
 - Do not automatically discover devices.
-- Do not modify system configuration.
+- Normal proxy mode must never modify system configuration.
+- Installation functionality may modify system configuration only when explicitly invoked.
 - Prefer small, explicit, maintainable code over abstraction or feature breadth.
 - Avoid unrelated refactoring.
 - Do not expand project scope without an explicit issue or instruction.
