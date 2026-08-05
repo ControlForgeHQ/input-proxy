@@ -18,3 +18,25 @@ The process remains running when its configured source device is unavailable or 
 ## Status
 
 This project is in its initial design and implementation phase.
+
+## Building
+
+Building requires a C17 compiler, CMake, pkg-config, and the libevdev development
+package. On Debian and Ubuntu, install the dependencies with:
+
+```sh
+sudo apt install build-essential cmake pkg-config libevdev-dev
+```
+
+Configure and build the project with:
+
+```sh
+cmake -S . -B build
+cmake --build build
+```
+
+Run the hardware-independent tests with:
+
+```sh
+ctest --test-dir build --output-on-failure
+```
