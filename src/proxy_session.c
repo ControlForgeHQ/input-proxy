@@ -7,7 +7,6 @@
 struct input_proxy_session {
     char *source_path;
     char *device_name;
-    char *physical_identifier;
     bool verbose;
     bool shutdown_requested;
 };
@@ -67,15 +66,6 @@ enum input_proxy_result input_proxy_session_create(
         goto error;
     }
 
-    new_session->physical_identifier =
-        duplicate_string(config->physical_identifier);
-
-    if (config->physical_identifier != NULL
-        && new_session->physical_identifier == NULL) {
-        result = INPUT_PROXY_ERROR_OUT_OF_MEMORY;
-        goto error;
-    }
-
     new_session->verbose = config->verbose;
 
     *session = new_session;
@@ -118,7 +108,6 @@ void input_proxy_session_destroy(
         return;
     }
 
-    free(session->physical_identifier);
     free(session->device_name);
     free(session->source_path);
     free(session);

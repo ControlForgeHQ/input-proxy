@@ -37,7 +37,7 @@ int libevdev_uinput_create_from_device(
     if (strcmp(libevdev_get_name(device), "proxy test device") != 0) {
         template_failures++;
     }
-    if (strcmp(libevdev_get_phys(device), "proxy/test/phys") != 0) {
+    if (libevdev_get_phys(device) != NULL) {
         template_failures++;
     }
     if (strcmp(libevdev_get_uniq(device), "source-unique-id") != 0) {
@@ -147,8 +147,7 @@ int main(void)
         input_proxy_virtual_device_create(
             NULL,
             source_device,
-            "proxy test device",
-            NULL
+            "proxy test device"
         ),
         INPUT_PROXY_ERROR_INVALID_ARGUMENT
     );
@@ -159,8 +158,7 @@ int main(void)
         input_proxy_virtual_device_create(
             &device,
             NULL,
-            "proxy test device",
-            NULL
+            "proxy test device"
         ),
         INPUT_PROXY_ERROR_INVALID_ARGUMENT
     );
@@ -172,7 +170,7 @@ int main(void)
     device = (struct input_proxy_virtual_device *)1;
     failures += expect_result(
         "null device name",
-        input_proxy_virtual_device_create(&device, source_device, NULL, NULL),
+        input_proxy_virtual_device_create(&device, source_device, NULL),
         INPUT_PROXY_ERROR_INVALID_ARGUMENT
     );
     if (device != NULL) {
@@ -187,8 +185,7 @@ int main(void)
         input_proxy_virtual_device_create(
             &device,
             source_device,
-            "proxy test device",
-            "proxy/test/phys"
+            "proxy test device"
         ),
         INPUT_PROXY_ERROR_VIRTUAL_DEVICE_CREATE_FAILED
     );
@@ -203,8 +200,7 @@ int main(void)
         input_proxy_virtual_device_create(
             &device,
             source_device,
-            "proxy test device",
-            "proxy/test/phys"
+            "proxy test device"
         ),
         INPUT_PROXY_SUCCESS
     );
