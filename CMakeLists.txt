@@ -10,6 +10,9 @@ set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
+find_package(PkgConfig REQUIRED)
+pkg_check_modules(LIBEVDEV REQUIRED IMPORTED_TARGET libevdev)
+
 add_executable(
     input-proxy
     src/main.c
@@ -28,3 +31,34 @@ install(
     TARGETS input-proxy
     RUNTIME DESTINATION bin
 )
+
+target_link_libraries(
+    input-proxy
+    PRIVATE
+        PkgConfig::LIBEVDEV
+)
+
+include(CTest)
+
+if(BUILD_TESTING)
+    add_executable(
+        source-device-test
+        tests/source_device_test.c
+        src/result.c
+        src/source_device.c
+    )
+
+    target_include_directories(
+        source-device-test
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+    )
+
+    target_link_libraries(
+        source-device-test
+        PRIVATE
+            PkgConfig::LIBEVDEV
+    )
+
+    add_test(NAME source-device-test COMMAND source-device-test)
+endif()
