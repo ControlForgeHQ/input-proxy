@@ -13,6 +13,8 @@ set(CMAKE_C_EXTENSIONS OFF)
 add_executable(
     input-proxy
     src/main.c
+    src/proxy_session.c
+    src/result.c
 )
 
 target_include_directories(
