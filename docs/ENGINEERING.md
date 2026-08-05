@@ -86,3 +86,26 @@ When reviewing a change, ask:
 - Is the ownership obvious?
 - Is the control flow obvious?
 - Would a contributor unfamiliar with this module understand it after a single read?
+
+
+## Commit messages
+
+This project follows the spirit of the Conventional Commits specification.
+
+Commit messages should describe the primary purpose of the change rather than every individual modification contained within it.
+
+Preferred prefixes include:
+
+| Prefix | Purpose |
+|--------|---------|
+| `feat:` | New functionality |
+| `fix:` | Bug fixes |
+| `refactor:` | Internal restructuring without changing behaviour |
+| `perf:` | Performance improvements |
+| `test:` | Tests and test infrastructure |
+| `docs:` | Documentation changes |
+| `build:` | Build system, compiler, dependencies, packaging |
+| `ci:` | Continuous integration and GitHub Actions workflows |
+| `chore:` | Repository maintenance, tooling, templates, and other non-functional changes |
+
+When a change reasonably fits more than one category, choose the prefix that best describes the primary purpose of the commit.
