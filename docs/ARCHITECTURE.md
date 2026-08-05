@@ -222,6 +222,15 @@ This keeps runtime behaviour:
 
 The internal session abstraction should remain self-contained, but this does not imply future support for multiple sessions inside one process.
 
+## Platform constraints
+
+Some Linux evdev/uinput behaviours are constrained by the kernel interface rather than the implementation.
+
+Examples include:
+
+- The virtual device physical path (`Phys`) cannot be configured through the standard uinput interface.
+
+
 ## Non-goals
 
 The runtime proxy deliberately does not understand:
