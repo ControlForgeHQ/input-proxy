@@ -19,6 +19,7 @@ add_executable(
     src/proxy_session.c
     src/result.c
     src/source_device.c
+    src/virtual_device.c
 )
 
 target_include_directories(
@@ -61,4 +62,26 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME source-device-test COMMAND source-device-test)
+
+    add_executable(
+        virtual-device-test
+        tests/virtual_device_test.c
+        src/result.c
+        src/virtual_device.c
+    )
+
+    target_include_directories(
+        virtual-device-test
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src
+    )
+
+    target_link_libraries(
+        virtual-device-test
+        PRIVATE
+            PkgConfig::LIBEVDEV
+    )
+
+    add_test(NAME virtual-device-test COMMAND virtual-device-test)
 endif()
