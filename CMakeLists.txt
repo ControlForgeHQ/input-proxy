@@ -15,6 +15,7 @@ add_executable(
     src/main.c
     src/proxy_session.c
     src/result.c
+    src/source_device.c
 )
 
 target_include_directories(
