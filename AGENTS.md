@@ -32,7 +32,7 @@ The proxy should preserve the source device’s capabilities and forward its eve
 ## Initial command-line interface
 
 ```text
-input-proxy --source PATH --name NAME [--phys IDENTIFIER] [--verbose]
+input-proxy --source PATH --name NAME [--verbose]
 input-proxy --help
 input-proxy --version
 ```
@@ -48,7 +48,7 @@ The first release should:
 - open one evdev source;
 - inspect and reproduce its supported capabilities;
 - create one virtual uinput device;
-- assign the configured name and optional physical identifier;
+- assign the configured name;
 - forward events faithfully;
 - preserve `EV_SYN` report boundaries;
 - handle `SYN_DROPPED`;

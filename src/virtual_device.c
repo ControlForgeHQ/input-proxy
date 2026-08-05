@@ -74,11 +74,9 @@ static enum input_proxy_result copy_capabilities(
 static enum input_proxy_result create_template(
     struct libevdev **template,
     const struct libevdev *source,
-    const char *device_name,
-    const char *physical_identifier)
+    const char *device_name)
 {
     struct libevdev *new_template;
-    const char *source_value;
     enum input_proxy_result result;
 
     new_template = libevdev_new();
@@ -87,10 +85,6 @@ static enum input_proxy_result create_template(
     }
 
     libevdev_set_name(new_template, device_name);
-    source_value = physical_identifier != NULL
-        ? physical_identifier
-        : libevdev_get_phys(source);
-    libevdev_set_phys(new_template, source_value);
     libevdev_set_uniq(new_template, libevdev_get_uniq(source));
     libevdev_set_id_bustype(new_template, libevdev_get_id_bustype(source));
     libevdev_set_id_vendor(new_template, libevdev_get_id_vendor(source));
@@ -110,8 +104,7 @@ static enum input_proxy_result create_template(
 enum input_proxy_result input_proxy_virtual_device_create(
     struct input_proxy_virtual_device **device,
     const struct input_proxy_source_device *source_device,
-    const char *device_name,
-    const char *physical_identifier)
+    const char *device_name)
 {
     const struct libevdev *source;
     struct input_proxy_virtual_device *new_device;
@@ -142,8 +135,7 @@ enum input_proxy_result input_proxy_virtual_device_create(
     result = create_template(
         &template,
         source,
-        device_name,
-        physical_identifier
+        device_name
     );
     if (result != INPUT_PROXY_SUCCESS) {
         free(new_device);

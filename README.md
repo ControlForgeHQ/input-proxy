@@ -1,6 +1,6 @@
 # input-proxy
 
-`input-proxy` is a small Linux utility that republishes a physical evdev input device as a virtual uinput device with a configurable identity.
+`input-proxy` is a small Linux utility that republishes a physical evdev input device as a virtual uinput device with a configurable name.
 
 It is intended for situations where otherwise identical input devices need to be distinguished by software that cannot identify them using stable hardware paths.
 

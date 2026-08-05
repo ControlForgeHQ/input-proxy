@@ -78,7 +78,6 @@ The interactive installer should:
 - allow the user to select a currently available input device;
 - optionally identify a device by waiting for input activity;
 - request or propose a unique virtual device name;
-- request or propose a physical identifier;
 - create the required persistent udev source rule;
 - create or configure the required systemd instance;
 - reload udev and systemd configuration;
@@ -92,7 +91,6 @@ The installer should also support a non-interactive form:
 input-proxy \
     --source PATH \
     --name NAME \
-    [--phys IDENTIFIER] \
     --install
 ```
 

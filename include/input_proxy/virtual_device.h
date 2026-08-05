@@ -11,8 +11,7 @@ INPUT_PROXY_ATTRIBUTE_NODISCARD
 enum input_proxy_result input_proxy_virtual_device_create(
     struct input_proxy_virtual_device **device,
     const struct input_proxy_source_device *source_device,
-    const char *device_name,
-    const char *physical_identifier
+    const char *device_name
 );
 
 void input_proxy_virtual_device_destroy(

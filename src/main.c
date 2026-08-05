@@ -8,7 +8,7 @@ static void print_usage(FILE *stream, const char *program_name)
     fprintf(
         stream,
         "Usage:\n"
-        "  %s --source PATH --name NAME [--phys IDENTIFIER] [--verbose]\n"
+        "  %s --source PATH --name NAME [--verbose]\n"
         "  %s --help\n"
         "  %s --version\n",
         program_name,
