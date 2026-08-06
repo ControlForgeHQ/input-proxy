@@ -2,36 +2,41 @@
 
 This document describes the planned evolution of `input-proxy`.
 
-It is intentionally conservative. Features listed in future versions should not be implemented early unless specifically requested.
+It is intentionally conservative. Features listed in future versions should not
+be implemented early unless specifically requested.
 
 ---
 
 # Version 0.1
 
-Goal:
+## Goal
 
 A small, robust, transparent Linux evdev-to-uinput proxy.
 
-Supports:
+## Required features
 
-- one source device per process
-- configurable virtual device identity
-- automatic source disconnect/reconnect
-- generic evdev capability cloning
-- transparent event forwarding
-- clean shutdown
-- concise logging
+- one source device per process;
+- configurable virtual device name;
+- automatic source disconnect and reconnect;
+- generic evdev capability cloning;
+- transparent event forwarding;
+- preservation of event ordering and synchronization boundaries;
+- `SYN_DROPPED` recovery;
+- clean shutdown;
+- concise logging.
 
-Does not support:
+## Non-goals
 
-- event transformation
-- event filtering
-- coordinate scaling
-- gesture recognition
-- multiple source devices
-- configuration files
-- plugins
-- networking
+Version 0.1 does not support:
+
+- event transformation;
+- selective event remapping or filtering;
+- coordinate scaling;
+- gesture recognition;
+- multiple source devices in one process;
+- configuration files;
+- plugins;
+- networking.
 
 The primary objective is correctness and reliability.
 
@@ -39,11 +44,12 @@ The primary objective is correctness and reliability.
 
 # Version 0.2
 
-Goal:
+## Goal
 
-Improve diagnostics and operational visibility without changing the core proxy model.
+Improve diagnostics and operational visibility without changing the core proxy
+model.
 
-Potential enhancements:
+## Potential enhancements
 
 - richer device identity and capability reporting;
 - improved lifecycle and reconnect logging;
@@ -51,22 +57,170 @@ Potential enhancements:
 - clearer diagnostics for unsupported capabilities;
 - optional machine-readable inspection output where useful.
 
-Version 0.2 must not introduce configuration files or change the one-process-per-device model.
+Version 0.2 must not introduce configuration files or change the
+one-process-per-device model.
 
 ---
 
 # Version 0.3
 
-Goal:
+## Goal
+
+Add externally controlled pause and resume behaviour for applications such as
+touchscreen display wake handling.
+
+A paused proxy must keep the physical source open and keep the virtual device
+present while suppressing delivery of source events to the virtual device.
+
+## Required runtime behaviour
+
+Version 0.3 must:
+
+- provide an explicit paused operating state;
+- continue reading and processing source events while paused;
+- keep the virtual uinput device present while paused;
+- suppress paused source events rather than queueing or replaying them;
+- preserve the requested paused state across source disconnect and reconnect;
+- remain externally controllable while waiting for the source device;
+- support starting in the paused state;
+- report externally visible lifecycle and pause-state changes;
+- emit a coalesced activity notification when meaningful source activity is
+  detected while paused;
+- avoid emitting one external notification for every raw input event;
+- suppress the complete interaction that caused a wake notification;
+- resume forwarding only at a clean input-state boundary;
+- avoid leaving the virtual device with a stuck key, button, or touch contact
+  when pausing;
+- remain responsive to shutdown requests in every control and lifecycle state.
+
+Pausing changes event delivery, not source consumption. The physical source
+event queue must continue to be drained while forwarding is suppressed.
+
+Events suppressed while paused must never be replayed after resuming.
+
+## Safe pause transition
+
+A pause request received during an active interaction must not immediately stop
+forwarding in a way that leaves the virtual device in a partially active state.
+
+The proxy should enter an intermediate pausing state, continue forwarding the
+current interaction, and become fully paused after the source reaches a clean
+input-state boundary.
+
+An external controller that intends to turn off a display should wait until the
+proxy reports that it is fully paused before disabling the display.
+
+## Safe resume transition
+
+If a resume request is received while the source is already neutral, forwarding
+may resume immediately.
+
+If a resume request is received while the wake interaction is still active, the
+proxy should enter an intermediate resuming state and continue suppressing
+events until that interaction has ended at a clean input-state boundary.
+
+The next new interaction may then be forwarded normally.
+
+## Activity notification
+
+While fully paused, the first meaningful event in a new interaction should
+produce an external activity notification.
+
+Further events belonging to the same interaction should not produce additional
+notifications.
+
+Activity notification should be re-armed after the source returns to a clean
+input-state boundary. A bounded coalescing or rate-limiting mechanism may also
+be used to prevent notification storms from devices that do not expose clear
+press-and-release interactions.
+
+The activity notification is a wake trigger, not a replacement event stream. It
+must not expose or mirror every suppressed input event.
+
+## Control interface
+
+The preferred control mechanism is a local system D-Bus interface.
+
+The control interface should support:
+
+- requesting pause;
+- requesting resume;
+- explicitly setting the requested paused state;
+- querying the current effective session state;
+- querying whether event forwarding is currently suppressed;
+- receiving activity notifications;
+- receiving lifecycle or pause-state change notifications.
+
+D-Bus method handlers must request session-level state changes rather than
+directly modifying source or virtual-device resources.
+
+The session remains the authority for deciding when a requested transition is
+safe to complete.
+
+The control interface should remain available while the source device is
+missing. A controller must therefore be able to request a paused initial state
+before the source reconnects.
+
+The D-Bus service must provide a deterministic, stable identity for each proxy
+instance. It must not rely solely on a process ID or another value that changes
+on every restart.
+
+The exact well-known bus-name escaping and authorization policy should be
+specified and tested as part of the D-Bus implementation issue.
+
+## Event-loop integration
+
+The runtime should remain single-threaded unless a demonstrated technical need
+requires otherwise.
+
+Source-device input, D-Bus requests, lifecycle transitions, and shutdown
+requests should be integrated into one event loop or another explicitly
+coordinated execution model.
+
+D-Bus callbacks must not introduce unsynchronized mutation of proxy-session
+state.
+
+## Validation
+
+Version 0.3 should include:
+
+- hardware-independent tests for pause-state transitions;
+- tests proving that suppressed events are not forwarded or replayed;
+- tests for pause requests made during active input;
+- tests for resume requests made during the wake interaction;
+- tests for activity-notification coalescing;
+- tests for disconnect and reconnect while paused;
+- tests for control requests while the source is unavailable;
+- real touchscreen validation where suitable hardware is available.
+
+A representative touchscreen wake sequence should be validated as follows:
+
+1. request pause;
+2. wait until the proxy reports that it is fully paused;
+3. turn off the display backlight;
+4. touch the physical touchscreen;
+5. receive one activity notification;
+6. turn on the display backlight;
+7. request resume;
+8. release the wake touch;
+9. verify that the wake touch was not delivered to the virtual device;
+10. verify that the next touch is forwarded normally.
+
+---
+
+# Version 0.4
+
+## Goal
 
 Provide straightforward Debian-family packaging and guided system installation.
 
-Required features:
+## Required features
 
 - build a distributable Debian package;
 - support installation through `dpkg`;
 - support clean package removal;
-- install the application binary, documentation, systemd template units, and required support files;
+- install the application binary, documentation, D-Bus support files, systemd
+  template units, udev rules, and other required deployment files;
 - provide an interactive installation workflow through:
 
 ```text
@@ -78,9 +232,12 @@ The interactive installer should:
 - allow the user to select a currently available input device;
 - optionally identify a device by waiting for input activity;
 - request or propose a unique virtual device name;
+- configure a stable logical identity for the proxy instance;
+- allow the instance to start active or paused;
 - create the required persistent udev source rule;
 - create or configure the required systemd instance;
-- reload udev and systemd configuration;
+- install or reference the required D-Bus policy and service metadata;
+- reload udev, D-Bus, and systemd configuration where required;
 - enable and start the configured proxy instance;
 - clearly report every persistent system change before applying it;
 - provide actionable errors when installation cannot be completed.
@@ -94,34 +251,53 @@ input-proxy \
     --install
 ```
 
-Additional non-interactive options may be introduced when required to remove ambiguity, but existing proxy-mode command-line behaviour must remain compatible.
+Additional non-interactive options may be introduced when required to remove
+ambiguity, including an option to start the configured instance paused.
 
-Installation responsibilities must remain separate from normal proxy operation. Running `input-proxy` without `--install` must never modify system configuration.
+Existing proxy-mode command-line behaviour must remain compatible unless an
+explicitly documented breaking change is approved.
 
-The installation workflow may require elevated privileges for specific system changes. Privileged operations must be explicit and narrowly scoped.
+Installation responsibilities must remain separate from normal proxy operation.
+Running `input-proxy` without `--install` must never modify system
+configuration.
 
-Package removal must not silently delete locally generated proxy-instance configuration. Removal and purge behaviour should follow normal Debian conventions:
+The installation workflow may require elevated privileges for specific system
+changes. Privileged operations must be explicit and narrowly scoped.
+
+Package removal must not silently delete locally generated proxy-instance
+configuration. Removal and purge behaviour should follow normal Debian
+conventions:
 
 - package removal may retain local configuration;
 - package purge may remove package-managed configuration;
-- generated local device mappings should be handled conservatively and documented clearly.
+- generated local device mappings should be handled conservatively and
+  documented clearly.
 
-No general-purpose configuration-file format is planned. Any files generated for systemd or udev are deployment artifacts, not an application configuration interface.
+No general-purpose configuration-file format is planned. Files generated for
+systemd, D-Bus, or udev are deployment artifacts, not an application
+configuration interface.
+
+---
 
 # Explicit non-goals
 
 The following are outside the intended scope of this project:
 
-- compositor replacement
-- display management
-- Wayland protocol implementation
-- DRM/KMS management
-- calibration
-- gesture interpretation
-- input remapping language
-- macro recording
-- automation
-- GUI configuration
-- network input transport
+- compositor replacement;
+- display or backlight management;
+- Wayland protocol implementation;
+- DRM or KMS management;
+- calibration;
+- coordinate transformation;
+- gesture interpretation;
+- general-purpose input remapping;
+- macro recording;
+- general automation;
+- GUI configuration;
+- network input transport.
+
+The pause/activity interface may be used by external display-management or
+automation software, but `input-proxy` itself must not manage displays or
+backlights.
 
 These are valuable problems, but they belong in separate projects.
