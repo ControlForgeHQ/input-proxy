@@ -179,6 +179,29 @@ void input_proxy_virtual_device_destroy(
     free(device);
 }
 
+enum input_proxy_result input_proxy_virtual_device_write_event(
+    struct input_proxy_virtual_device *device,
+    const struct input_event *event)
+{
+    int libevdev_result;
+
+    if (device == NULL || event == NULL) {
+        return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
+    }
+
+    libevdev_result = libevdev_uinput_write_event(
+        device->uinput,
+        event->type,
+        event->code,
+        event->value
+    );
+    if (libevdev_result < 0) {
+        return INPUT_PROXY_ERROR_EVENT_WRITE_FAILED;
+    }
+
+    return INPUT_PROXY_SUCCESS;
+}
+
 struct libevdev_uinput *input_proxy_virtual_device_get_libevdev_uinput(
     struct input_proxy_virtual_device *device)
 {

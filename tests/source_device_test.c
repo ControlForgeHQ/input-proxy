@@ -1,6 +1,47 @@
 #include <input_proxy/source_device.h>
 
+#include <errno.h>
+#include <libevdev/libevdev.h>
 #include <stdio.h>
+#include <string.h>
+
+static int new_from_fd_result = -ENOTTY;
+static int next_event_result;
+static int next_event_calls;
+static int next_event_flag_failures;
+static struct input_event next_event;
+static struct libevdev *const test_evdev = (struct libevdev *)1;
+
+int libevdev_new_from_fd(int file_descriptor, struct libevdev **device)
+{
+    (void)file_descriptor;
+
+    if (new_from_fd_result == 0) {
+        *device = test_evdev;
+    }
+    return new_from_fd_result;
+}
+
+void libevdev_free(struct libevdev *device)
+{
+    (void)device;
+}
+
+int libevdev_next_event(
+    struct libevdev *device,
+    unsigned int flags,
+    struct input_event *event)
+{
+    next_event_calls++;
+    if (device != test_evdev || flags != LIBEVDEV_READ_FLAG_NORMAL) {
+        next_event_flag_failures++;
+    }
+    if (next_event_result == LIBEVDEV_READ_STATUS_SUCCESS ||
+        next_event_result == LIBEVDEV_READ_STATUS_SYNC) {
+        *event = next_event;
+    }
+    return next_event_result;
+}
 
 static int expect_result(
     const char *test_name,
@@ -24,6 +65,7 @@ static int expect_result(
 int main(void)
 {
     struct input_proxy_source_device *device;
+    struct input_event event;
     int failures = 0;
 
     failures += expect_result(
@@ -67,6 +109,98 @@ int main(void)
         fprintf(stderr, "non-evdev source: output pointer was not cleared\n");
         failures++;
     }
+
+    new_from_fd_result = 0;
+    failures += expect_result(
+        "successful open",
+        input_proxy_source_device_open(&device, "/dev/null"),
+        INPUT_PROXY_SUCCESS
+    );
+
+    failures += expect_result(
+        "null read device",
+        input_proxy_source_device_read_event(NULL, &event),
+        INPUT_PROXY_ERROR_INVALID_ARGUMENT
+    );
+    failures += expect_result(
+        "null read event",
+        input_proxy_source_device_read_event(device, NULL),
+        INPUT_PROXY_ERROR_INVALID_ARGUMENT
+    );
+
+    next_event = (struct input_event) {
+        .time = { .tv_sec = 123, .tv_usec = 456 },
+        .type = EV_KEY,
+        .code = KEY_A,
+        .value = 1
+    };
+    next_event_result = LIBEVDEV_READ_STATUS_SUCCESS;
+    memset(&event, 0, sizeof(event));
+    failures += expect_result(
+        "successful event read",
+        input_proxy_source_device_read_event(device, &event),
+        INPUT_PROXY_SUCCESS
+    );
+    if (memcmp(&event, &next_event, sizeof(event)) != 0) {
+        fprintf(stderr, "successful event read: event was not preserved\n");
+        failures++;
+    }
+
+    next_event = (struct input_event) {
+        .type = EV_SYN,
+        .code = SYN_DROPPED,
+        .value = 0
+    };
+    next_event_result = LIBEVDEV_READ_STATUS_SYNC;
+    failures += expect_result(
+        "synchronization required",
+        input_proxy_source_device_read_event(device, &event),
+        INPUT_PROXY_EVENT_SYNC_REQUIRED
+    );
+    if (memcmp(&event, &next_event, sizeof(event)) != 0) {
+        fprintf(stderr, "synchronization required: event was not returned\n");
+        failures++;
+    }
+
+    next_event_result = -EAGAIN;
+    failures += expect_result(
+        "event temporarily unavailable",
+        input_proxy_source_device_read_event(device, &event),
+        INPUT_PROXY_EVENT_UNAVAILABLE
+    );
+
+    next_event_result = -ENODEV;
+    failures += expect_result(
+        "source disconnected",
+        input_proxy_source_device_read_event(device, &event),
+        INPUT_PROXY_ERROR_SOURCE_DISCONNECTED
+    );
+
+    next_event_result = -ENXIO;
+    failures += expect_result(
+        "source lost",
+        input_proxy_source_device_read_event(device, &event),
+        INPUT_PROXY_ERROR_SOURCE_DISCONNECTED
+    );
+
+    next_event_result = -EIO;
+    failures += expect_result(
+        "unrecoverable read error",
+        input_proxy_source_device_read_event(device, &event),
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED
+    );
+
+    if (next_event_calls != 6 || next_event_flag_failures != 0) {
+        fprintf(
+            stderr,
+            "unexpected event reads: calls=%d flag failures=%d\n",
+            next_event_calls,
+            next_event_flag_failures
+        );
+        failures++;
+    }
+
+    input_proxy_source_device_close(device);
 
     input_proxy_source_device_close(NULL);
 
