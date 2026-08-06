@@ -6,6 +6,12 @@ const char *input_proxy_result_string(enum input_proxy_result result)
         case INPUT_PROXY_SUCCESS:
             return "Success";
 
+        case INPUT_PROXY_EVENT_SYNC_REQUIRED:
+            return "Input event synchronization required";
+
+        case INPUT_PROXY_EVENT_UNAVAILABLE:
+            return "Input event temporarily unavailable";
+
         case INPUT_PROXY_ERROR_UNKNOWN:
             return "Unknown error";
 
@@ -26,6 +32,9 @@ const char *input_proxy_result_string(enum input_proxy_result result)
 
         case INPUT_PROXY_ERROR_SOURCE_INCOMPATIBLE:
             return "Source device is incompatible";
+
+        case INPUT_PROXY_ERROR_SOURCE_DISCONNECTED:
+            return "Source device disconnected";
 
         case INPUT_PROXY_ERROR_UINPUT_UNAVAILABLE:
             return "uinput is unavailable";

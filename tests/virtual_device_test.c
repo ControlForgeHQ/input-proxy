@@ -12,6 +12,9 @@ static struct libevdev *test_source;
 static int create_result;
 static int create_calls;
 static int destroy_calls;
+static int write_result;
+static int write_calls;
+static int write_failures;
 static int template_failures;
 static struct libevdev_uinput *const test_uinput =
     (struct libevdev_uinput *)1;
@@ -72,6 +75,27 @@ void libevdev_uinput_destroy(struct libevdev_uinput *device)
         template_failures++;
     }
     destroy_calls++;
+}
+
+int libevdev_uinput_write_event(
+    const struct libevdev_uinput *device,
+    unsigned int type,
+    unsigned int code,
+    int value)
+{
+    write_calls++;
+    if (device != test_uinput) {
+        write_failures++;
+    }
+    if (write_calls == 1 &&
+        (type != EV_KEY || code != BTN_TOUCH || value != 1)) {
+        write_failures++;
+    }
+    if (write_calls == 2 &&
+        (type != EV_SYN || code != SYN_REPORT || value != 0)) {
+        write_failures++;
+    }
+    return write_result;
 }
 
 static int expect_result(
@@ -135,6 +159,7 @@ int main(void)
     struct input_proxy_source_device *const source_device =
         (struct input_proxy_source_device *)1;
     struct input_proxy_virtual_device *device;
+    struct input_event event;
     int failures = 0;
 
     if (initialize_source() != 0) {
@@ -209,16 +234,60 @@ int main(void)
         failures++;
     }
 
+    event = (struct input_event) {
+        .time = { .tv_sec = 123, .tv_usec = 456 },
+        .type = EV_KEY,
+        .code = BTN_TOUCH,
+        .value = 1
+    };
+    failures += expect_result(
+        "successful event write",
+        input_proxy_virtual_device_write_event(device, &event),
+        INPUT_PROXY_SUCCESS
+    );
+
+    event = (struct input_event) {
+        .type = EV_SYN,
+        .code = SYN_REPORT,
+        .value = 0
+    };
+    failures += expect_result(
+        "synchronization boundary write",
+        input_proxy_virtual_device_write_event(device, &event),
+        INPUT_PROXY_SUCCESS
+    );
+
+    failures += expect_result(
+        "null write device",
+        input_proxy_virtual_device_write_event(NULL, &event),
+        INPUT_PROXY_ERROR_INVALID_ARGUMENT
+    );
+    failures += expect_result(
+        "null write event",
+        input_proxy_virtual_device_write_event(device, NULL),
+        INPUT_PROXY_ERROR_INVALID_ARGUMENT
+    );
+
+    write_result = -EIO;
+    failures += expect_result(
+        "event write failure",
+        input_proxy_virtual_device_write_event(device, &event),
+        INPUT_PROXY_ERROR_EVENT_WRITE_FAILED
+    );
+
     input_proxy_virtual_device_destroy(device);
     input_proxy_virtual_device_destroy(NULL);
 
-    if (create_calls != 2 || destroy_calls != 1 || template_failures != 0) {
+    if (create_calls != 2 || destroy_calls != 1 || write_calls != 3 ||
+        write_failures != 0 || template_failures != 0) {
         fprintf(
             stderr,
-            "unexpected calls or template contents: create=%d destroy=%d "
-            "template failures=%d\n",
+            "unexpected calls or contents: create=%d destroy=%d write=%d "
+            "write failures=%d template failures=%d\n",
             create_calls,
             destroy_calls,
+            write_calls,
+            write_failures,
             template_failures
         );
         failures++;
