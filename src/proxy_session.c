@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include <input_proxy/proxy_session.h>
 #include <input_proxy/result.h>
 #include <input_proxy/source_device.h>
@@ -7,6 +9,9 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+
+#define EVENT_UNAVAILABLE_DELAY_NS 10000000L
 
 struct input_proxy_session {
     char *source_path;
@@ -24,6 +29,16 @@ static void cleanup_active_devices(struct input_proxy_session *session)
 
     input_proxy_source_device_close(session->source_device);
     session->source_device = NULL;
+}
+
+static void wait_for_event(void)
+{
+    const struct timespec delay = {
+        .tv_sec = 0,
+        .tv_nsec = EVENT_UNAVAILABLE_DELAY_NS
+    };
+
+    (void)nanosleep(&delay, NULL);
 }
 
 static char *duplicate_string(const char *source)
@@ -126,8 +141,12 @@ enum input_proxy_result input_proxy_session_run(
             session->source_device,
             session->virtual_device
         );
-        if (result == INPUT_PROXY_SUCCESS ||
-            result == INPUT_PROXY_EVENT_UNAVAILABLE) {
+        if (result == INPUT_PROXY_EVENT_UNAVAILABLE) {
+            wait_for_event();
+            continue;
+        }
+
+        if (result == INPUT_PROXY_SUCCESS) {
             continue;
         }
 

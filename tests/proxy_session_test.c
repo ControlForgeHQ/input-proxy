@@ -7,6 +7,7 @@
 #include <linux/input.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
 
 static enum input_proxy_result read_result;
 static enum input_proxy_result write_result;
@@ -24,11 +25,23 @@ static int destroy_calls;
 static int read_calls;
 static int write_calls;
 static int read_result_count;
+static int sleep_calls;
+static int sleep_duration_failures;
 
 static struct input_proxy_source_device *const test_source_device =
     (struct input_proxy_source_device *)1;
 static struct input_proxy_virtual_device *const test_virtual_device =
     (struct input_proxy_virtual_device *)1;
+
+int nanosleep(const struct timespec *duration, struct timespec *remaining)
+{
+    (void)remaining;
+    sleep_calls++;
+    if (duration->tv_sec != 0 || duration->tv_nsec != 10000000L) {
+        sleep_duration_failures++;
+    }
+    return 0;
+}
 
 enum input_proxy_result input_proxy_source_device_open(
     struct input_proxy_source_device **device,
@@ -151,6 +164,8 @@ static void reset_runtime(void)
     read_calls = 0;
     write_calls = 0;
     read_result_count = 0;
+    sleep_calls = 0;
+    sleep_duration_failures = 0;
     memset(operations, 0, sizeof(operations));
 }
 
@@ -391,6 +406,7 @@ int main(void)
     );
     if (open_calls != 1 || create_calls != 1 || read_calls != 4 ||
         write_calls != 2 || destroy_calls != 1 || close_calls != 1 ||
+        sleep_calls != 1 || sleep_duration_failures != 0 ||
         strcmp(operations, "DC") != 0) {
         fprintf(stderr, "runtime event loop: unexpected lifecycle calls\n");
         failures++;
