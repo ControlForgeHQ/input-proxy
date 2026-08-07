@@ -13,6 +13,7 @@ static enum input_proxy_result read_result;
 static enum input_proxy_result write_result;
 static enum input_proxy_result open_result;
 static enum input_proxy_result create_result;
+static enum input_proxy_result open_results[8];
 static enum input_proxy_result read_results[8];
 static enum input_proxy_result sync_read_results[8];
 static struct input_event sync_events[8];
@@ -21,6 +22,7 @@ static struct input_event written_events[8];
 static char operations[8];
 static int operation_count;
 static int open_calls;
+static int open_result_count;
 static int create_calls;
 static int close_calls;
 static int destroy_calls;
@@ -29,7 +31,8 @@ static int write_calls;
 static int read_result_count;
 static int sync_read_calls;
 static int sync_read_result_count;
-static int sleep_calls;
+static int event_sleep_calls;
+static int source_sleep_calls;
 static int sleep_duration_failures;
 
 static struct input_proxy_source_device *const test_source_device =
@@ -40,8 +43,11 @@ static struct input_proxy_virtual_device *const test_virtual_device =
 int nanosleep(const struct timespec *duration, struct timespec *remaining)
 {
     (void)remaining;
-    sleep_calls++;
-    if (duration->tv_sec != 0 || duration->tv_nsec != 10000000L) {
+    if (duration->tv_sec == 0 && duration->tv_nsec == 10000000L) {
+        event_sleep_calls++;
+    } else if (duration->tv_sec == 0 && duration->tv_nsec == 100000000L) {
+        source_sleep_calls++;
+    } else {
         sleep_duration_failures++;
     }
     return 0;
@@ -51,14 +57,19 @@ enum input_proxy_result input_proxy_source_device_open(
     struct input_proxy_source_device **device,
     const char *source_path)
 {
+    enum input_proxy_result result = open_result;
+
+    if (open_calls < open_result_count) {
+        result = open_results[open_calls];
+    }
     open_calls++;
     if (strcmp(source_path, "/dev/input/event-test") != 0) {
         return INPUT_PROXY_ERROR_INTERNAL;
     }
-    if (open_result == INPUT_PROXY_SUCCESS) {
+    if (result == INPUT_PROXY_SUCCESS) {
         *device = test_source_device;
     }
-    return open_result;
+    return result;
 }
 
 void input_proxy_source_device_close(struct input_proxy_source_device *device)
@@ -180,6 +191,7 @@ static void reset_runtime(void)
     write_result = INPUT_PROXY_SUCCESS;
     operation_count = 0;
     open_calls = 0;
+    open_result_count = 0;
     create_calls = 0;
     close_calls = 0;
     destroy_calls = 0;
@@ -188,7 +200,8 @@ static void reset_runtime(void)
     read_result_count = 0;
     sync_read_calls = 0;
     sync_read_result_count = 0;
-    sleep_calls = 0;
+    event_sleep_calls = 0;
+    source_sleep_calls = 0;
     sleep_duration_failures = 0;
     memset(operations, 0, sizeof(operations));
 }
@@ -449,11 +462,11 @@ int main(void)
     input_proxy_session_destroy(session);
 
     reset_runtime();
-    open_result = INPUT_PROXY_ERROR_SOURCE_UNAVAILABLE;
+    open_result = INPUT_PROXY_ERROR_SOURCE_OPEN_FAILED;
     failures += run_runtime_test(
         "source open failure",
         &config,
-        INPUT_PROXY_ERROR_SOURCE_UNAVAILABLE
+        INPUT_PROXY_ERROR_SOURCE_OPEN_FAILED
     );
     if (open_calls != 1 || create_calls != 0 || close_calls != 0 ||
         destroy_calls != 0) {
@@ -496,20 +509,60 @@ int main(void)
     if (open_calls != 1 || create_calls != 1 || read_calls != 5 ||
         sync_read_calls != 2 || write_calls != 3 ||
         destroy_calls != 1 || close_calls != 1 ||
-        sleep_calls != 1 || sleep_duration_failures != 0 ||
+        event_sleep_calls != 1 || source_sleep_calls != 0 ||
+        sleep_duration_failures != 0 ||
         strcmp(operations, "DC") != 0) {
         fprintf(stderr, "runtime event loop: unexpected lifecycle calls\n");
         failures++;
     }
 
     reset_runtime();
-    read_results[0] = INPUT_PROXY_ERROR_SOURCE_DISCONNECTED;
+    open_results[0] = INPUT_PROXY_ERROR_SOURCE_UNAVAILABLE;
+    open_results[1] = INPUT_PROXY_ERROR_SOURCE_UNAVAILABLE;
+    open_results[2] = INPUT_PROXY_SUCCESS;
+    open_result_count = 3;
+    read_results[0] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
     read_result_count = 1;
     failures += run_runtime_test(
-        "runtime source disconnect",
+        "startup source unavailable",
         &config,
-        INPUT_PROXY_ERROR_SOURCE_DISCONNECTED
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED
     );
+    if (open_calls != 3 || source_sleep_calls != 2 ||
+        event_sleep_calls != 0 || create_calls != 1 ||
+        destroy_calls != 1 || close_calls != 1 ||
+        sleep_duration_failures != 0 || strcmp(operations, "DC") != 0) {
+        fprintf(stderr, "startup source unavailable: bad retry lifecycle\n");
+        failures++;
+    }
+
+    reset_runtime();
+    open_results[0] = INPUT_PROXY_SUCCESS;
+    open_results[1] = INPUT_PROXY_ERROR_SOURCE_UNAVAILABLE;
+    open_results[2] = INPUT_PROXY_SUCCESS;
+    open_results[3] = INPUT_PROXY_ERROR_SOURCE_UNAVAILABLE;
+    open_results[4] = INPUT_PROXY_SUCCESS;
+    open_result_count = 5;
+    read_results[0] = INPUT_PROXY_SUCCESS;
+    read_results[1] = INPUT_PROXY_ERROR_SOURCE_DISCONNECTED;
+    read_results[2] = INPUT_PROXY_SUCCESS;
+    read_results[3] = INPUT_PROXY_ERROR_SOURCE_DISCONNECTED;
+    read_results[4] = INPUT_PROXY_SUCCESS;
+    read_results[5] = INPUT_PROXY_EVENT_UNAVAILABLE;
+    read_results[6] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+    read_result_count = 7;
+    failures += run_runtime_test(
+        "disconnect and reconnect",
+        &config,
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED
+    );
+    if (open_calls != 5 || create_calls != 3 || read_calls != 7 ||
+        write_calls != 3 || destroy_calls != 3 || close_calls != 3 ||
+        event_sleep_calls != 1 || source_sleep_calls != 2 ||
+        sleep_duration_failures != 0 || strcmp(operations, "DCDCDC") != 0) {
+        fprintf(stderr, "disconnect and reconnect: bad lifecycle\n");
+        failures++;
+    }
 
     reset_runtime();
     read_results[0] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;

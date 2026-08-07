@@ -12,6 +12,7 @@
 #include <time.h>
 
 #define EVENT_UNAVAILABLE_DELAY_NS 10000000L
+#define SOURCE_RETRY_DELAY_NS 100000000L
 
 struct input_proxy_session {
     char *source_path;
@@ -39,6 +40,50 @@ static void wait_for_event(void)
     };
 
     (void)nanosleep(&delay, NULL);
+}
+
+static void wait_for_source(void)
+{
+    const struct timespec delay = {
+        .tv_sec = 0,
+        .tv_nsec = SOURCE_RETRY_DELAY_NS
+    };
+
+    (void)nanosleep(&delay, NULL);
+}
+
+static enum input_proxy_result create_active_devices(
+    struct input_proxy_session *session)
+{
+    enum input_proxy_result result;
+
+    while (!session->shutdown_requested) {
+        result = input_proxy_source_device_open(
+            &session->source_device,
+            session->source_path
+        );
+        if (result == INPUT_PROXY_ERROR_SOURCE_UNAVAILABLE) {
+            wait_for_source();
+            continue;
+        }
+        if (result != INPUT_PROXY_SUCCESS) {
+            return result;
+        }
+
+        result = input_proxy_virtual_device_create(
+            &session->virtual_device,
+            session->source_device,
+            session->device_name
+        );
+        if (result != INPUT_PROXY_SUCCESS) {
+            cleanup_active_devices(session);
+            return result;
+        }
+
+        return INPUT_PROXY_SUCCESS;
+    }
+
+    return INPUT_PROXY_SUCCESS;
 }
 
 static char *duplicate_string(const char *source)
@@ -157,37 +202,35 @@ enum input_proxy_result input_proxy_session_run(
         return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
     }
 
-    result = input_proxy_source_device_open(
-        &session->source_device,
-        session->source_path
-    );
-    if (result != INPUT_PROXY_SUCCESS) {
-        return result;
-    }
-
-    result = input_proxy_virtual_device_create(
-        &session->virtual_device,
-        session->source_device,
-        session->device_name
-    );
-    if (result != INPUT_PROXY_SUCCESS) {
-        cleanup_active_devices(session);
-        return result;
-    }
-
     result = INPUT_PROXY_SUCCESS;
     while (!session->shutdown_requested) {
-        result = input_proxy_session_process_event(
-            session,
-            session->source_device,
-            session->virtual_device
-        );
-        if (result == INPUT_PROXY_EVENT_UNAVAILABLE) {
-            wait_for_event();
-            continue;
+        result = create_active_devices(session);
+        if (result != INPUT_PROXY_SUCCESS || session->shutdown_requested) {
+            break;
         }
 
-        if (result == INPUT_PROXY_SUCCESS) {
+        while (!session->shutdown_requested) {
+            result = input_proxy_session_process_event(
+                session,
+                session->source_device,
+                session->virtual_device
+            );
+            if (result == INPUT_PROXY_EVENT_UNAVAILABLE) {
+                wait_for_event();
+                continue;
+            }
+
+            if (result == INPUT_PROXY_SUCCESS) {
+                continue;
+            }
+
+            break;
+        }
+
+        cleanup_active_devices(session);
+
+        if (result == INPUT_PROXY_ERROR_SOURCE_DISCONNECTED) {
+            result = INPUT_PROXY_SUCCESS;
             continue;
         }
 
