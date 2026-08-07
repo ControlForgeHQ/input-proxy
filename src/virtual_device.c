@@ -4,12 +4,109 @@
 #include "virtual_device_internal.h"
 
 #include <errno.h>
+#include <libevdev/libevdev-uinput.h>
 #include <linux/input-event-codes.h>
+#include <stdbool.h>
 #include <stdlib.h>
+#include <string.h>
 
 struct input_proxy_virtual_device {
     struct libevdev_uinput *uinput;
+    struct libevdev *capabilities;
 };
+
+static bool nullable_strings_equal(const char *left, const char *right)
+{
+    if (left == NULL || right == NULL) {
+        return left == right;
+    }
+
+    return strcmp(left, right) == 0;
+}
+
+static bool absolute_info_equal(
+    const struct input_absinfo *left,
+    const struct input_absinfo *right)
+{
+    if (left == NULL || right == NULL) {
+        return left == right;
+    }
+
+    return left->minimum == right->minimum &&
+        left->maximum == right->maximum &&
+        left->fuzz == right->fuzz &&
+        left->flat == right->flat &&
+        left->resolution == right->resolution;
+}
+
+static bool capabilities_equal(
+    const struct libevdev *represented,
+    const struct libevdev *source)
+{
+    unsigned int property;
+    unsigned int type;
+
+    if (!nullable_strings_equal(
+            libevdev_get_uniq(represented),
+            libevdev_get_uniq(source)
+        ) ||
+        libevdev_get_id_bustype(represented) !=
+            libevdev_get_id_bustype(source) ||
+        libevdev_get_id_vendor(represented) !=
+            libevdev_get_id_vendor(source) ||
+        libevdev_get_id_product(represented) !=
+            libevdev_get_id_product(source) ||
+        libevdev_get_id_version(represented) !=
+            libevdev_get_id_version(source)) {
+        return false;
+    }
+
+    for (property = 0; property <= INPUT_PROP_MAX; property++) {
+        if (libevdev_has_property(represented, property) !=
+            libevdev_has_property(source, property)) {
+            return false;
+        }
+    }
+
+    for (type = 0; type <= EV_MAX; type++) {
+        int maximum_code;
+        unsigned int code;
+
+        if (libevdev_has_event_type(represented, type) !=
+            libevdev_has_event_type(source, type)) {
+            return false;
+        }
+
+        maximum_code = libevdev_event_type_get_max(type);
+        if (maximum_code < 0) {
+            continue;
+        }
+
+        for (code = 0; code <= (unsigned int)maximum_code; code++) {
+            if (libevdev_has_event_code(represented, type, code) !=
+                libevdev_has_event_code(source, type, code)) {
+                return false;
+            }
+            if (!libevdev_has_event_code(source, type, code)) {
+                continue;
+            }
+
+            if (type == EV_ABS && !absolute_info_equal(
+                    libevdev_get_abs_info(represented, code),
+                    libevdev_get_abs_info(source, code)
+                )) {
+                return false;
+            }
+            if (type == EV_REP &&
+                libevdev_get_event_value(represented, type, code) !=
+                    libevdev_get_event_value(source, type, code)) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
 
 static enum input_proxy_result copy_capabilities(
     struct libevdev *destination,
@@ -147,9 +244,9 @@ enum input_proxy_result input_proxy_virtual_device_create(
         LIBEVDEV_UINPUT_OPEN_MANAGED,
         &new_device->uinput
     );
-    libevdev_free(template);
 
     if (libevdev_result < 0) {
+        libevdev_free(template);
         free(new_device);
         if (libevdev_result == -ENOMEM) {
             return INPUT_PROXY_ERROR_OUT_OF_MEMORY;
@@ -162,8 +259,27 @@ enum input_proxy_result input_proxy_virtual_device_create(
         return INPUT_PROXY_ERROR_VIRTUAL_DEVICE_CREATE_FAILED;
     }
 
+    new_device->capabilities = template;
     *device = new_device;
     return INPUT_PROXY_SUCCESS;
+}
+
+bool input_proxy_virtual_device_is_compatible(
+    const struct input_proxy_virtual_device *device,
+    const struct input_proxy_source_device *source_device)
+{
+    const struct libevdev *source;
+
+    if (device == NULL || source_device == NULL) {
+        return false;
+    }
+
+    source = input_proxy_source_device_get_libevdev(source_device);
+    if (source == NULL) {
+        return false;
+    }
+
+    return capabilities_equal(device->capabilities, source);
 }
 
 void input_proxy_virtual_device_destroy(
@@ -176,6 +292,7 @@ void input_proxy_virtual_device_destroy(
     if (device->uinput != NULL) {
         libevdev_uinput_destroy(device->uinput);
     }
+    libevdev_free(device->capabilities);
     free(device);
 }
 

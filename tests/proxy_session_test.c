@@ -13,6 +13,8 @@ static enum input_proxy_result read_result;
 static enum input_proxy_result write_result;
 static enum input_proxy_result open_result;
 static enum input_proxy_result create_result;
+static int fail_create_call;
+static bool compatibility_results[8];
 static enum input_proxy_result open_results[8];
 static enum input_proxy_result read_results[8];
 static enum input_proxy_result sync_read_results[8];
@@ -24,6 +26,7 @@ static int operation_count;
 static int open_calls;
 static int open_result_count;
 static int create_calls;
+static int compatibility_calls;
 static int close_calls;
 static int destroy_calls;
 static int read_calls;
@@ -90,10 +93,24 @@ enum input_proxy_result input_proxy_virtual_device_create(
         strcmp(device_name, "proxy test device") != 0) {
         return INPUT_PROXY_ERROR_INTERNAL;
     }
+    if (create_calls == fail_create_call) {
+        return INPUT_PROXY_ERROR_VIRTUAL_DEVICE_CREATE_FAILED;
+    }
     if (create_result == INPUT_PROXY_SUCCESS) {
         *device = test_virtual_device;
     }
     return create_result;
+}
+
+bool input_proxy_virtual_device_is_compatible(
+    const struct input_proxy_virtual_device *device,
+    const struct input_proxy_source_device *source_device)
+{
+    if (device != test_virtual_device || source_device != test_source_device) {
+        return false;
+    }
+
+    return compatibility_results[compatibility_calls++];
 }
 
 void input_proxy_virtual_device_destroy(
@@ -187,12 +204,14 @@ static void reset_runtime(void)
 {
     open_result = INPUT_PROXY_SUCCESS;
     create_result = INPUT_PROXY_SUCCESS;
+    fail_create_call = 0;
     read_result = INPUT_PROXY_SUCCESS;
     write_result = INPUT_PROXY_SUCCESS;
     operation_count = 0;
     open_calls = 0;
     open_result_count = 0;
     create_calls = 0;
+    compatibility_calls = 0;
     close_calls = 0;
     destroy_calls = 0;
     read_calls = 0;
@@ -204,6 +223,7 @@ static void reset_runtime(void)
     source_sleep_calls = 0;
     sleep_duration_failures = 0;
     memset(operations, 0, sizeof(operations));
+    memset(compatibility_results, 0, sizeof(compatibility_results));
 }
 
 static int run_runtime_test(
@@ -543,24 +563,84 @@ int main(void)
     open_results[3] = INPUT_PROXY_ERROR_SOURCE_UNAVAILABLE;
     open_results[4] = INPUT_PROXY_SUCCESS;
     open_result_count = 5;
+    compatibility_results[0] = true;
+    compatibility_results[1] = true;
     read_results[0] = INPUT_PROXY_SUCCESS;
     read_results[1] = INPUT_PROXY_ERROR_SOURCE_DISCONNECTED;
-    read_results[2] = INPUT_PROXY_SUCCESS;
+    read_results[2] = INPUT_PROXY_EVENT_SYNC_REQUIRED;
     read_results[3] = INPUT_PROXY_ERROR_SOURCE_DISCONNECTED;
     read_results[4] = INPUT_PROXY_SUCCESS;
     read_results[5] = INPUT_PROXY_EVENT_UNAVAILABLE;
     read_results[6] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
     read_result_count = 7;
+    sync_read_results[0] = INPUT_PROXY_SUCCESS;
+    sync_read_results[1] = INPUT_PROXY_EVENT_UNAVAILABLE;
+    sync_events[0] = (struct input_event) {
+        .type = EV_SYN, .code = SYN_REPORT, .value = 0
+    };
+    sync_read_result_count = 2;
     failures += run_runtime_test(
         "disconnect and reconnect",
         &config,
         INPUT_PROXY_ERROR_EVENT_READ_FAILED
     );
-    if (open_calls != 5 || create_calls != 3 || read_calls != 7 ||
-        write_calls != 3 || destroy_calls != 3 || close_calls != 3 ||
+    if (open_calls != 5 || create_calls != 1 || compatibility_calls != 2 ||
+        read_calls != 7 || write_calls != 3 || destroy_calls != 1 ||
+        close_calls != 3 || sync_read_calls != 2 ||
         event_sleep_calls != 1 || source_sleep_calls != 2 ||
-        sleep_duration_failures != 0 || strcmp(operations, "DCDCDC") != 0) {
+        sleep_duration_failures != 0 || strcmp(operations, "CCDC") != 0) {
         fprintf(stderr, "disconnect and reconnect: bad lifecycle\n");
+        failures++;
+    }
+
+    reset_runtime();
+    open_results[0] = INPUT_PROXY_SUCCESS;
+    open_results[1] = INPUT_PROXY_SUCCESS;
+    open_results[2] = INPUT_PROXY_SUCCESS;
+    open_result_count = 3;
+    compatibility_results[0] = false;
+    compatibility_results[1] = false;
+    read_results[0] = INPUT_PROXY_ERROR_SOURCE_DISCONNECTED;
+    read_results[1] = INPUT_PROXY_ERROR_SOURCE_DISCONNECTED;
+    read_results[2] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+    read_result_count = 3;
+    failures += run_runtime_test(
+        "incompatible reconnect",
+        &config,
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED
+    );
+    if (open_calls != 3 || create_calls != 3 || compatibility_calls != 2 ||
+        read_calls != 3 || destroy_calls != 3 || close_calls != 3 ||
+        strcmp(operations, "CDCDDC") != 0) {
+        fprintf(stderr, "incompatible reconnect: bad lifecycle\n");
+        failures++;
+    }
+
+    reset_runtime();
+    open_results[0] = INPUT_PROXY_SUCCESS;
+    open_results[1] = INPUT_PROXY_SUCCESS;
+    open_result_count = 2;
+    read_results[0] = INPUT_PROXY_ERROR_SOURCE_DISCONNECTED;
+    read_result_count = 1;
+    compatibility_results[0] = false;
+    fail_create_call = 2;
+    failures += expect_result(
+        "replacement creation setup",
+        input_proxy_session_create(&session, &config),
+        INPUT_PROXY_SUCCESS
+    );
+    if (session != NULL) {
+        failures += expect_result(
+            "replacement creation failure",
+            input_proxy_session_run(session),
+            INPUT_PROXY_ERROR_VIRTUAL_DEVICE_CREATE_FAILED
+        );
+        input_proxy_session_destroy(session);
+    }
+    if (open_calls != 2 || create_calls != 2 || compatibility_calls != 1 ||
+        close_calls != 2 || destroy_calls != 1 ||
+        strcmp(operations, "CDC") != 0) {
+        fprintf(stderr, "replacement creation failure: bad lifecycle\n");
         failures++;
     }
 

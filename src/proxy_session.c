@@ -6,6 +6,7 @@
 #include <input_proxy/virtual_device.h>
 
 #include "proxy_session_internal.h"
+#include "virtual_device_internal.h"
 
 #include <stdlib.h>
 #include <string.h>
@@ -28,6 +29,12 @@ static void cleanup_active_devices(struct input_proxy_session *session)
     input_proxy_virtual_device_destroy(session->virtual_device);
     session->virtual_device = NULL;
 
+    input_proxy_source_device_close(session->source_device);
+    session->source_device = NULL;
+}
+
+static void close_source_device(struct input_proxy_session *session)
+{
     input_proxy_source_device_close(session->source_device);
     session->source_device = NULL;
 }
@@ -70,13 +77,24 @@ static enum input_proxy_result create_active_devices(
             return result;
         }
 
+        if (session->virtual_device != NULL &&
+            input_proxy_virtual_device_is_compatible(
+                session->virtual_device,
+                session->source_device
+            )) {
+            return INPUT_PROXY_SUCCESS;
+        }
+
+        input_proxy_virtual_device_destroy(session->virtual_device);
+        session->virtual_device = NULL;
+
         result = input_proxy_virtual_device_create(
             &session->virtual_device,
             session->source_device,
             session->device_name
         );
         if (result != INPUT_PROXY_SUCCESS) {
-            cleanup_active_devices(session);
+            close_source_device(session);
             return result;
         }
 
@@ -227,9 +245,8 @@ enum input_proxy_result input_proxy_session_run(
             break;
         }
 
-        cleanup_active_devices(session);
-
         if (result == INPUT_PROXY_ERROR_SOURCE_DISCONNECTED) {
+            close_source_device(session);
             result = INPUT_PROXY_SUCCESS;
             continue;
         }
