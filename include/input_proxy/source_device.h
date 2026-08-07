@@ -31,4 +31,17 @@ enum input_proxy_result input_proxy_source_device_read_event(
     struct input_event *event
 );
 
+/*
+ * Read one reconstructed event in libevdev synchronization mode.
+ *
+ * INPUT_PROXY_SUCCESS returns an event in event. INPUT_PROXY_EVENT_UNAVAILABLE
+ * means synchronization recovery is complete, and device loss returns
+ * INPUT_PROXY_ERROR_SOURCE_DISCONNECTED.
+ */
+INPUT_PROXY_ATTRIBUTE_NODISCARD
+enum input_proxy_result input_proxy_source_device_read_sync_event(
+    struct input_proxy_source_device *device,
+    struct input_event *event
+);
+
 #endif
