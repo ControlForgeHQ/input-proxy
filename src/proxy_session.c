@@ -246,8 +246,13 @@ enum input_proxy_result input_proxy_session_run(
         }
 
         if (result == INPUT_PROXY_ERROR_SOURCE_DISCONNECTED) {
+            result = input_proxy_virtual_device_neutralize(
+                session->virtual_device
+            );
             close_source_device(session);
-            result = INPUT_PROXY_SUCCESS;
+            if (result != INPUT_PROXY_SUCCESS) {
+                break;
+            }
             continue;
         }
 

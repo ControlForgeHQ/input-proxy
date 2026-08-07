@@ -1,14 +1,18 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include <input_proxy/virtual_device.h>
 
 #include "source_device_internal.h"
 #include "virtual_device_internal.h"
 
 #include <errno.h>
+#include <fcntl.h>
 #include <libevdev/libevdev-uinput.h>
 #include <linux/input-event-codes.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <unistd.h>
 
 struct input_proxy_virtual_device {
     struct libevdev_uinput *uinput;
@@ -280,6 +284,112 @@ bool input_proxy_virtual_device_is_compatible(
     }
 
     return capabilities_equal(device->capabilities, source);
+}
+
+static enum input_proxy_result write_neutralizing_event(
+    struct input_proxy_virtual_device *device,
+    unsigned int type,
+    unsigned int code,
+    int value)
+{
+    const struct input_event event = {
+        .type = type,
+        .code = code,
+        .value = value
+    };
+
+    return input_proxy_virtual_device_write_event(device, &event);
+}
+
+enum input_proxy_result input_proxy_virtual_device_neutralize(
+    struct input_proxy_virtual_device *device)
+{
+    const char *device_node;
+    struct libevdev *state = NULL;
+    enum input_proxy_result result = INPUT_PROXY_SUCCESS;
+    bool changed = false;
+    int file_descriptor;
+    unsigned int code;
+    int slot_count;
+    int slot;
+
+    if (device == NULL) {
+        return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
+    }
+
+    device_node = libevdev_uinput_get_devnode(device->uinput);
+    if (device_node == NULL) {
+        return INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+    }
+
+    file_descriptor = open(device_node, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
+    if (file_descriptor < 0) {
+        return INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+    }
+
+    if (libevdev_new_from_fd(file_descriptor, &state) < 0) {
+        close(file_descriptor);
+        return INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+    }
+
+    for (code = 0; code <= KEY_MAX; code++) {
+        int value;
+
+        if (!libevdev_fetch_event_value(state, EV_KEY, code, &value) ||
+            value == 0) {
+            continue;
+        }
+
+        result = write_neutralizing_event(device, EV_KEY, code, 0);
+        if (result != INPUT_PROXY_SUCCESS) {
+            goto cleanup;
+        }
+        changed = true;
+    }
+
+    slot_count = libevdev_get_num_slots(state);
+    for (slot = 0; slot < slot_count; slot++) {
+        int tracking_id;
+
+        if (!libevdev_fetch_slot_value(
+                state,
+                (unsigned int)slot,
+                ABS_MT_TRACKING_ID,
+                &tracking_id
+            ) || tracking_id < 0) {
+            continue;
+        }
+
+        result = write_neutralizing_event(
+            device,
+            EV_ABS,
+            ABS_MT_SLOT,
+            slot
+        );
+        if (result != INPUT_PROXY_SUCCESS) {
+            goto cleanup;
+        }
+
+        result = write_neutralizing_event(
+            device,
+            EV_ABS,
+            ABS_MT_TRACKING_ID,
+            -1
+        );
+        if (result != INPUT_PROXY_SUCCESS) {
+            goto cleanup;
+        }
+        changed = true;
+    }
+
+    if (changed) {
+        result = write_neutralizing_event(device, EV_SYN, SYN_REPORT, 0);
+    }
+
+cleanup:
+    libevdev_free(state);
+    close(file_descriptor);
+    return result;
 }
 
 void input_proxy_virtual_device_destroy(

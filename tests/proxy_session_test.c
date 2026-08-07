@@ -13,6 +13,7 @@ static enum input_proxy_result read_result;
 static enum input_proxy_result write_result;
 static enum input_proxy_result open_result;
 static enum input_proxy_result create_result;
+static enum input_proxy_result neutralize_result;
 static int fail_create_call;
 static bool compatibility_results[8];
 static enum input_proxy_result open_results[8];
@@ -21,7 +22,7 @@ static enum input_proxy_result sync_read_results[8];
 static struct input_event sync_events[8];
 static struct input_event source_event;
 static struct input_event written_events[8];
-static char operations[8];
+static char operations[16];
 static int operation_count;
 static int open_calls;
 static int open_result_count;
@@ -29,6 +30,7 @@ static int create_calls;
 static int compatibility_calls;
 static int close_calls;
 static int destroy_calls;
+static int neutralize_calls;
 static int read_calls;
 static int write_calls;
 static int read_result_count;
@@ -111,6 +113,18 @@ bool input_proxy_virtual_device_is_compatible(
     }
 
     return compatibility_results[compatibility_calls++];
+}
+
+enum input_proxy_result input_proxy_virtual_device_neutralize(
+    struct input_proxy_virtual_device *device)
+{
+    if (device != test_virtual_device) {
+        return INPUT_PROXY_ERROR_INTERNAL;
+    }
+
+    neutralize_calls++;
+    operations[operation_count++] = 'N';
+    return neutralize_result;
 }
 
 void input_proxy_virtual_device_destroy(
@@ -204,6 +218,7 @@ static void reset_runtime(void)
 {
     open_result = INPUT_PROXY_SUCCESS;
     create_result = INPUT_PROXY_SUCCESS;
+    neutralize_result = INPUT_PROXY_SUCCESS;
     fail_create_call = 0;
     read_result = INPUT_PROXY_SUCCESS;
     write_result = INPUT_PROXY_SUCCESS;
@@ -214,6 +229,7 @@ static void reset_runtime(void)
     compatibility_calls = 0;
     close_calls = 0;
     destroy_calls = 0;
+    neutralize_calls = 0;
     read_calls = 0;
     write_calls = 0;
     read_result_count = 0;
@@ -588,7 +604,8 @@ int main(void)
         read_calls != 7 || write_calls != 3 || destroy_calls != 1 ||
         close_calls != 3 || sync_read_calls != 2 ||
         event_sleep_calls != 1 || source_sleep_calls != 2 ||
-        sleep_duration_failures != 0 || strcmp(operations, "CCDC") != 0) {
+        neutralize_calls != 2 || sleep_duration_failures != 0 ||
+        strcmp(operations, "NCNCDC") != 0) {
         fprintf(stderr, "disconnect and reconnect: bad lifecycle\n");
         failures++;
     }
@@ -611,7 +628,7 @@ int main(void)
     );
     if (open_calls != 3 || create_calls != 3 || compatibility_calls != 2 ||
         read_calls != 3 || destroy_calls != 3 || close_calls != 3 ||
-        strcmp(operations, "CDCDDC") != 0) {
+        neutralize_calls != 2 || strcmp(operations, "NCDNCDDC") != 0) {
         fprintf(stderr, "incompatible reconnect: bad lifecycle\n");
         failures++;
     }
@@ -639,8 +656,38 @@ int main(void)
     }
     if (open_calls != 2 || create_calls != 2 || compatibility_calls != 1 ||
         close_calls != 2 || destroy_calls != 1 ||
-        strcmp(operations, "CDC") != 0) {
+        neutralize_calls != 1 || strcmp(operations, "NCDC") != 0) {
         fprintf(stderr, "replacement creation failure: bad lifecycle\n");
+        failures++;
+    }
+
+    reset_runtime();
+    read_results[0] = INPUT_PROXY_ERROR_SOURCE_DISCONNECTED;
+    read_result_count = 1;
+    neutralize_result = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+    failures += run_runtime_test(
+        "neutralization state query failure",
+        &config,
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED
+    );
+    if (neutralize_calls != 1 || close_calls != 1 || destroy_calls != 1 ||
+        strcmp(operations, "NCD") != 0) {
+        fprintf(stderr, "neutralization state query failure: bad lifecycle\n");
+        failures++;
+    }
+
+    reset_runtime();
+    read_results[0] = INPUT_PROXY_ERROR_SOURCE_DISCONNECTED;
+    read_result_count = 1;
+    neutralize_result = INPUT_PROXY_ERROR_EVENT_WRITE_FAILED;
+    failures += run_runtime_test(
+        "neutralization write failure",
+        &config,
+        INPUT_PROXY_ERROR_EVENT_WRITE_FAILED
+    );
+    if (neutralize_calls != 1 || close_calls != 1 || destroy_calls != 1 ||
+        strcmp(operations, "NCD") != 0) {
+        fprintf(stderr, "neutralization write failure: bad lifecycle\n");
         failures++;
     }
 

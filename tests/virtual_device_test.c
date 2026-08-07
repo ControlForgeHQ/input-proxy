@@ -15,8 +15,15 @@ static int create_calls;
 static int destroy_calls;
 static int write_result;
 static int write_calls;
-static int write_failures;
+static int fail_write_call;
 static int template_failures;
+static int query_create_result;
+static int query_create_calls;
+static int key_values[KEY_MAX + 1];
+static bool key_supported[KEY_MAX + 1];
+static int slot_values[8];
+static int slot_count;
+static struct input_event written_events[32];
 static struct libevdev_uinput *const test_uinput =
     (struct libevdev_uinput *)1;
 
@@ -78,25 +85,114 @@ void libevdev_uinput_destroy(struct libevdev_uinput *device)
     destroy_calls++;
 }
 
+const char *libevdev_uinput_get_devnode(struct libevdev_uinput *device)
+{
+    return device == test_uinput ? "/dev/null" : NULL;
+}
+
+int libevdev_new_from_fd(int fd, struct libevdev **device)
+{
+    (void)fd;
+    query_create_calls++;
+    if (query_create_result < 0) {
+        return query_create_result;
+    }
+
+    *device = libevdev_new();
+    return *device == NULL ? -ENOMEM : 0;
+}
+
+int libevdev_fetch_event_value(
+    const struct libevdev *device,
+    unsigned int type,
+    unsigned int code,
+    int *value)
+{
+    (void)device;
+    if (type != EV_KEY || code > KEY_MAX || !key_supported[code]) {
+        return 0;
+    }
+
+    *value = key_values[code];
+    return 1;
+}
+
+int libevdev_get_num_slots(const struct libevdev *device)
+{
+    (void)device;
+    return slot_count;
+}
+
+int libevdev_fetch_slot_value(
+    const struct libevdev *device,
+    unsigned int slot,
+    unsigned int code,
+    int *value)
+{
+    (void)device;
+    if (slot >= (unsigned int)slot_count || code != ABS_MT_TRACKING_ID) {
+        return 0;
+    }
+
+    *value = slot_values[slot];
+    return 1;
+}
+
 int libevdev_uinput_write_event(
     const struct libevdev_uinput *device,
     unsigned int type,
     unsigned int code,
     int value)
 {
-    write_calls++;
     if (device != test_uinput) {
-        write_failures++;
+        template_failures++;
     }
-    if (write_calls == 1 &&
-        (type != EV_KEY || code != BTN_TOUCH || value != 1)) {
-        write_failures++;
+    if (write_calls < 32) {
+        written_events[write_calls] = (struct input_event) {
+            .type = type,
+            .code = code,
+            .value = value
+        };
     }
-    if (write_calls == 2 &&
-        (type != EV_SYN || code != SYN_REPORT || value != 0)) {
-        write_failures++;
+    write_calls++;
+    if (write_calls == fail_write_call) {
+        return -EIO;
     }
     return write_result;
+}
+
+static void reset_neutralization_state(void)
+{
+    unsigned int slot;
+
+    memset(key_values, 0, sizeof(key_values));
+    memset(key_supported, 0, sizeof(key_supported));
+    memset(written_events, 0, sizeof(written_events));
+    for (slot = 0; slot < 8; slot++) {
+        slot_values[slot] = -1;
+    }
+    slot_count = -1;
+    write_calls = 0;
+    write_result = 0;
+    fail_write_call = 0;
+    query_create_result = 0;
+}
+
+static int expect_event(
+    const char *test_name,
+    int index,
+    unsigned int type,
+    unsigned int code,
+    int value)
+{
+    if (index < write_calls && written_events[index].type == type &&
+        written_events[index].code == code &&
+        written_events[index].value == value) {
+        return 0;
+    }
+
+    fprintf(stderr, "%s: event %d did not match\n", test_name, index);
+    return 1;
 }
 
 static int expect_result(
@@ -321,20 +417,142 @@ int main(void)
         input_proxy_virtual_device_write_event(device, &event),
         INPUT_PROXY_ERROR_EVENT_WRITE_FAILED
     );
+    failures += expect_event(
+        "successful event write",
+        0,
+        EV_KEY,
+        BTN_TOUCH,
+        1
+    );
+    failures += expect_event(
+        "synchronization boundary write",
+        1,
+        EV_SYN,
+        SYN_REPORT,
+        0
+    );
+
+    reset_neutralization_state();
+    failures += expect_result(
+        "already neutral",
+        input_proxy_virtual_device_neutralize(device),
+        INPUT_PROXY_SUCCESS
+    );
+    if (write_calls != 0) {
+        fprintf(stderr, "already neutral: unnecessary events emitted\n");
+        failures++;
+    }
+
+    reset_neutralization_state();
+    key_supported[KEY_A] = true;
+    key_supported[KEY_B] = true;
+    key_supported[BTN_TOUCH] = true;
+    key_values[KEY_A] = 1;
+    key_values[KEY_B] = 2;
+    key_values[BTN_TOUCH] = 1;
+    failures += expect_result(
+        "active keys",
+        input_proxy_virtual_device_neutralize(device),
+        INPUT_PROXY_SUCCESS
+    );
+    if (write_calls != 4) {
+        fprintf(stderr, "active keys: unexpected event count %d\n", write_calls);
+        failures++;
+    }
+    failures += expect_event("active keys", 0, EV_KEY, KEY_A, 0);
+    failures += expect_event("active keys", 1, EV_KEY, KEY_B, 0);
+    failures += expect_event("active keys", 2, EV_KEY, BTN_TOUCH, 0);
+    failures += expect_event("active keys", 3, EV_SYN, SYN_REPORT, 0);
+
+    reset_neutralization_state();
+    slot_count = 4;
+    slot_values[0] = 17;
+    slot_values[2] = 23;
+    failures += expect_result(
+        "active multitouch slots",
+        input_proxy_virtual_device_neutralize(device),
+        INPUT_PROXY_SUCCESS
+    );
+    if (write_calls != 5) {
+        fprintf(
+            stderr,
+            "active multitouch slots: unexpected event count %d\n",
+            write_calls
+        );
+        failures++;
+    }
+    failures += expect_event(
+        "active multitouch slots",
+        0,
+        EV_ABS,
+        ABS_MT_SLOT,
+        0
+    );
+    failures += expect_event(
+        "active multitouch slots",
+        1,
+        EV_ABS,
+        ABS_MT_TRACKING_ID,
+        -1
+    );
+    failures += expect_event(
+        "active multitouch slots",
+        2,
+        EV_ABS,
+        ABS_MT_SLOT,
+        2
+    );
+    failures += expect_event(
+        "active multitouch slots",
+        3,
+        EV_ABS,
+        ABS_MT_TRACKING_ID,
+        -1
+    );
+    failures += expect_event(
+        "active multitouch slots",
+        4,
+        EV_SYN,
+        SYN_REPORT,
+        0
+    );
+
+    reset_neutralization_state();
+    query_create_result = -EIO;
+    failures += expect_result(
+        "state query failure",
+        input_proxy_virtual_device_neutralize(device),
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED
+    );
+
+    reset_neutralization_state();
+    key_supported[KEY_A] = true;
+    key_values[KEY_A] = 1;
+    fail_write_call = 1;
+    failures += expect_result(
+        "neutralizing write failure",
+        input_proxy_virtual_device_neutralize(device),
+        INPUT_PROXY_ERROR_EVENT_WRITE_FAILED
+    );
+
+    failures += expect_result(
+        "null neutralization device",
+        input_proxy_virtual_device_neutralize(NULL),
+        INPUT_PROXY_ERROR_INVALID_ARGUMENT
+    );
 
     input_proxy_virtual_device_destroy(device);
     input_proxy_virtual_device_destroy(NULL);
 
-    if (create_calls != 2 || destroy_calls != 1 || write_calls != 3 ||
-        write_failures != 0 || template_failures != 0) {
+    if (create_calls != 2 || destroy_calls != 1 ||
+        query_create_calls != 5 || template_failures != 0) {
         fprintf(
             stderr,
-            "unexpected calls or contents: create=%d destroy=%d write=%d "
-            "write failures=%d template failures=%d\n",
+            "unexpected calls or contents: create=%d destroy=%d queries=%d "
+            "template failures=%d\n",
             create_calls,
             destroy_calls,
-            write_calls,
-            write_failures,
+            query_create_calls,
             template_failures
         );
         failures++;
