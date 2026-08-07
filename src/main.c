@@ -1,11 +1,54 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include <input_proxy/proxy_session.h>
 #include <input_proxy/result.h>
 #include <input_proxy/version.h>
 
 #include <stdbool.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+
+static struct input_proxy_session *active_session;
+
+static void handle_termination_signal(int signal_number)
+{
+    (void)signal_number;
+    input_proxy_session_request_shutdown(active_session);
+}
+
+static bool install_signal_handlers(void)
+{
+    const struct sigaction action = {
+        .sa_handler = handle_termination_signal
+    };
+
+    if (sigaction(SIGINT, &action, NULL) != 0) {
+        return false;
+    }
+
+    if (sigaction(SIGTERM, &action, NULL) != 0) {
+        const struct sigaction default_action = {
+            .sa_handler = SIG_DFL
+        };
+
+        (void)sigaction(SIGINT, &default_action, NULL);
+        return false;
+    }
+
+    return true;
+}
+
+static void restore_signal_handlers(void)
+{
+    const struct sigaction action = {
+        .sa_handler = SIG_DFL
+    };
+
+    (void)sigaction(SIGINT, &action, NULL);
+    (void)sigaction(SIGTERM, &action, NULL);
+}
 
 static void print_usage(FILE *stream, const char *program_name)
 {
@@ -109,6 +152,14 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
+    active_session = session;
+    if (!install_signal_handlers()) {
+        fprintf(stderr, "input-proxy: failed to install signal handlers\n");
+        active_session = NULL;
+        input_proxy_session_destroy(session);
+        return EXIT_FAILURE;
+    }
+
     result = input_proxy_session_run(session);
     if (result != INPUT_PROXY_SUCCESS) {
         fprintf(
@@ -118,6 +169,8 @@ int main(int argc, char *argv[])
         );
     }
 
+    restore_signal_handlers();
+    active_session = NULL;
     input_proxy_session_destroy(session);
 
     return result == INPUT_PROXY_SUCCESS ? EXIT_SUCCESS : EXIT_FAILURE;

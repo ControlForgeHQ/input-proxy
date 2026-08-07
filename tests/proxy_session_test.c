@@ -39,6 +39,10 @@ static int sync_read_result_count;
 static int event_sleep_calls;
 static int source_sleep_calls;
 static int sleep_duration_failures;
+static struct input_proxy_session *running_session;
+static bool shutdown_after_write;
+static bool shutdown_during_event_sleep;
+static bool shutdown_during_source_sleep;
 
 static struct input_proxy_source_device *const test_source_device =
     (struct input_proxy_source_device *)1;
@@ -50,8 +54,14 @@ int nanosleep(const struct timespec *duration, struct timespec *remaining)
     (void)remaining;
     if (duration->tv_sec == 0 && duration->tv_nsec == 10000000L) {
         event_sleep_calls++;
+        if (shutdown_during_event_sleep) {
+            input_proxy_session_request_shutdown(running_session);
+        }
     } else if (duration->tv_sec == 0 && duration->tv_nsec == 100000000L) {
         source_sleep_calls++;
+        if (shutdown_during_source_sleep) {
+            input_proxy_session_request_shutdown(running_session);
+        }
     } else {
         sleep_duration_failures++;
     }
@@ -182,6 +192,10 @@ enum input_proxy_result input_proxy_virtual_device_write_event(
     }
     write_calls++;
 
+    if (shutdown_after_write) {
+        input_proxy_session_request_shutdown(running_session);
+    }
+
     return write_result;
 }
 
@@ -238,6 +252,10 @@ static void reset_runtime(void)
     event_sleep_calls = 0;
     source_sleep_calls = 0;
     sleep_duration_failures = 0;
+    running_session = NULL;
+    shutdown_after_write = false;
+    shutdown_during_event_sleep = false;
+    shutdown_during_source_sleep = false;
     memset(operations, 0, sizeof(operations));
     memset(compatibility_results, 0, sizeof(compatibility_results));
 }
@@ -259,11 +277,13 @@ static int run_runtime_test(
         return failures + 1;
     }
 
+    running_session = session;
     failures += expect_result(
         test_name,
         input_proxy_session_run(session),
         expected
     );
+    running_session = NULL;
     input_proxy_session_destroy(session);
     return failures;
 }
@@ -496,6 +516,50 @@ int main(void)
     }
 
     input_proxy_session_destroy(session);
+
+    reset_runtime();
+    read_results[0] = INPUT_PROXY_SUCCESS;
+    read_result_count = 1;
+    shutdown_after_write = true;
+    failures += run_runtime_test(
+        "shutdown while actively forwarding",
+        &config,
+        INPUT_PROXY_SUCCESS
+    );
+    if (read_calls != 1 || write_calls != 1 || close_calls != 1 ||
+        destroy_calls != 1 || strcmp(operations, "DC") != 0) {
+        fprintf(stderr, "shutdown while actively forwarding: bad cleanup\n");
+        failures++;
+    }
+
+    reset_runtime();
+    read_results[0] = INPUT_PROXY_EVENT_UNAVAILABLE;
+    read_result_count = 1;
+    shutdown_during_event_sleep = true;
+    failures += run_runtime_test(
+        "shutdown while source events unavailable",
+        &config,
+        INPUT_PROXY_SUCCESS
+    );
+    if (read_calls != 1 || event_sleep_calls != 1 || close_calls != 1 ||
+        destroy_calls != 1 || strcmp(operations, "DC") != 0) {
+        fprintf(stderr, "shutdown while source events unavailable: bad cleanup\n");
+        failures++;
+    }
+
+    reset_runtime();
+    open_result = INPUT_PROXY_ERROR_SOURCE_UNAVAILABLE;
+    shutdown_during_source_sleep = true;
+    failures += run_runtime_test(
+        "shutdown while waiting for source",
+        &config,
+        INPUT_PROXY_SUCCESS
+    );
+    if (open_calls != 1 || source_sleep_calls != 1 || close_calls != 0 ||
+        destroy_calls != 0) {
+        fprintf(stderr, "shutdown while waiting for source: bad cleanup\n");
+        failures++;
+    }
 
     reset_runtime();
     open_result = INPUT_PROXY_ERROR_SOURCE_OPEN_FAILED;
