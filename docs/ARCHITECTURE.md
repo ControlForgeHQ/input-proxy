@@ -1061,6 +1061,135 @@ The implementation must still handle platforms or device classes conservatively
 if future testing identifies state that cannot be queried or neutralized safely
 through the standard evdev/uinput interfaces.
 
+## Logging
+
+`input-proxy` uses ordinary process output streams for runtime logging.
+
+The logging interface is intentionally simple and must remain independent of
+systemd, journald, or any other service manager or logging backend.
+
+### Output streams
+
+Normal lifecycle and status messages are written to standard output.
+
+Warnings, errors, and actionable failure diagnostics are written to standard
+error.
+
+The application must not write its own persistent log files.
+
+It must not require a systemd or journald runtime dependency merely for logging.
+
+When `input-proxy` is run as a systemd service, its standard output and standard
+error should be captured naturally by systemd/journald using the service
+manager's normal process-output handling.
+
+The same executable must remain equally usable:
+
+- interactively from a terminal;
+- under systemd;
+- under another service manager;
+- inside a container;
+- with output redirected or piped by ordinary shell mechanisms.
+
+### Message content
+
+Runtime messages should be concise, human-readable plain text.
+
+`input-proxy` should not add metadata that is normally supplied by the execution
+environment, including:
+
+- timestamps;
+- process IDs;
+- service-unit names;
+- host names;
+- journald fields.
+
+The program should report meaningful lifecycle changes rather than internal loop
+iterations.
+
+Examples of appropriate default-level messages include:
+
+```text
+Waiting for source: /dev/input/...
+Source connected
+Source disconnected
+Source reconnected
+Shutting down
+```
+
+Errors should identify the operation that failed and provide enough context to
+make the problem actionable.
+
+Examples include:
+
+```text
+Failed to open source device: Permission denied
+Failed to create virtual device
+Failed to neutralize virtual device state
+```
+
+### Lifecycle-oriented logging
+
+Logging should occur primarily when externally meaningful state changes.
+
+Retry loops, polling loops, and other repeated runtime checks must not produce
+repeated messages merely because the same condition remains true.
+
+For example, a missing source should produce a message when the session enters
+the source-wait condition, not once for every retry attempt.
+
+Likewise, ordinary event forwarding must not generate log output per event.
+
+This keeps long-running service logs useful and prevents high-rate input devices
+from producing unnecessary output.
+
+### Verbose mode
+
+`--verbose` provides additional lifecycle, state-transition, and diagnostic
+context.
+
+Verbose output may include information such as:
+
+```text
+Entering WAITING_FOR_SOURCE
+Source opened successfully
+Existing virtual device is compatible; retaining device
+Synchronization recovery started
+Synchronization recovery complete
+Neutralizing persistent virtual device
+Source released
+Transitioning to ACTIVE
+```
+
+Verbose mode must not become a raw event dump.
+
+In particular, it must not normally log individual evdev events, touch
+coordinates, mouse motion, key events, synchronization frames, or other
+high-frequency input traffic.
+
+If raw event inspection is ever required for engineering diagnostics, it should
+be provided through a dedicated diagnostic tool or explicitly scoped debugging
+facility rather than through normal runtime logging.
+
+### Logging dependencies
+
+Logging should use the standard C/POSIX process-output facilities already
+available to the application unless a demonstrated requirement justifies
+otherwise.
+
+The runtime should not depend on:
+
+- libsystemd solely for journald output;
+- syslog solely for normal application logging;
+- a third-party logging framework;
+- a configurable logging backend abstraction.
+
+A future feature may add structured diagnostics only if a concrete requirement
+justifies the additional complexity.
+
+The default logging contract should remain plain stdout/stderr throughout the
+planned project roadmap, including packaged and systemd-managed deployments.
+
 ## Non-goals
 
 The runtime proxy deliberately does not understand or manage:

@@ -66,6 +66,24 @@ Avoid exposing implementation details through public headers.
 Keep third-party libraries, platform-specific APIs, and implementation-specific data structures behind module boundaries whenever practical.
 
 
+## Prefer standard platform interfaces
+
+Prefer simple, broadly available operating-system interfaces over dependencies
+on a particular service manager or deployment environment.
+
+When normal Unix/POSIX mechanisms satisfy the requirement, use them directly
+rather than introducing platform-specific integration layers.
+
+For example, runtime logging should use standard output and standard error
+rather than depending on systemd or journald APIs. A service manager may capture
+and enrich those streams externally without coupling the application to that
+service manager.
+
+Add platform-specific dependencies only when they provide functionality that
+cannot reasonably be achieved through the project's existing platform
+interfaces.
+
+
 ## Optimize for readability
 
 Code is read far more often than it is written.
