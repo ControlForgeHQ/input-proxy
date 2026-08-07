@@ -8,6 +8,7 @@
 #include "proxy_session_internal.h"
 #include "virtual_device_internal.h"
 
+#include <signal.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -21,7 +22,7 @@ struct input_proxy_session {
     struct input_proxy_source_device *source_device;
     struct input_proxy_virtual_device *virtual_device;
     bool verbose;
-    bool shutdown_requested;
+    volatile sig_atomic_t shutdown_requested;
 };
 
 static void cleanup_active_devices(struct input_proxy_session *session)
@@ -245,6 +246,13 @@ enum input_proxy_result input_proxy_session_run(
             break;
         }
 
+        if (session->shutdown_requested &&
+            (result == INPUT_PROXY_SUCCESS ||
+             result == INPUT_PROXY_EVENT_UNAVAILABLE)) {
+            result = INPUT_PROXY_SUCCESS;
+            break;
+        }
+
         if (result == INPUT_PROXY_ERROR_SOURCE_DISCONNECTED) {
             result = input_proxy_virtual_device_neutralize(
                 session->virtual_device
@@ -298,7 +306,7 @@ void input_proxy_session_request_shutdown(
         return;
     }
 
-    session->shutdown_requested = true;
+    session->shutdown_requested = 1;
 }
 
 void input_proxy_session_destroy(
