@@ -84,4 +84,20 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME virtual-device-test COMMAND virtual-device-test)
+
+    add_executable(
+        proxy-session-test
+        tests/proxy_session_test.c
+        src/proxy_session.c
+        src/result.c
+    )
+
+    target_include_directories(
+        proxy-session-test
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src
+    )
+
+    add_test(NAME proxy-session-test COMMAND proxy-session-test)
 endif()
