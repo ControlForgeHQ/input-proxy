@@ -14,7 +14,7 @@ physical evdev device
     -> libinput or another input consumer
 ```
 
-The proxy should preserve the source device's capabilities and forward its event
+The proxy preserves the source device's capabilities and forwards its event
 stream without semantic remapping.
 
 Future pause functionality may intentionally suppress complete interactions
@@ -45,7 +45,7 @@ event-filtering or remapping system.
 - Do not implement future roadmap features early unless the issue explicitly
   includes them.
 
-## Initial command-line interface
+## Command-line interface
 
 ```text
 input-proxy --source PATH --name NAME [--verbose]
@@ -53,31 +53,27 @@ input-proxy --help
 input-proxy --version
 ```
 
-The kernel and udev determine the virtual device's `/dev/input/eventN` path. The
-application must not accept or promise a specific destination event path.
+The kernel and udev determine the virtual device's `/dev/input/eventN` path.
+The application must not accept or promise a specific destination event path.
 
-## Initial scope
+## Version 0.1 scope
 
-The first release should:
+Version 0.1 provides:
 
-- wait for the configured source path if the device is not currently present;
-- detect when the configured source device becomes available;
-- open one evdev source;
-- inspect and reproduce its supported capabilities;
-- create one virtual uinput device;
-- assign the configured name;
-- forward events faithfully;
-- preserve `EV_SYN` report boundaries;
-- handle `SYN_DROPPED`;
-- detect source-device disconnection without terminating;
-- destroy the corresponding virtual device after source disconnection;
-- return to waiting for the configured source path;
-- recreate the virtual device and resume forwarding when the source returns;
-- handle SIGINT and SIGTERM cleanly;
-- report useful lifecycle information and errors to stderr;
-- exit nonzero only for unrecoverable configuration or initialization failures.
+- waiting for the configured source device when it is unavailable;
+- automatic source detection and reconnect;
+- capability-preserving virtual-device creation;
+- persistent virtual-device lifetime across compatible reconnects;
+- capability-aware virtual-device replacement when required;
+- faithful event forwarding;
+- preservation of `EV_SYN` report boundaries;
+- `SYN_DROPPED` synchronization recovery;
+- source-loss virtual-device neutralization;
+- graceful `SIGINT` and `SIGTERM` shutdown;
+- concise lifecycle logging;
+- optional verbose lifecycle diagnostics.
 
-Touchscreens and multitouch devices are important validation cases, but the core
+Touchscreens and multitouch devices remain important validation cases, but the
 implementation must remain generic.
 
 ## Device lifecycle
@@ -85,32 +81,73 @@ implementation must remain generic.
 The application is intended to remain running even when its source device is
 temporarily unavailable.
 
-Its initial normal lifecycle is:
+Its Version 0.1 lifecycle is:
 
 ```text
 wait for source
     -> source appears
-    -> open and validate source
-    -> create virtual device
+    -> open source
+    -> create persistent virtual device
     -> forward events
     -> source disappears
-    -> destroy virtual device
+    -> neutralize virtual device
+    -> close source
     -> wait for source
+    -> source returns
+    -> compatible?
+           yes -> reuse existing virtual device
+           no  -> replace virtual device
+    -> resume forwarding
 ```
 
 A missing or disconnected source device is not a fatal condition.
 
+The virtual device should remain present across compatible source reconnects.
+
+If the capabilities of the returning source differ from those of the existing
+virtual device, the virtual device should be replaced automatically.
+
 The implementation should use an efficient event-driven mechanism where
-practical and must not busy-wait. A simple bounded retry loop may be used
-initially if it is easy to understand, logs sensibly, and sleeps between
-attempts.
+practical and must not busy-wait. A simple bounded retry loop is acceptable when
+it is easy to understand, sleeps between attempts, and avoids repeated logging
+while waiting.
 
 The process should terminate only when:
 
-- it receives SIGINT or SIGTERM;
+- it receives `SIGINT` or `SIGTERM`;
 - its command-line configuration is invalid;
-- a required system resource such as uinput is permanently unavailable;
-- another unrecoverable initialization error occurs.
+- a required system resource cannot be initialized;
+- an unrecoverable runtime error occurs.
+
+## Logging
+
+Runtime logging follows the project logging policy documented in
+`docs/ARCHITECTURE.md`.
+
+In summary:
+
+- normal lifecycle and status messages are written to standard output;
+- warnings and errors are written to standard error;
+- logging occurs on meaningful lifecycle transitions rather than retry loops;
+- raw evdev events must not be logged during normal operation;
+- `--verbose` adds lifecycle and diagnostic context rather than event dumps.
+
+## Runtime permissions
+
+`input-proxy` is intended to run without root privileges.
+
+The runtime user must have permission to:
+
+- read the configured physical evdev source;
+- access `/dev/uinput`.
+
+On Raspberry Pi OS, this is typically achieved using the existing `input` group.
+
+The application itself must not depend on:
+
+- sudoers configuration;
+- a setuid executable;
+- execution as root.
 
 ## Future pause and control architecture
 

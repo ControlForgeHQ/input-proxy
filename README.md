@@ -1,8 +1,11 @@
 # input-proxy
 
-`input-proxy` is a small Linux utility that republishes a physical evdev input device as a virtual uinput device with a configurable name.
+`input-proxy` is a small Linux utility that republishes a physical evdev input
+device as a virtual uinput device with a configurable name.
 
-It is intended for situations where otherwise identical input devices need to be distinguished by software that cannot identify them using stable hardware paths.
+It is intended for situations where otherwise identical input devices need to
+be distinguished by software that cannot identify them using stable hardware
+paths.
 
 ```text
 physical evdev device
@@ -11,35 +14,68 @@ physical evdev device
     -> libinput or another input consumer
 ```
 
-The proxy preserves the source device’s capabilities and forwards its event stream without semantic remapping.
+The proxy preserves the source device's capabilities and forwards its event
+stream without semantic remapping.
 
-The process remains running when its configured source device is unavailable or disconnected. It waits for the device to appear, creates the corresponding virtual device, forwards events while the source is present, and returns to waiting if the source disappears.
+The process remains running when its configured source device is unavailable or
+disconnected. It waits for the device to appear, forwards events while the
+source is present, and automatically resumes operation when the source returns.
 
 ## Status
 
-This project is in its initial design and implementation phase.
+Version **0.1.0** provides:
+
+- faithful evdev-to-uinput event forwarding;
+- automatic source disconnect and reconnect handling;
+- persistent virtual-device lifetime across compatible reconnects;
+- capability-aware virtual-device replacement;
+- `SYN_DROPPED` synchronization recovery;
+- virtual-device neutralization after source loss;
+- graceful `SIGINT` / `SIGTERM` shutdown;
+- concise lifecycle logging with optional verbose diagnostics.
+
+Future development is described in `docs/ROADMAP.md`.
 
 ## Building
 
-Building requires a C17 compiler, CMake, pkg-config, and the libevdev development
-package. On Debian and Ubuntu, install the dependencies with:
+Building requires a C17 compiler, CMake, pkg-config, and the libevdev
+development package.
+
+On Debian and Ubuntu:
 
 ```sh
 sudo apt install build-essential cmake pkg-config libevdev-dev
 ```
 
-Configure and build the project with:
+Configure and build:
 
 ```sh
 cmake -S . -B build
 cmake --build build
 ```
 
-Run the hardware-independent tests with:
+Run the regression tests:
 
 ```sh
 ctest --test-dir build --output-on-failure
 ```
+
+## Usage
+
+```sh
+./build/input-proxy \
+    --source /dev/input/event0 \
+    --name "Touchscreen Proxy"
+```
+
+Additional commands:
+
+```sh
+./build/input-proxy --help
+./build/input-proxy --version
+```
+
+Use `--verbose` to enable additional lifecycle and diagnostic output.
 
 ## Permissions
 
@@ -49,7 +85,7 @@ read the physical evdev source and access `/dev/uinput`.
 On Raspberry Pi OS, the normal user is typically a member of the `input` group,
 and physical input devices are normally already accessible through that group.
 
-Check your current configuration with:
+Check your current configuration:
 
 ```bash
 id
@@ -57,7 +93,7 @@ ls -l /dev/input/event0
 ls -l /dev/uinput
 ```
 
-A typical physical source looks like:
+A typical physical source:
 
 ```text
 crw-rw---- root input ... /dev/input/event0
@@ -87,11 +123,15 @@ Then reboot and verify:
 ls -l /dev/uinput
 ```
 
-The expected result is:
+Expected:
 
 ```text
 crw-rw---- root input ... /dev/uinput
 ```
 
 Once both the physical source and `/dev/uinput` are accessible through the
-`input` group, run `input-proxy` normally without `sudo`.
+`input` group, `input-proxy` can be run normally without `sudo`.
+
+## License
+
+Released under the MIT License.
