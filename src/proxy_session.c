@@ -11,9 +11,20 @@
 struct input_proxy_session {
     char *source_path;
     char *device_name;
+    struct input_proxy_source_device *source_device;
+    struct input_proxy_virtual_device *virtual_device;
     bool verbose;
     bool shutdown_requested;
 };
+
+static void cleanup_active_devices(struct input_proxy_session *session)
+{
+    input_proxy_virtual_device_destroy(session->virtual_device);
+    session->virtual_device = NULL;
+
+    input_proxy_source_device_close(session->source_device);
+    session->source_device = NULL;
+}
 
 static char *duplicate_string(const char *source)
 {
@@ -84,15 +95,48 @@ error:
 enum input_proxy_result input_proxy_session_run(
     struct input_proxy_session *session)
 {
+    enum input_proxy_result result;
+
     if (session == NULL) {
         return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
     }
 
-    /*
-     * TODO: Implement the proxy session lifecycle.
-     */
+    result = input_proxy_source_device_open(
+        &session->source_device,
+        session->source_path
+    );
+    if (result != INPUT_PROXY_SUCCESS) {
+        return result;
+    }
 
-    return INPUT_PROXY_ERROR_NOT_IMPLEMENTED;
+    result = input_proxy_virtual_device_create(
+        &session->virtual_device,
+        session->source_device,
+        session->device_name
+    );
+    if (result != INPUT_PROXY_SUCCESS) {
+        cleanup_active_devices(session);
+        return result;
+    }
+
+    result = INPUT_PROXY_SUCCESS;
+    while (!session->shutdown_requested) {
+        result = input_proxy_session_process_event(
+            session,
+            session->source_device,
+            session->virtual_device
+        );
+        if (result == INPUT_PROXY_SUCCESS ||
+            result == INPUT_PROXY_EVENT_UNAVAILABLE) {
+            continue;
+        }
+
+        break;
+    }
+
+    cleanup_active_devices(session);
+
+    return result;
 }
 
 enum input_proxy_result input_proxy_session_process_event(
@@ -132,6 +176,7 @@ void input_proxy_session_destroy(
         return;
     }
 
+    cleanup_active_devices(session);
     free(session->device_name);
     free(session->source_path);
     free(session);
