@@ -1,5 +1,7 @@
 #include <input_proxy/proxy_session.h>
 #include <input_proxy/result.h>
+#include <input_proxy/source_device.h>
+#include <input_proxy/virtual_device.h>
 
 #include <stdlib.h>
 #include <string.h>
@@ -89,6 +91,26 @@ enum input_proxy_result input_proxy_session_run(
      */
 
     return INPUT_PROXY_ERROR_NOT_IMPLEMENTED;
+}
+
+enum input_proxy_result input_proxy_session_process_event(
+    struct input_proxy_session *session,
+    struct input_proxy_source_device *source_device,
+    struct input_proxy_virtual_device *virtual_device)
+{
+    struct input_event event;
+    enum input_proxy_result result;
+
+    if (session == NULL || source_device == NULL || virtual_device == NULL) {
+        return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
+    }
+
+    result = input_proxy_source_device_read_event(source_device, &event);
+    if (result != INPUT_PROXY_SUCCESS) {
+        return result;
+    }
+
+    return input_proxy_virtual_device_write_event(virtual_device, &event);
 }
 
 void input_proxy_session_request_shutdown(
