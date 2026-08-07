@@ -13,11 +13,19 @@ be implemented early unless specifically requested.
 
 A small, robust, transparent Linux evdev-to-uinput proxy.
 
+The virtual device should represent a stable logical proxy instance rather than
+appearing and disappearing with every temporary physical-source connection.
+
 ## Required features
 
 - one source device per process;
 - configurable virtual device name;
 - automatic source disconnect and reconnect;
+- persistent virtual-device lifetime across temporary source disconnect and
+  reconnect;
+- safe neutralization of active virtual input state when the physical source is
+  lost;
+- source compatibility validation before resuming forwarding after reconnect;
 - generic evdev capability cloning;
 - transparent event forwarding;
 - preservation of event ordering and synchronization boundaries;
@@ -25,6 +33,33 @@ A small, robust, transparent Linux evdev-to-uinput proxy.
 - clean shutdown;
 - concise logging.
 
+The physical source is considered a recoverable backing resource.
+
+Once the virtual device has been successfully created, temporary loss of the
+physical source should not normally remove the virtual device from the operating
+system.
+
+When the source disconnects, the proxy should:
+
+- return any active virtual momentary state to a safe neutral state;
+- release the physical source;
+- retain the virtual device;
+- wait efficiently for the configured source to return;
+- validate the reconnected source against the existing virtual-device
+  capabilities;
+- resume forwarding without re-enumerating the virtual device when compatible.
+
+When the source reconnects, the proxy should:
+
+- validate the reconnected source against the existing virtual-device
+  capabilities;
+- retain the existing virtual device when the source is compatible;
+- replace the virtual device when the source is incompatible;
+- resume operation without terminating the proxy session.
+
+Capability changes across reconnect are therefore recoverable. They may cause
+intentional virtual-device re-enumeration, but should not cause `input-proxy` to
+exit unless replacement virtual-device creation itself fails.
 ## Non-goals
 
 Version 0.1 does not support:
@@ -38,7 +73,8 @@ Version 0.1 does not support:
 - plugins;
 - networking.
 
-The primary objective is correctness and reliability.
+The primary objective is correctness, reliability, and stable logical device
+identity across normal source-loss conditions.
 
 ---
 
@@ -54,7 +90,8 @@ model.
 - richer device identity and capability reporting;
 - improved lifecycle and reconnect logging;
 - additional integration and hardware tests;
-- clearer diagnostics for unsupported capabilities;
+- clearer diagnostics for unsupported or incompatible capabilities;
+- visibility into source availability and persistent virtual-device state;
 - optional machine-readable inspection output where useful.
 
 Version 0.2 must not introduce configuration files or change the
@@ -69,8 +106,11 @@ one-process-per-device model.
 Add externally controlled pause and resume behaviour for applications such as
 touchscreen display wake handling.
 
-A paused proxy must keep the physical source open and keep the virtual device
-present while suppressing delivery of source events to the virtual device.
+A paused proxy must keep the physical source open while it remains available and
+keep the persistent virtual device present while suppressing delivery of source
+events to the virtual device.
+
+Temporary physical-source loss must not remove the persistent virtual device.
 
 ## Required runtime behaviour
 
@@ -79,6 +119,8 @@ Version 0.3 must:
 - provide an explicit paused operating state;
 - continue reading and processing source events while paused;
 - keep the virtual uinput device present while paused;
+- keep the virtual uinput device present across temporary source disconnect and
+  reconnect;
 - suppress paused source events rather than queueing or replaying them;
 - preserve the requested paused state across source disconnect and reconnect;
 - remain externally controllable while waiting for the source device;
@@ -91,12 +133,18 @@ Version 0.3 must:
 - resume forwarding only at a clean input-state boundary;
 - avoid leaving the virtual device with a stuck key, button, or touch contact
   when pausing;
+- avoid leaving the virtual device with a stuck key, button, or touch contact
+  when the physical source disconnects;
 - remain responsive to shutdown requests in every control and lifecycle state.
 
 Pausing changes event delivery, not source consumption. The physical source
 event queue must continue to be drained while forwarding is suppressed.
 
 Events suppressed while paused must never be replayed after resuming.
+
+The persistent virtual-device model introduced in Version 0.1 remains
+authoritative. Pause support must not introduce a second virtual-device lifetime
+policy.
 
 ## Safe pause transition
 
@@ -148,6 +196,8 @@ The control interface should support:
 - explicitly setting the requested paused state;
 - querying the current effective session state;
 - querying whether event forwarding is currently suppressed;
+- querying physical-source availability;
+- querying persistent virtual-device availability;
 - receiving activity notifications;
 - receiving lifecycle or pause-state change notifications.
 
@@ -160,6 +210,9 @@ safe to complete.
 The control interface should remain available while the source device is
 missing. A controller must therefore be able to request a paused initial state
 before the source reconnects.
+
+The persistent virtual device should also remain available during ordinary
+source-loss periods once it has been successfully created.
 
 The D-Bus service must provide a deterministic, stable identity for each proxy
 instance. It must not rely solely on a process ID or another value that changes
@@ -190,6 +243,8 @@ Version 0.3 should include:
 - tests for resume requests made during the wake interaction;
 - tests for activity-notification coalescing;
 - tests for disconnect and reconnect while paused;
+- tests proving that the virtual device remains present across disconnect and
+  reconnect while paused;
 - tests for control requests while the source is unavailable;
 - real touchscreen validation where suitable hardware is available.
 
@@ -205,6 +260,14 @@ A representative touchscreen wake sequence should be validated as follows:
 8. release the wake touch;
 9. verify that the wake touch was not delivered to the virtual device;
 10. verify that the next touch is forwarded normally.
+
+A representative source-loss sequence while paused should also verify that:
+
+1. the virtual device remains present;
+2. the physical source is released;
+3. requested pause state is preserved;
+4. the source may reconnect without virtual-device re-enumeration;
+5. forwarding remains suppressed until the session is safely resumed.
 
 ---
 

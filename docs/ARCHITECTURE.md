@@ -64,12 +64,14 @@ It is responsible for:
 - the requested pause state;
 - the current lifecycle state;
 - the physical source device;
-- the virtual uinput device;
+- the persistent virtual uinput device;
 - the control-service connection;
 - event-forwarding policy;
 - paused-event suppression;
 - source disconnect and reconnect handling;
 - synchronization recovery;
+- virtual-device neutralization after source loss;
+- source compatibility validation after reconnect;
 - orderly cleanup and shutdown.
 
 The proxy session coordinates lower-level helpers but should not contain
@@ -82,8 +84,17 @@ The source-device implementation must not write directly to the virtual device,
 and the virtual-device implementation must not independently read from the
 source.
 
-This boundary is required so that pause, resume, synchronization recovery, and
-future session-level policies can be applied consistently.
+This boundary is required so that pause, resume, synchronization recovery,
+source-loss handling, and future session-level policies can be applied
+consistently.
+
+The physical source and virtual device have intentionally different lifetimes.
+
+The physical source is a recoverable backing resource that may connect,
+disconnect, and reconnect while the session remains alive.
+
+The virtual device is the stable logical device presented by the proxy session
+to the rest of the operating system.
 
 ## Source device
 
@@ -109,9 +120,14 @@ It should not know:
 
 The source device must continue to be read while the session is paused.
 
+Source-device lifetime is tied to physical-source availability. Losing the
+physical source must not implicitly end the proxy session or destroy the stable
+logical virtual device.
+
 ## Virtual device
 
-The virtual-device component represents the uinput device.
+The virtual-device component represents the uinput device exposed to input
+consumers such as libinput and Wayland compositors.
 
 It is responsible for:
 
@@ -127,12 +143,124 @@ It should not:
 - discover or open physical source devices;
 - decide whether an event should be forwarded;
 - implement pause-state transitions;
+- implement source reconnect policy;
 - receive D-Bus control requests.
 
-The virtual device normally remains present while the proxy is paused.
+The virtual device represents the stable logical input device exposed by the
+proxy session.
 
-It may still be destroyed when the source disconnects, when creation fails, or
-when the process shuts down.
+Once successfully created, it should normally remain present for the lifetime
+of the proxy session, including while:
+
+- the proxy is paused;
+- the physical source is temporarily unavailable;
+- the physical source disconnects and reconnects.
+
+Temporary source loss must not, by itself, cause the virtual device to disappear
+and later re-enumerate.
+
+This keeps the logical input device stable for consumers such as compositors and
+avoids unnecessary device-added and device-removed cycles.
+
+The virtual device may still be destroyed when:
+
+- initial virtual-device creation fails;
+- a reconnected source is incompatible with the capabilities represented by the
+  existing virtual device and safe continuation is impossible;
+- an unrecoverable virtual-device failure occurs;
+- the proxy session shuts down.
+
+Source reconnect handling must therefore distinguish between the lifetime of the
+physical source and the lifetime of the virtual device.
+
+### Virtual-device stability across source reconnect
+
+The physical source is a recoverable backing resource for the proxy session.
+
+The virtual device is the stable logical device presented to the rest of the
+system.
+
+The intended lifetime relationship is:
+
+```text
+proxy session
+    |
+    +-- virtual device
+    |       created once when possible
+    |       remains present across source loss
+    |
+    +-- physical source
+            connect
+            disconnect
+            reconnect
+            disconnect
+            ...
+```
+
+When the physical source disconnects:
+
+1. the session stops consuming events from the lost source;
+2. any virtual interaction state that could remain logically active is returned
+   to a neutral state where required;
+3. the physical source is closed and its per-source state discarded;
+4. the virtual device remains present whenever safely possible;
+5. the session returns to waiting for the configured source;
+6. when the source returns, it is reopened and validated against the existing
+   virtual device;
+7. forwarding resumes without recreating the virtual device when compatibility
+   permits.
+
+The proxy must not leave keys, buttons, touch contacts, multitouch contacts, or
+other momentary input state logically active on the virtual device after source
+loss.
+
+The precise neutralization mechanism belongs to session-level event-state policy
+and must work consistently with future pause-state tracking.
+
+## Source compatibility after reconnect
+
+A persistent virtual device can remain valid only if the reconnected physical
+source is compatible with the capabilities represented by that virtual device.
+
+A reconnect must never silently expose events that the existing virtual device
+cannot represent correctly.
+
+When the reconnected source is compatible with the existing virtual device:
+
+- retain the existing virtual device;
+- reinitialize per-source state;
+- resume forwarding without virtual-device re-enumeration.
+
+When the reconnected source is incompatible with the existing virtual device:
+
+1. safely neutralize any active virtual input state if required;
+2. destroy the existing virtual device;
+3. create a new virtual device using the capabilities of the newly connected
+   source;
+4. initialize per-source event and synchronization state;
+5. resume normal operation.
+
+Capability incompatibility during reconnect is therefore a recoverable lifecycle
+condition, not a fatal session error.
+
+The proxy session should terminate only if creation of the replacement virtual
+device fails with an unrecoverable error.
+
+For an initial implementation, compatibility may require the relevant evdev
+identity and capability set to match the source from which the virtual device
+was created.
+
+Compatibility policy should consider at least the properties that affect
+correct event representation, including:
+
+- supported event types;
+- supported event codes;
+- absolute-axis definitions;
+- relevant input properties;
+- other capability metadata used when constructing the virtual device.
+
+The exact compatibility comparison should be defined by the implementation task
+that introduces persistent virtual-device lifetime.
 
 ## Control service
 
@@ -256,6 +384,7 @@ ACTIVE
 PAUSING
 PAUSED
 RESUMING
+SOURCE_LOST
 CLEANING_UP
 SHUTTING_DOWN
 ```
@@ -263,7 +392,16 @@ SHUTTING_DOWN
 A general-purpose state-machine framework is not required. A clear state enum
 and explicit transition loop are preferred.
 
+`SOURCE_LOST` and `CLEANING_UP` have different purposes.
+
+`SOURCE_LOST` handles recoverable physical-source loss while preserving the
+logical proxy instance and its virtual device.
+
+`CLEANING_UP` handles final or unrecoverable session teardown.
+
 ## Core lifecycle
+
+Initial startup follows:
 
 ```text
 STARTING
@@ -275,17 +413,21 @@ WAITING_FOR_SOURCE
     v
 CREATING_PROXY
     |
-    | proxy created and pause not requested
+    | source opened
+    | virtual device created or validated
+    | pause not requested
     v
 ACTIVE
 ```
 
-If pause has already been requested when the proxy is created:
+If pause has already been requested when the proxy becomes connected:
 
 ```text
 CREATING_PROXY
     |
-    | proxy created and pause requested
+    | source opened
+    | virtual device created or validated
+    | pause requested
     v
 PAUSED
 ```
@@ -297,13 +439,32 @@ ACTIVE / PAUSING / PAUSED / RESUMING
     |
     | source disconnected
     v
-CLEANING_UP
+SOURCE_LOST
     |
+    | virtual state neutralized where required
+    | physical source released
+    | virtual device retained
     v
 WAITING_FOR_SOURCE
 ```
 
-The requested pause state survives this cleanup and reconnect cycle.
+When the source returns:
+
+```text
+WAITING_FOR_SOURCE
+    |
+    | source becomes available
+    v
+CREATING_PROXY
+    |
+    | source reopened
+    | compatibility validated
+    | existing virtual device retained
+    v
+ACTIVE / PAUSED
+```
+
+The requested pause state survives the source-loss and reconnect cycle.
 
 Shutdown may be requested from any state:
 
@@ -313,6 +474,19 @@ any state
     | SIGINT or SIGTERM
     v
 SHUTTING_DOWN
+    |
+    v
+EXIT
+```
+
+An unrecoverable session failure may transition through:
+
+```text
+any active lifecycle state
+    |
+    | fatal failure
+    v
+CLEANING_UP
     |
     v
 EXIT
@@ -338,6 +512,7 @@ requested control interface is not acceptable.
 ### WAITING_FOR_SOURCE
 
 - wait efficiently for the configured source path;
+- keep the persistent virtual device present if one has already been created;
 - keep the control interface responsive;
 - accept pause and resume requests;
 - preserve the requested pause state;
@@ -347,19 +522,41 @@ requested control interface is not acceptable.
 
 A missing source is a normal operating condition, not an error.
 
+If the virtual device already exists from an earlier connection, source absence
+must not cause it to be destroyed or recreated.
+
+Before the first successful source connection, the virtual device may not yet
+exist because its capabilities are derived from the physical source.
+
 ### CREATING_PROXY
 
 - open the source device;
 - initialize its libevdev representation;
 - inspect its identity and capabilities;
-- create the corresponding virtual uinput device;
-- select the initial connected state from the requested pause state.
+- create the virtual uinput device if one does not already exist;
+- otherwise validate that the reconnected source is compatible with the
+  existing virtual device;
+- initialize per-source event and synchronization state;
+- select the connected state from the requested pause state.
 
-If the source disappears during creation, release partial resources and return
-to `WAITING_FOR_SOURCE`.
+If the source disappears during creation, release only partial source resources
+and return to `WAITING_FOR_SOURCE`.
+
+An already-existing persistent virtual device must not be destroyed merely
+because the reconnect attempt failed transiently.
 
 A device that exists but is permanently incompatible may be treated as an
 error, provided the diagnostic clearly explains the incompatibility.
+
+If an existing virtual device cannot safely represent the capabilities of the
+reconnected source, the session must:
+
+- destroy the existing virtual device;
+- create a replacement virtual device from the new source capabilities;
+- continue the session using the replacement device.
+
+This replacement is a recoverable lifecycle transition and must not terminate
+the proxy session merely because the physical source capabilities changed.
 
 ### ACTIVE
 
@@ -398,7 +595,7 @@ directly from `ACTIVE` to `PAUSED`.
 
 During `PAUSED`, the session must:
 
-- keep the source open;
+- keep the source open while it remains available;
 - keep the virtual device present;
 - continue consuming source events;
 - update tracked source interaction state;
@@ -415,6 +612,10 @@ A source event received while paused is still significant for:
 - activity notification.
 
 It is not significant for virtual-device delivery.
+
+If the source disappears while paused, the requested paused state is preserved,
+the virtual device remains present, and the session transitions through
+`SOURCE_LOST` to `WAITING_FOR_SOURCE`.
 
 ### RESUMING
 
@@ -436,23 +637,68 @@ directly from `PAUSED` to `ACTIVE`.
 The first interaction that begins after entering `ACTIVE` is forwarded
 normally.
 
+### SOURCE_LOST
+
+`SOURCE_LOST` is entered when the active physical source disconnects.
+
+During `SOURCE_LOST`, the session must:
+
+- preserve the virtual device whenever safely possible;
+- ensure that the virtual device is not left with stuck momentary state;
+- close and release the physical source;
+- reset per-source event and synchronization state;
+- reset or rebuild source-interaction tracking as appropriate;
+- preserve session-level state, including requested pause state;
+- transition to `WAITING_FOR_SOURCE`.
+
+Source loss is not normal session shutdown.
+
+The virtual device should not be destroyed merely because the physical source
+temporarily disappeared.
+
+Any state exposed to the virtual device that could remain active after loss of
+the physical source must be neutralized before waiting indefinitely for a
+reconnect.
+
+For momentary input state, this includes at least:
+
+- pressed `EV_KEY` codes;
+- pressed mouse or touch buttons;
+- `BTN_TOUCH`;
+- active multitouch contacts represented by nonnegative
+  `ABS_MT_TRACKING_ID` values.
+
+Neutralization must end with an appropriate synchronization boundary such as
+`SYN_REPORT`.
+
+The implementation must avoid inventing source events that are unnecessary for
+returning the virtual device to a safe neutral state.
+
 ### CLEANING_UP
 
-- destroy the virtual device;
-- close the physical source;
-- release all per-device resources;
-- reset per-device event and synchronization state;
-- preserve process-level control state, including the requested pause state;
-- return to `WAITING_FOR_SOURCE`.
+`CLEANING_UP` is used for final or unrecoverable session teardown rather than
+ordinary source reconnect handling.
+
+It must:
+
+- stop normal event processing;
+- close the physical source if present;
+- destroy the virtual device if present;
+- release all remaining per-device resources;
+- reset event, synchronization, and interaction state;
+- prepare the session for final shutdown or fatal exit.
 
 Cleanup must be safe when initialization completed only partially.
+
+Normal source disconnect and reconnect must not pass through `CLEANING_UP` merely
+to destroy and recreate the virtual device.
 
 ### SHUTTING_DOWN
 
 - stop accepting new work;
 - stop waiting for or reading the source;
-- destroy any active virtual device;
-- close the source device;
+- close the physical source if present;
+- destroy the persistent virtual device;
 - unregister and close the control service;
 - release all resources;
 - exit cleanly.
@@ -489,10 +735,13 @@ forwarding_suppressed
 These values must not be treated as interchangeable.
 
 If pause is requested while the source is unavailable, `pause_requested` is
-stored. The next successfully created proxy begins in `PAUSED`.
+stored. The next successfully connected source begins in `PAUSED`.
 
 If resume is requested while the source is unavailable, the stored request is
-cleared. The next successfully created proxy begins in `ACTIVE`.
+cleared. The next successfully connected source begins in `ACTIVE`.
+
+The persistent virtual device remains present across these source-unavailable
+states once it has been successfully created.
 
 ## Clean input-state boundary
 
@@ -515,6 +764,9 @@ completed `SYN_REPORT` as a boundary, subject to activity coalescing.
 
 The interaction-state tracker belongs to the proxy session or to a focused
 session-owned helper. It must not be hidden inside the D-Bus transport.
+
+The same interaction-state knowledge should be reusable for virtual-device
+neutralization after source loss.
 
 The implementation should remain generic, but touchscreen and multitouch
 correctness are required validation cases.
@@ -604,9 +856,12 @@ While `PAUSED` or `RESUMING`:
 - forwarding remains suppressed;
 - clean-boundary eligibility is reevaluated from the recovered state.
 
-While `PAUSING`, recovery must not leave the virtual device stuck. The precise
-strategy for reconciling already-forwarded virtual state should be defined in
-the synchronization-recovery implementation issue.
+While `PAUSING`, recovery must not leave the virtual device stuck. Recovered
+events must pass through the same session-level event policy used by ordinary
+source events.
+
+Synchronization recovery and source-loss neutralization must share the same
+authoritative understanding of virtual interaction state where practical.
 
 ## Event-loop and concurrency model
 
@@ -640,10 +895,17 @@ transitions.
 All state transitions should be centralized so that logging, D-Bus property
 updates, cleanup, and tests observe the same state changes.
 
+Resource lifetimes must follow the lifecycle model explicitly:
+
+- source resources follow physical-source availability;
+- the virtual device follows proxy-session lifetime whenever compatible and
+  healthy;
+- control resources follow proxy-session lifetime.
+
 ## One process per device
 
 Each process manages exactly one proxy session and therefore proxies exactly one
-source device.
+logical source device.
 
 Multiple devices are handled through multiple process instances, typically
 managed by systemd.
@@ -661,6 +923,9 @@ instances reliably.
 The internal session abstraction should remain self-contained, but this does
 not imply future support for multiple sessions inside one process.
 
+A temporary disconnect does not change the logical identity of the proxy
+instance.
+
 ## Platform constraints
 
 Some Linux evdev/uinput behaviours are constrained by the kernel interface
@@ -676,6 +941,10 @@ Examples include:
 
 Platform limitations discovered during hardware validation should be recorded
 rather than hidden behind misleading configuration options.
+
+The persistent virtual-device model intentionally avoids unnecessary kernel
+device removal and re-creation when the backing physical source disappears
+temporarily.
 
 ## Non-goals
 
