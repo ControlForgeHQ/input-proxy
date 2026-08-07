@@ -62,6 +62,47 @@ static char *duplicate_string(const char *source)
     return copy;
 }
 
+static enum input_proxy_result process_read_event(
+    struct input_proxy_session *session,
+    struct input_proxy_virtual_device *virtual_device,
+    const struct input_event *event)
+{
+    (void)session;
+
+    return input_proxy_virtual_device_write_event(virtual_device, event);
+}
+
+static enum input_proxy_result recover_synchronization(
+    struct input_proxy_session *session,
+    struct input_proxy_source_device *source_device,
+    struct input_proxy_virtual_device *virtual_device)
+{
+    struct input_event event;
+    enum input_proxy_result result;
+
+    for (;;) {
+        result = input_proxy_source_device_read_sync_event(
+            source_device,
+            &event
+        );
+        if (result == INPUT_PROXY_EVENT_UNAVAILABLE) {
+            return INPUT_PROXY_SUCCESS;
+        }
+        if (result != INPUT_PROXY_SUCCESS) {
+            return result;
+        }
+
+        result = process_read_event(
+            session,
+            virtual_device,
+            &event
+        );
+        if (result != INPUT_PROXY_SUCCESS) {
+            return result;
+        }
+    }
+}
+
 enum input_proxy_result input_proxy_session_create(
     struct input_proxy_session **session,
     const struct input_proxy_session_config *config)
@@ -171,11 +212,18 @@ enum input_proxy_result input_proxy_session_process_event(
     }
 
     result = input_proxy_source_device_read_event(source_device, &event);
+    if (result == INPUT_PROXY_EVENT_SYNC_REQUIRED) {
+        return recover_synchronization(
+            session,
+            source_device,
+            virtual_device
+        );
+    }
     if (result != INPUT_PROXY_SUCCESS) {
         return result;
     }
 
-    return input_proxy_virtual_device_write_event(virtual_device, &event);
+    return process_read_event(session, virtual_device, &event);
 }
 
 void input_proxy_session_request_shutdown(

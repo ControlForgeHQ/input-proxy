@@ -14,8 +14,10 @@ static enum input_proxy_result write_result;
 static enum input_proxy_result open_result;
 static enum input_proxy_result create_result;
 static enum input_proxy_result read_results[8];
+static enum input_proxy_result sync_read_results[8];
+static struct input_event sync_events[8];
 static struct input_event source_event;
-static struct input_event written_events[2];
+static struct input_event written_events[8];
 static char operations[8];
 static int operation_count;
 static int open_calls;
@@ -25,6 +27,8 @@ static int destroy_calls;
 static int read_calls;
 static int write_calls;
 static int read_result_count;
+static int sync_read_calls;
+static int sync_read_result_count;
 static int sleep_calls;
 static int sleep_duration_failures;
 
@@ -107,13 +111,31 @@ enum input_proxy_result input_proxy_source_device_read_event(
     return read_result;
 }
 
+enum input_proxy_result input_proxy_source_device_read_sync_event(
+    struct input_proxy_source_device *device,
+    struct input_event *event)
+{
+    enum input_proxy_result result;
+
+    (void)device;
+    result = sync_read_results[sync_read_calls];
+    if (sync_read_calls < sync_read_result_count) {
+        sync_read_calls++;
+    }
+    if (result == INPUT_PROXY_SUCCESS) {
+        *event = sync_events[sync_read_calls - 1];
+    }
+
+    return result;
+}
+
 enum input_proxy_result input_proxy_virtual_device_write_event(
     struct input_proxy_virtual_device *device,
     const struct input_event *event)
 {
     (void)device;
 
-    if (write_calls < 2) {
+    if (write_calls < 8) {
         written_events[write_calls] = *event;
     }
     write_calls++;
@@ -164,6 +186,8 @@ static void reset_runtime(void)
     read_calls = 0;
     write_calls = 0;
     read_result_count = 0;
+    sync_read_calls = 0;
+    sync_read_result_count = 0;
     sleep_calls = 0;
     sleep_duration_failures = 0;
     memset(operations, 0, sizeof(operations));
@@ -297,6 +321,8 @@ int main(void)
     failures += expect_no_write("event unavailable", previous_write_calls);
 
     read_result = INPUT_PROXY_EVENT_SYNC_REQUIRED;
+    sync_read_results[0] = INPUT_PROXY_EVENT_UNAVAILABLE;
+    sync_read_result_count = 1;
     previous_write_calls = write_calls;
     failures += expect_result(
         "synchronization required",
@@ -305,9 +331,64 @@ int main(void)
             source_device,
             virtual_device
         ),
-        INPUT_PROXY_EVENT_SYNC_REQUIRED
+        INPUT_PROXY_SUCCESS
     );
     failures += expect_no_write("synchronization required", previous_write_calls);
+
+    sync_read_results[0] = INPUT_PROXY_SUCCESS;
+    sync_read_results[1] = INPUT_PROXY_SUCCESS;
+    sync_read_results[2] = INPUT_PROXY_EVENT_UNAVAILABLE;
+    sync_events[0] = (struct input_event) {
+        .type = EV_KEY, .code = KEY_C, .value = 1
+    };
+    sync_events[1] = (struct input_event) {
+        .type = EV_SYN, .code = SYN_REPORT, .value = 0
+    };
+    sync_read_calls = 0;
+    sync_read_result_count = 3;
+    failures += expect_result(
+        "multiple synchronization events",
+        input_proxy_session_process_event(session, source_device, virtual_device),
+        INPUT_PROXY_SUCCESS
+    );
+    if (write_calls != previous_write_calls + 2 ||
+        memcmp(&written_events[previous_write_calls], &sync_events[0],
+               sizeof(sync_events[0])) != 0 ||
+        memcmp(&written_events[previous_write_calls + 1], &sync_events[1],
+               sizeof(sync_events[1])) != 0) {
+        fprintf(stderr, "synchronization events were changed or reordered\n");
+        failures++;
+    }
+
+    sync_read_results[0] = INPUT_PROXY_ERROR_SOURCE_DISCONNECTED;
+    sync_read_calls = 0;
+    sync_read_result_count = 1;
+    failures += expect_result(
+        "sync source disconnected",
+        input_proxy_session_process_event(session, source_device, virtual_device),
+        INPUT_PROXY_ERROR_SOURCE_DISCONNECTED
+    );
+
+    sync_read_results[0] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+    sync_read_calls = 0;
+    failures += expect_result(
+        "sync read failure",
+        input_proxy_session_process_event(session, source_device, virtual_device),
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED
+    );
+
+    sync_read_results[0] = INPUT_PROXY_SUCCESS;
+    sync_events[0] = (struct input_event) {
+        .type = EV_KEY, .code = KEY_D, .value = 0
+    };
+    sync_read_calls = 0;
+    write_result = INPUT_PROXY_ERROR_EVENT_WRITE_FAILED;
+    failures += expect_result(
+        "sync write failure",
+        input_proxy_session_process_event(session, source_device, virtual_device),
+        INPUT_PROXY_ERROR_EVENT_WRITE_FAILED
+    );
+    write_result = INPUT_PROXY_SUCCESS;
 
     read_result = INPUT_PROXY_ERROR_SOURCE_DISCONNECTED;
     previous_write_calls = write_calls;
@@ -355,7 +436,7 @@ int main(void)
         INPUT_PROXY_ERROR_EVENT_WRITE_FAILED
     );
 
-    if (read_calls != 7 || write_calls != 3) {
+    if (read_calls != 11 || write_calls != 6) {
         fprintf(
             stderr,
             "unexpected call counts: reads=%d writes=%d\n",
@@ -399,13 +480,22 @@ int main(void)
     read_results[2] = INPUT_PROXY_SUCCESS;
     read_results[3] = INPUT_PROXY_EVENT_SYNC_REQUIRED;
     read_result_count = 4;
+    sync_read_results[0] = INPUT_PROXY_SUCCESS;
+    sync_read_results[1] = INPUT_PROXY_EVENT_UNAVAILABLE;
+    sync_events[0] = (struct input_event) {
+        .type = EV_SYN, .code = SYN_REPORT, .value = 0
+    };
+    sync_read_result_count = 2;
+    read_results[4] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+    read_result_count = 5;
     failures += run_runtime_test(
         "runtime event loop",
         &config,
-        INPUT_PROXY_EVENT_SYNC_REQUIRED
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED
     );
-    if (open_calls != 1 || create_calls != 1 || read_calls != 4 ||
-        write_calls != 2 || destroy_calls != 1 || close_calls != 1 ||
+    if (open_calls != 1 || create_calls != 1 || read_calls != 5 ||
+        sync_read_calls != 2 || write_calls != 3 ||
+        destroy_calls != 1 || close_calls != 1 ||
         sleep_calls != 1 || sleep_duration_failures != 0 ||
         strcmp(operations, "DC") != 0) {
         fprintf(stderr, "runtime event loop: unexpected lifecycle calls\n");

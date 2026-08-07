@@ -8,6 +8,7 @@
 static int new_from_fd_result = -ENOTTY;
 static int next_event_result;
 static int next_event_calls;
+static unsigned int expected_next_event_flags = LIBEVDEV_READ_FLAG_NORMAL;
 static int next_event_flag_failures;
 static struct input_event next_event;
 static struct libevdev *const test_evdev = (struct libevdev *)1;
@@ -33,7 +34,7 @@ int libevdev_next_event(
     struct input_event *event)
 {
     next_event_calls++;
-    if (device != test_evdev || flags != LIBEVDEV_READ_FLAG_NORMAL) {
+    if (device != test_evdev || flags != expected_next_event_flags) {
         next_event_flag_failures++;
     }
     if (next_event_result == LIBEVDEV_READ_STATUS_SUCCESS ||
@@ -190,7 +191,56 @@ int main(void)
         INPUT_PROXY_ERROR_EVENT_READ_FAILED
     );
 
-    if (next_event_calls != 6 || next_event_flag_failures != 0) {
+    failures += expect_result(
+        "null sync read device",
+        input_proxy_source_device_read_sync_event(NULL, &event),
+        INPUT_PROXY_ERROR_INVALID_ARGUMENT
+    );
+    failures += expect_result(
+        "null sync read event",
+        input_proxy_source_device_read_sync_event(device, NULL),
+        INPUT_PROXY_ERROR_INVALID_ARGUMENT
+    );
+
+    expected_next_event_flags = LIBEVDEV_READ_FLAG_SYNC;
+    next_event = (struct input_event) {
+        .type = EV_KEY,
+        .code = KEY_B,
+        .value = 1
+    };
+    next_event_result = LIBEVDEV_READ_STATUS_SYNC;
+    failures += expect_result(
+        "successful synchronization event read",
+        input_proxy_source_device_read_sync_event(device, &event),
+        INPUT_PROXY_SUCCESS
+    );
+    if (memcmp(&event, &next_event, sizeof(event)) != 0) {
+        fprintf(stderr, "successful sync read: event was not preserved\n");
+        failures++;
+    }
+
+    next_event_result = -EAGAIN;
+    failures += expect_result(
+        "synchronization complete",
+        input_proxy_source_device_read_sync_event(device, &event),
+        INPUT_PROXY_EVENT_UNAVAILABLE
+    );
+
+    next_event_result = -ENODEV;
+    failures += expect_result(
+        "sync source disconnected",
+        input_proxy_source_device_read_sync_event(device, &event),
+        INPUT_PROXY_ERROR_SOURCE_DISCONNECTED
+    );
+
+    next_event_result = -EIO;
+    failures += expect_result(
+        "unrecoverable sync read error",
+        input_proxy_source_device_read_sync_event(device, &event),
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED
+    );
+
+    if (next_event_calls != 10 || next_event_flag_failures != 0) {
         fprintf(
             stderr,
             "unexpected event reads: calls=%d flag failures=%d\n",

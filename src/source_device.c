@@ -107,6 +107,36 @@ enum input_proxy_result input_proxy_source_device_read_event(
     return INPUT_PROXY_ERROR_EVENT_READ_FAILED;
 }
 
+enum input_proxy_result input_proxy_source_device_read_sync_event(
+    struct input_proxy_source_device *device,
+    struct input_event *event)
+{
+    int libevdev_result;
+
+    if (device == NULL || event == NULL) {
+        return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
+    }
+
+    libevdev_result = libevdev_next_event(
+        device->evdev,
+        LIBEVDEV_READ_FLAG_SYNC,
+        event
+    );
+
+    if (libevdev_result == LIBEVDEV_READ_STATUS_SUCCESS ||
+        libevdev_result == LIBEVDEV_READ_STATUS_SYNC) {
+        return INPUT_PROXY_SUCCESS;
+    }
+    if (libevdev_result == -EAGAIN) {
+        return INPUT_PROXY_EVENT_UNAVAILABLE;
+    }
+    if (libevdev_result == -ENODEV || libevdev_result == -ENXIO) {
+        return INPUT_PROXY_ERROR_SOURCE_DISCONNECTED;
+    }
+
+    return INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+}
+
 const struct libevdev *input_proxy_source_device_get_libevdev(
     const struct input_proxy_source_device *device)
 {
