@@ -1212,3 +1212,64 @@ language.
 
 Display and automation responsibilities belong to software above or alongside
 the runtime proxy.
+
+## Runtime permissions
+
+`input-proxy` does not inherently require root privileges.
+
+The runtime process requires sufficient operating-system permissions to:
+
+- read the configured physical evdev source device;
+- open `/dev/uinput` for creation and operation of the virtual input device.
+
+These permissions should be provided through normal Linux device ownership and
+group membership rather than by running `input-proxy` as root.
+
+The primary supported deployment environment is Raspberry Pi OS, where normal
+interactive users are commonly granted membership in the `input` group and
+physical evdev devices are normally exposed as `root:input` with group
+read/write access.
+
+The preferred Raspberry Pi OS runtime model is therefore:
+
+```text
+physical evdev device
+    owner: root
+    group: input
+    mode: 0660
+
+/dev/uinput
+    owner: root
+    group: input
+    mode: 0660
+
+input-proxy user
+    member of input
+```
+
+With these permissions, `input-proxy` should run without `sudo` or root
+privileges.
+
+On systems where `/dev/uinput` is created as `root:root` with mode `0600`, a
+udev static-node rule may be used to grant the `input` group access:
+
+```udev
+KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"
+```
+
+Because `/dev/uinput` may be created as a static device node, applying this rule
+may require a reboot before the resulting ownership and mode are visible.
+
+Other Linux distributions may use different default user-group membership or
+device permissions. Installation procedures must verify the effective
+permissions rather than assuming that the invoking user belongs to `input`.
+
+`input-proxy` must not require:
+
+- sudoers configuration;
+- a setuid-root executable;
+- execution of the runtime process as root;
+- direct systemd or journald integration.
+
+Running the application through `sudo` may be useful during development or
+troubleshooting, but it is not the intended deployed runtime model. 

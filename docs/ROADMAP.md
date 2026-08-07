@@ -341,6 +341,15 @@ No general-purpose configuration-file format is planned. Files generated for
 systemd, D-Bus, or udev are deployment artifacts, not an application
 configuration interface.
 
+The installer should verify that the selected runtime user has access to both the
+configured physical input device and `/dev/uinput`.
+
+On Raspberry Pi OS, the preferred default is to use the existing `input` group
+and install the required `/dev/uinput` udev static-node rule when necessary.
+
+The installer should not require sudoers changes, setuid binaries, or execution
+of the long-running proxy process as root.
+
 ---
 
 # Explicit non-goals

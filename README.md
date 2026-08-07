@@ -40,3 +40,58 @@ Run the hardware-independent tests with:
 ```sh
 ctest --test-dir build --output-on-failure
 ```
+
+## Permissions
+
+`input-proxy` does not need to run as root, but the running user must be able to
+read the physical evdev source and access `/dev/uinput`.
+
+On Raspberry Pi OS, the normal user is typically a member of the `input` group,
+and physical input devices are normally already accessible through that group.
+
+Check your current configuration with:
+
+```bash
+id
+ls -l /dev/input/event0
+ls -l /dev/uinput
+```
+
+A typical physical source looks like:
+
+```text
+crw-rw---- root input ... /dev/input/event0
+```
+
+If `/dev/uinput` is instead:
+
+```text
+crw------- root root ... /dev/uinput
+```
+
+create:
+
+```text
+/etc/udev/rules.d/70-input-proxy-uinput.rules
+```
+
+containing:
+
+```udev
+KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"
+```
+
+Then reboot and verify:
+
+```bash
+ls -l /dev/uinput
+```
+
+The expected result is:
+
+```text
+crw-rw---- root input ... /dev/uinput
+```
+
+Once both the physical source and `/dev/uinput` are accessible through the
+`input` group, run `input-proxy` normally without `sudo`.
