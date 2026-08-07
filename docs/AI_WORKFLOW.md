@@ -23,12 +23,19 @@ The recommended implementation workflow is:
 2. Create a GitHub Issue describing that capability.
 3. Include validation requirements in the issue.
 4. Launch an AI implementation agent using the standard implementation prompt.
-5. Review the resulting pull request.
-6. Perform manual hardware validation where required.
-7. Merge after successful review.
+5. Review the resulting draft pull request.
+6. Record requested changes as normal GitHub review comments or PR discussion.
+7. If changes are requested, launch the agent using the standard PR update prompt.
+8. Re-review the updated pull request.
+9. Perform manual hardware validation where required.
+10. Record significant validation results or limitations in the pull request.
+11. Merge after successful review and validation.
 
 Each issue should represent one reviewable capability rather than a complete
 feature whenever practical.
+
+GitHub should remain the durable record of implementation, review feedback,
+revision responses, and validation results.
 
 ---
 
@@ -74,22 +81,65 @@ If any requirement appears ambiguous, ask for clarification before making archit
 
 ---
 
+## Standard PR update prompt
+
+Use the following prompt when an implementation agent needs to address review
+feedback on an existing pull request.
+
+```text
+Read the latest unresolved review comments and discussion on PR #<pull request number>.
+
+Address only the requested review feedback.
+
+Keep the changes strictly limited to the review comments unless you discover a genuine blocker, in which case stop and explain the blocker rather than broadening the scope automatically.
+
+After making the changes:
+
+- rerun the validation required by the implementation issue;
+- update the existing draft PR rather than creating a new PR;
+- add a comment to the PR summarizing:
+  - what changed;
+  - validation performed;
+  - any assumptions made;
+  - whether any requested review items could not be completed.
+
+Do not merge the PR, modify unrelated files, or open additional issues.
+```
+
+The PR comment is part of the required workflow.
+
+It should provide a durable response to the review request so that the complete
+request-response path remains visible in GitHub without requiring access to the
+agent conversation.
+
+---
+
 ## Prompt philosophy
 
-The implementation prompt intentionally contains very little project-specific
-information.
+The implementation and PR-update prompts intentionally contain very little
+project-specific information.
 
-Project knowledge belongs in the repository, not in the prompt.
+Project knowledge belongs in the repository and GitHub issue or review history,
+not in the launch prompt.
 
-The authoritative sources are:
+The authoritative sources for initial implementation are:
 
 - GitHub Issue
 - AGENTS.md
 - docs/ARCHITECTURE.md
 - docs/ENGINEERING.md
 
-Keeping implementation details in one place avoids duplicated specifications and
-reduces the likelihood of documentation drift.
+For revision work, the authoritative sources additionally include:
+
+- the existing pull request;
+- unresolved review comments;
+- relevant PR discussion.
+
+Keeping implementation details in one place avoids duplicated specifications
+and reduces the likelihood of documentation drift.
+
+The launch prompt should direct the agent to authoritative project information,
+not duplicate that information.
 
 ---
 
@@ -100,34 +150,101 @@ contributors.
 
 Typical review topics include:
 
-- correctness
-- scope
-- architecture
-- public API
-- ownership
-- cleanup
-- regression tests
-- validation
-- documentation
+- correctness;
+- scope;
+- architecture;
+- public API;
+- ownership;
+- cleanup;
+- regression tests;
+- validation;
+- documentation.
 
 Successful review does not imply successful hardware validation.
+
+Review feedback should normally be recorded through GitHub review comments or
+PR discussion rather than supplied only through a separate agent conversation.
+
+This preserves the rationale for requested changes and allows both humans and
+implementation agents to work from the same review history.
+
+---
+
+## Review and revision cycle
+
+An agent-authored pull request is not expected to bypass normal review simply
+because its implementation followed a detailed issue.
+
+The normal revision cycle is:
+
+```text
+implementation issue
+    |
+    v
+agent implementation
+    |
+    v
+draft pull request
+    |
+    v
+human review
+    |
+    +-- no changes requested --> validation
+    |
+    +-- changes requested
+            |
+            v
+       GitHub review comments
+            |
+            v
+       agent revision
+            |
+            v
+       PR response summary
+            |
+            v
+       human re-review
+```
+
+When changes are requested:
+
+- record the requested change and rationale in GitHub;
+- ask the agent to read and address the existing review feedback;
+- avoid restating detailed technical feedback in the agent prompt unless access
+  to the GitHub discussion fails;
+- require the agent to update the existing PR rather than creating a replacement;
+- require validation to be rerun after the change;
+- require the agent to post a summary of its response to the PR discussion.
+
+The PR description should remain the summary of the original implementation.
+
+Revision summaries should normally be added as PR comments so that the evolution
+of the implementation remains visible chronologically.
 
 ---
 
 ## Hardware validation
 
-Hardware validation is considered part of code review, not part of implementation.
+Hardware validation is considered part of code review, not part of
+implementation.
 
 When functionality depends on physical hardware:
 
-- Implement hardware-independent regression tests where practical.
-- Clearly report any validation that could not be performed.
-- Do not fabricate or infer hardware validation.
-- Perform manual hardware validation before merging whenever possible.
-- Record significant platform limitations discovered during validation.
+- implement hardware-independent regression tests where practical;
+- clearly report any validation that could not be performed;
+- do not fabricate or infer hardware validation;
+- perform manual hardware validation before merging whenever possible;
+- record significant platform limitations discovered during validation;
+- add useful hardware-validation results to the pull request discussion when
+  they materially increase confidence in the implementation.
 
 Temporary validation programs may be created outside the tracked source tree or
 inside ignored build directories but should not be committed.
+
+For event-oriented hardware tests, reporting both complete synchronization
+frames and raw event counts is preferred when useful. Raw event counts alone
+can be misleading for devices such as touchscreens that generate many events
+per physical interaction.
 
 ---
 
@@ -145,12 +262,16 @@ If an issue cannot be completed without changing the documented architecture,
 the preferred behaviour is to stop and explain the blocker rather than making
 architectural assumptions.
 
+Review feedback should correct architectural or implementation problems before
+merge rather than accepting temporary public interfaces or abstractions that
+are known to become obsolete in the next development step.
+
 ---
 
 ## Continuous improvement
 
 This workflow should evolve as experience is gained.
 
-Changes that consistently improve implementation quality, review quality, or
-validation quality should be incorporated into this document so future
-contributors benefit from them.
+Changes that consistently improve implementation quality, review quality,
+traceability, or validation quality should be incorporated into this document
+so future contributors benefit from them.
