@@ -135,6 +135,8 @@ It is responsible for:
 - assigning its configured name;
 - reproducing supported source identity and capabilities;
 - injecting events when instructed by the proxy session;
+- exposing enough information to inspect the kernel-visible state of the
+  resulting evdev device when required by session policy;
 - destroying the virtual device;
 - safely cleaning up partially initialized resources.
 
@@ -144,6 +146,7 @@ It should not:
 - decide whether an event should be forwarded;
 - implement pause-state transitions;
 - implement source reconnect policy;
+- decide when virtual state must be neutralized;
 - receive D-Bus control requests.
 
 The virtual device represents the stable logical input device exposed by the
@@ -166,7 +169,7 @@ The virtual device may still be destroyed when:
 
 - initial virtual-device creation fails;
 - a reconnected source is incompatible with the capabilities represented by the
-  existing virtual device and safe continuation is impossible;
+  existing virtual device and replacement is required;
 - an unrecoverable virtual-device failure occurs;
 - the proxy session shuts down.
 
@@ -187,7 +190,7 @@ proxy session
     |
     +-- virtual device
     |       created once when possible
-    |       remains present across source loss
+    |       remains present across compatible source loss/reconnect
     |
     +-- physical source
             connect
@@ -200,22 +203,89 @@ proxy session
 When the physical source disconnects:
 
 1. the session stops consuming events from the lost source;
-2. any virtual interaction state that could remain logically active is returned
-   to a neutral state where required;
-3. the physical source is closed and its per-source state discarded;
-4. the virtual device remains present whenever safely possible;
-5. the session returns to waiting for the configured source;
-6. when the source returns, it is reopened and validated against the existing
+2. the session queries the persistent virtual device's kernel-visible state;
+3. any momentary virtual state that remains logically active is explicitly
+   returned to a neutral state;
+4. the physical source is closed and its per-source state discarded;
+5. the virtual device remains present;
+6. the session returns to waiting for the configured source;
+7. when the source returns, it is reopened and validated against the existing
    virtual device;
-7. forwarding resumes without recreating the virtual device when compatibility
+8. forwarding resumes without recreating the virtual device when compatibility
    permits.
 
 The proxy must not leave keys, buttons, touch contacts, multitouch contacts, or
 other momentary input state logically active on the virtual device after source
 loss.
 
-The precise neutralization mechanism belongs to session-level event-state policy
-and must work consistently with future pause-state tracking.
+Source-loss neutralization should use the kernel-visible state of the persistent
+virtual evdev device as the authoritative source of current virtual state.
+
+The session should not maintain a duplicate shadow copy of forwarded virtual
+state solely for source-loss neutralization when the kernel can report that
+state directly and reliably.
+
+## Kernel-visible virtual state
+
+The Linux input subsystem maintains current state for stateful evdev controls.
+
+The event node created for the persistent virtual uinput device is therefore the
+authoritative source for determining which momentary states are currently
+visible to consumers.
+
+When source-loss neutralization is required, the proxy should query the virtual
+device's evdev state rather than infer current state from previously forwarded
+events.
+
+Relevant queryable state includes at least:
+
+- currently pressed `EV_KEY` codes;
+- `BTN_TOUCH`;
+- active Type-B multitouch slots;
+- each slot's current `ABS_MT_TRACKING_ID`.
+
+A nonnegative `ABS_MT_TRACKING_ID` represents an active multitouch contact.
+
+A value of `-1` represents an unused slot.
+
+For source-loss neutralization, the proxy should emit only the events required
+to return active momentary state to neutral.
+
+Examples include:
+
+```text
+pressed EV_KEY code
+    -> same EV_KEY code with value 0
+```
+
+and:
+
+```text
+active MT slot
+    -> select ABS_MT_SLOT
+    -> ABS_MT_TRACKING_ID = -1
+```
+
+If `BTN_TOUCH` is active, it should be released as part of the same
+neutralization sequence.
+
+The neutralization sequence must end with an appropriate synchronization
+boundary such as `EV_SYN / SYN_REPORT`.
+
+Ordinary retained absolute values such as `ABS_X`, `ABS_Y`,
+`ABS_MT_POSITION_X`, `ABS_MT_POSITION_Y`, touch-major values, or other
+non-active positional state do not need to be reset merely because the source
+was lost.
+
+A blanket "set all values to zero" strategy is not acceptable because zero may
+be a meaningful non-neutral value for persistent or absolute state.
+
+Kernel-visible state should be treated as authoritative for source-loss
+neutralization unless a specific Linux input behavior is discovered that cannot
+be queried reliably through the virtual event node.
+
+Such limitations must be documented explicitly before introducing parallel
+shadow state.
 
 ## Source compatibility after reconnect
 
@@ -441,7 +511,8 @@ ACTIVE / PAUSING / PAUSED / RESUMING
     v
 SOURCE_LOST
     |
-    | virtual state neutralized where required
+    | kernel-visible virtual state queried
+    | active virtual state neutralized
     | physical source released
     | virtual device retained
     v
@@ -548,6 +619,7 @@ because the reconnect attempt failed transiently.
 If an existing virtual device cannot safely represent the capabilities of the
 reconnected source, the session must:
 
+- neutralize any active momentary state if required;
 - destroy the existing virtual device;
 - create a replacement virtual device from the new source capabilities;
 - continue the session using the replacement device.
@@ -558,12 +630,14 @@ the proxy session merely because the physical source capabilities changed.
 ### ACTIVE
 
 - read source events;
-- update tracked source interaction state;
-- forward events to the virtual device;
+- forward events through session-level event policy;
 - preserve ordering and `EV_SYN` report boundaries;
 - recover from `SYN_DROPPED`;
 - detect source loss;
 - process control and shutdown requests.
+
+The session does not need to maintain a duplicate copy of all forwarded
+virtual-device state merely to support future source-loss neutralization.
 
 ### PAUSING
 
@@ -574,8 +648,7 @@ During `PAUSING`, the session must:
 
 - continue reading source events;
 - continue forwarding the remainder of the already-started interaction;
-- continue updating interaction state;
-- wait for a clean input-state boundary;
+- determine when the source has reached a clean input-state boundary;
 - transition to `PAUSED` only after the virtual device has received the releases
   or other events needed to return it to a neutral state.
 
@@ -588,6 +661,10 @@ state becomes `PAUSED`.
 If the source is already neutral when pause is requested, the session may move
 directly from `ACTIVE` to `PAUSED`.
 
+The exact mechanism used to determine source interaction state during pause
+transitions should prefer authoritative kernel/libevdev state where practical
+rather than introducing duplicate state tracking by default.
+
 ### PAUSED
 
 During `PAUSED`, the session must:
@@ -595,17 +672,18 @@ During `PAUSED`, the session must:
 - keep the source open while it remains available;
 - keep the virtual device present;
 - continue consuming source events;
-- update tracked source interaction state;
 - suppress event delivery to the virtual device;
 - never queue suppressed events for later replay;
+- maintain enough authoritative source-state knowledge to determine clean
+  interaction boundaries;
 - emit at most one activity notification for a coalesced interaction;
 - remain responsive to resume, control, disconnect, and shutdown requests.
 
 A source event received while paused is still significant for:
 
-- maintaining current source state;
-- identifying a clean input-state boundary;
+- identifying source activity;
 - synchronization recovery;
+- determining a clean input-state boundary;
 - activity notification.
 
 It is not significant for virtual-device delivery.
@@ -622,10 +700,9 @@ during `PAUSED` remains active.
 During `RESUMING`, the session must:
 
 - continue consuming source events;
-- continue updating source interaction state;
 - continue suppressing the wake interaction;
 - avoid emitting repeated activity notifications for that same interaction;
-- wait for a clean input-state boundary;
+- determine when the source reaches a clean input-state boundary;
 - transition to `ACTIVE` only after the wake interaction has completely ended.
 
 If the source is already neutral when resume is requested, the session may move
@@ -634,6 +711,10 @@ directly from `PAUSED` to `ACTIVE`.
 The first interaction that begins after entering `ACTIVE` is forwarded
 normally.
 
+The implementation should prefer querying authoritative source kernel/libevdev
+state where practical rather than maintaining a full duplicate event-state
+model solely to determine whether the wake interaction remains active.
+
 ### SOURCE_LOST
 
 `SOURCE_LOST` is entered when the active physical source disconnects.
@@ -641,10 +722,10 @@ normally.
 During `SOURCE_LOST`, the session must:
 
 - preserve the virtual device whenever safely possible;
-- ensure that the virtual device is not left with stuck momentary state;
+- query the persistent virtual device's kernel-visible evdev state;
+- explicitly neutralize active momentary virtual state;
 - close and release the physical source;
 - reset per-source event and synchronization state;
-- reset or rebuild source-interaction tracking as appropriate;
 - preserve session-level state, including requested pause state;
 - transition to `WAITING_FOR_SOURCE`.
 
@@ -653,23 +734,29 @@ Source loss is not normal session shutdown.
 The virtual device should not be destroyed merely because the physical source
 temporarily disappeared.
 
-Any state exposed to the virtual device that could remain active after loss of
-the physical source must be neutralized before waiting indefinitely for a
-reconnect.
+Kernel-visible virtual state is authoritative for source-loss neutralization.
 
-For momentary input state, this includes at least:
+The neutralization process must inspect the current virtual state after source
+loss and emit only the releases or contact-termination events required to
+restore a safe neutral state.
 
-- pressed `EV_KEY` codes;
-- pressed mouse or touch buttons;
-- `BTN_TOUCH`;
-- active multitouch contacts represented by nonnegative
-  `ABS_MT_TRACKING_ID` values.
+For `EV_KEY`, all currently active momentary keys or buttons should be released.
 
-Neutralization must end with an appropriate synchronization boundary such as
-`SYN_REPORT`.
+For Type-B multitouch devices, every slot with a nonnegative
+`ABS_MT_TRACKING_ID` should be terminated by selecting the slot and emitting
+`ABS_MT_TRACKING_ID = -1`.
 
-The implementation must avoid inventing source events that are unnecessary for
-returning the virtual device to a safe neutral state.
+`BTN_TOUCH` and other active momentary buttons must also be released.
+
+The sequence must end with `SYN_REPORT`.
+
+Persistent or positional absolute state does not need to be cleared merely
+because the source disappeared.
+
+The session must not rely solely on the physical source driver emitting release
+events during device teardown. Such events may be forwarded when present, but
+source-loss handling must remain correct even if the source disappears without
+providing a complete neutralizing event sequence.
 
 ### CLEANING_UP
 
@@ -682,13 +769,13 @@ It must:
 - close the physical source if present;
 - destroy the virtual device if present;
 - release all remaining per-device resources;
-- reset event, synchronization, and interaction state;
+- reset event and synchronization state;
 - prepare the session for final shutdown or fatal exit.
 
 Cleanup must be safe when initialization completed only partially.
 
-Normal source disconnect and reconnect must not pass through `CLEANING_UP` merely
-to destroy and recreate the virtual device.
+Normal source disconnect and reconnect must not pass through `CLEANING_UP`
+merely to destroy and recreate the virtual device.
 
 ### SHUTTING_DOWN
 
@@ -748,7 +835,7 @@ enabled or disabled without exposing a partial interaction.
 For the initial touchscreen-focused implementation, the boundary should occur
 after a `SYN_REPORT` when no momentary input interaction remains active.
 
-Tracked active state should include at least:
+Relevant active state includes at least:
 
 - `EV_KEY` codes whose current value is nonzero;
 - `BTN_TOUCH` and other pressed buttons;
@@ -759,11 +846,18 @@ Persistent switch state does not necessarily prevent a clean boundary.
 Relative motion and other devices without an explicit held state may use a
 completed `SYN_REPORT` as a boundary, subject to activity coalescing.
 
-The interaction-state tracker belongs to the proxy session or to a focused
-session-owned helper. It must not be hidden inside the D-Bus transport.
+Where the source remains available, current physical-source state should be
+obtained from authoritative kernel/libevdev state where practical.
 
-The same interaction-state knowledge should be reusable for virtual-device
-neutralization after source loss.
+The architecture does not require a continuously maintained shadow copy of
+incoming state if the kernel can provide the required current state reliably.
+
+A focused session-owned state helper may still be introduced later if a
+specific transition or activity-coalescing requirement cannot be implemented
+correctly from kernel-visible state alone.
+
+Any such helper must have a documented reason for existing and must not become a
+second competing source of truth.
 
 The implementation should remain generic, but touchscreen and multitouch
 correctness are required validation cases.
@@ -797,6 +891,9 @@ The control service must not emit one D-Bus signal for every raw source event.
 
 The activity signal indicates only that local source activity occurred. It is
 not a transport for the suppressed event stream.
+
+The activity latch is control-flow state, not a duplicate representation of
+the physical device's complete input state.
 
 ## Wake-controller sequence
 
@@ -848,7 +945,8 @@ libevdev.
 
 While `PAUSED` or `RESUMING`:
 
-- recovered source state is used to rebuild internal interaction state;
+- recovered source state is used to restore authoritative knowledge of current
+  source state;
 - recovered events are not forwarded merely because synchronization occurred;
 - forwarding remains suppressed;
 - clean-boundary eligibility is reevaluated from the recovered state.
@@ -857,8 +955,16 @@ While `PAUSING`, recovery must not leave the virtual device stuck. Recovered
 events must pass through the same session-level event policy used by ordinary
 source events.
 
-Synchronization recovery and source-loss neutralization must share the same
-authoritative understanding of virtual interaction state where practical.
+Synchronization recovery and source-loss neutralization solve different
+problems:
+
+- synchronization recovery reconstructs the current physical-source state after
+  source events were lost;
+- source-loss neutralization queries and corrects the current persistent
+  virtual-device state after the physical source is no longer available.
+
+Neither mechanism should require a duplicate shadow event-state model when the
+kernel and libevdev can provide the necessary authoritative state.
 
 ## Event-loop and concurrency model
 
@@ -898,6 +1004,9 @@ Resource lifetimes must follow the lifecycle model explicitly:
 - the virtual device follows proxy-session lifetime whenever compatible and
   healthy;
 - control resources follow proxy-session lifetime.
+
+Kernel-visible input state should remain authoritative wherever the operating
+system exposes the state needed for a lifecycle decision.
 
 ## One process per device
 
@@ -942,6 +1051,15 @@ rather than hidden behind misleading configuration options.
 The persistent virtual-device model intentionally avoids unnecessary kernel
 device removal and re-creation when the backing physical source disappears
 temporarily.
+
+Hardware validation has confirmed that current `EV_KEY` state and Type-B
+multitouch slot state can be queried from the virtual evdev node after being
+written through uinput. This supports using the kernel-visible virtual state as
+the source of truth for source-loss neutralization.
+
+The implementation must still handle platforms or device classes conservatively
+if future testing identifies state that cannot be queried or neutralized safely
+through the standard evdev/uinput interfaces.
 
 ## Non-goals
 
