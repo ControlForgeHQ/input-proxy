@@ -459,7 +459,7 @@ CREATING_PROXY
     |
     | source reopened
     | compatibility validated
-    | existing virtual device retained
+    | virtual device retained or replaced as required
     v
 ACTIVE / PAUSED
 ```
@@ -544,9 +544,6 @@ and return to `WAITING_FOR_SOURCE`.
 
 An already-existing persistent virtual device must not be destroyed merely
 because the reconnect attempt failed transiently.
-
-A device that exists but is permanently incompatible may be treated as an
-error, provided the diagnostic clearly explains the incompatibility.
 
 If an existing virtual device cannot safely represent the capabilities of the
 reconnected source, the session must:

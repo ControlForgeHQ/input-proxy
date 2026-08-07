@@ -60,6 +60,7 @@ When the source reconnects, the proxy should:
 Capability changes across reconnect are therefore recoverable. They may cause
 intentional virtual-device re-enumeration, but should not cause `input-proxy` to
 exit unless replacement virtual-device creation itself fails.
+
 ## Non-goals
 
 Version 0.1 does not support:
@@ -266,7 +267,7 @@ A representative source-loss sequence while paused should also verify that:
 1. the virtual device remains present;
 2. the physical source is released;
 3. requested pause state is preserved;
-4. the source may reconnect without virtual-device re-enumeration;
+4. a compatible source may reconnect without virtual-device re-enumeration;
 5. forwarding remains suppressed until the session is safely resumed.
 
 ---
