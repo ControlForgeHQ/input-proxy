@@ -9,6 +9,7 @@
 #include "virtual_device_internal.h"
 
 #include <signal.h>
+#include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <time.h>
@@ -24,6 +25,16 @@ struct input_proxy_session {
     bool verbose;
     volatile sig_atomic_t shutdown_requested;
 };
+
+static void log_verbose(
+    const struct input_proxy_session *session,
+    const char *message)
+{
+    if (session->verbose) {
+        printf("input-proxy: %s\n", message);
+        fflush(stdout);
+    }
+}
 
 static void cleanup_active_devices(struct input_proxy_session *session)
 {
@@ -64,6 +75,8 @@ static enum input_proxy_result create_active_devices(
     struct input_proxy_session *session)
 {
     enum input_proxy_result result;
+    bool waiting_logged = false;
+    bool replacing_virtual_device;
 
     while (!session->shutdown_requested) {
         result = input_proxy_source_device_open(
@@ -71,6 +84,14 @@ static enum input_proxy_result create_active_devices(
             session->source_path
         );
         if (result == INPUT_PROXY_ERROR_SOURCE_UNAVAILABLE) {
+            if (!waiting_logged) {
+                printf(
+                    "input-proxy: waiting for source %s\n",
+                    session->source_path
+                );
+                fflush(stdout);
+                waiting_logged = true;
+            }
             wait_for_source();
             continue;
         }
@@ -78,12 +99,31 @@ static enum input_proxy_result create_active_devices(
             return result;
         }
 
+        log_verbose(session, "source opened successfully");
+
         if (session->virtual_device != NULL &&
             input_proxy_virtual_device_is_compatible(
                 session->virtual_device,
                 session->source_device
             )) {
+            log_verbose(
+                session,
+                "reconnected source is compatible; retaining virtual device"
+            );
+            printf(
+                "input-proxy: source reconnected: %s\n",
+                session->source_path
+            );
+            fflush(stdout);
             return INPUT_PROXY_SUCCESS;
+        }
+
+        replacing_virtual_device = session->virtual_device != NULL;
+        if (replacing_virtual_device) {
+            log_verbose(
+                session,
+                "reconnected source is incompatible; replacing virtual device"
+            );
         }
 
         input_proxy_virtual_device_destroy(session->virtual_device);
@@ -97,6 +137,28 @@ static enum input_proxy_result create_active_devices(
         if (result != INPUT_PROXY_SUCCESS) {
             close_source_device(session);
             return result;
+        }
+
+        if (replacing_virtual_device) {
+            printf(
+                "input-proxy: virtual device replaced: %s\n",
+                session->device_name
+            );
+            printf(
+                "input-proxy: source reconnected: %s\n",
+                session->source_path
+            );
+            fflush(stdout);
+        } else {
+            printf(
+                "input-proxy: virtual device created: %s\n",
+                session->device_name
+            );
+            printf(
+                "input-proxy: source connected: %s\n",
+                session->source_path
+            );
+            fflush(stdout);
         }
 
         return INPUT_PROXY_SUCCESS;
@@ -144,12 +206,15 @@ static enum input_proxy_result recover_synchronization(
     struct input_event event;
     enum input_proxy_result result;
 
+    log_verbose(session, "synchronization recovery started");
+
     for (;;) {
         result = input_proxy_source_device_read_sync_event(
             source_device,
             &event
         );
         if (result == INPUT_PROXY_EVENT_UNAVAILABLE) {
+            log_verbose(session, "synchronization recovery completed");
             return INPUT_PROXY_SUCCESS;
         }
         if (result != INPUT_PROXY_SUCCESS) {
@@ -254,6 +319,15 @@ enum input_proxy_result input_proxy_session_run(
         }
 
         if (result == INPUT_PROXY_ERROR_SOURCE_DISCONNECTED) {
+            printf(
+                "input-proxy: source disconnected: %s\n",
+                session->source_path
+            );
+            fflush(stdout);
+            log_verbose(
+                session,
+                "neutralizing persistent virtual device after source loss"
+            );
             result = input_proxy_virtual_device_neutralize(
                 session->virtual_device
             );
@@ -261,6 +335,10 @@ enum input_proxy_result input_proxy_session_run(
             if (result != INPUT_PROXY_SUCCESS) {
                 break;
             }
+            log_verbose(
+                session,
+                "source-loss neutralization completed; retaining virtual device"
+            );
             continue;
         }
 
@@ -268,6 +346,12 @@ enum input_proxy_result input_proxy_session_run(
     }
 
     cleanup_active_devices(session);
+
+    if (session->shutdown_requested) {
+        log_verbose(session, "shutdown request handled; cleanup completed");
+        printf("input-proxy: shutdown complete\n");
+        fflush(stdout);
+    }
 
     return result;
 }

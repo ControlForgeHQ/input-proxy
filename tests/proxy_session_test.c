@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include <input_proxy/proxy_session.h>
 #include <input_proxy/source_device.h>
 #include <input_proxy/virtual_device.h>
@@ -8,6 +10,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <time.h>
+#include <unistd.h>
 
 static enum input_proxy_result read_result;
 static enum input_proxy_result write_result;
@@ -43,6 +46,7 @@ static struct input_proxy_session *running_session;
 static bool shutdown_after_write;
 static bool shutdown_during_event_sleep;
 static bool shutdown_during_source_sleep;
+static int shutdown_after_source_sleep_calls;
 
 static struct input_proxy_source_device *const test_source_device =
     (struct input_proxy_source_device *)1;
@@ -59,7 +63,9 @@ int nanosleep(const struct timespec *duration, struct timespec *remaining)
         }
     } else if (duration->tv_sec == 0 && duration->tv_nsec == 100000000L) {
         source_sleep_calls++;
-        if (shutdown_during_source_sleep) {
+        if (shutdown_during_source_sleep ||
+            (shutdown_after_source_sleep_calls > 0 &&
+             source_sleep_calls >= shutdown_after_source_sleep_calls)) {
             input_proxy_session_request_shutdown(running_session);
         }
     } else {
@@ -256,6 +262,7 @@ static void reset_runtime(void)
     shutdown_after_write = false;
     shutdown_during_event_sleep = false;
     shutdown_during_source_sleep = false;
+    shutdown_after_source_sleep_calls = 0;
     memset(operations, 0, sizeof(operations));
     memset(compatibility_results, 0, sizeof(compatibility_results));
 }
@@ -288,6 +295,61 @@ static int run_runtime_test(
     return failures;
 }
 
+static int run_runtime_test_with_output(
+    const char *test_name,
+    const struct input_proxy_session_config *config,
+    enum input_proxy_result expected,
+    char *output,
+    size_t output_size)
+{
+    FILE *capture;
+    int saved_stdout;
+    int failures;
+    size_t bytes_read;
+
+    capture = tmpfile();
+    if (capture == NULL) {
+        fprintf(stderr, "%s: failed to create output capture\n", test_name);
+        return 1;
+    }
+
+    fflush(stdout);
+    saved_stdout = dup(STDOUT_FILENO);
+    if (saved_stdout < 0 || dup2(fileno(capture), STDOUT_FILENO) < 0) {
+        fprintf(stderr, "%s: failed to redirect stdout\n", test_name);
+        if (saved_stdout >= 0) {
+            close(saved_stdout);
+        }
+        fclose(capture);
+        return 1;
+    }
+
+    failures = run_runtime_test(test_name, config, expected);
+    fflush(stdout);
+    (void)dup2(saved_stdout, STDOUT_FILENO);
+    close(saved_stdout);
+
+    rewind(capture);
+    bytes_read = fread(output, 1, output_size - 1, capture);
+    output[bytes_read] = '\0';
+    fclose(capture);
+
+    return failures;
+}
+
+static int count_occurrences(const char *text, const char *substring)
+{
+    int count = 0;
+    size_t length = strlen(substring);
+
+    while ((text = strstr(text, substring)) != NULL) {
+        count++;
+        text += length;
+    }
+
+    return count;
+}
+
 int main(void)
 {
     const struct input_proxy_session_config config = {
@@ -300,6 +362,7 @@ int main(void)
     struct input_proxy_virtual_device *const virtual_device =
         (struct input_proxy_virtual_device *)1;
     struct input_proxy_session *session;
+    char output[4096];
     int previous_write_calls;
     int failures = 0;
 
@@ -562,6 +625,26 @@ int main(void)
     }
 
     reset_runtime();
+    open_results[0] = INPUT_PROXY_ERROR_SOURCE_UNAVAILABLE;
+    open_results[1] = INPUT_PROXY_ERROR_SOURCE_UNAVAILABLE;
+    open_results[2] = INPUT_PROXY_ERROR_SOURCE_UNAVAILABLE;
+    open_result_count = 3;
+    shutdown_after_source_sleep_calls = 3;
+    failures += run_runtime_test_with_output(
+        "source wait logging",
+        &config,
+        INPUT_PROXY_SUCCESS,
+        output,
+        sizeof(output)
+    );
+    if (count_occurrences(output, "waiting for source") != 1 ||
+        count_occurrences(output, "shutdown complete") != 1 ||
+        strstr(output, "source opened successfully") != NULL) {
+        fprintf(stderr, "source wait logging: unexpected output: %s\n", output);
+        failures++;
+    }
+
+    reset_runtime();
     open_result = INPUT_PROXY_ERROR_SOURCE_OPEN_FAILED;
     failures += run_runtime_test(
         "source open failure",
@@ -677,6 +760,31 @@ int main(void)
     reset_runtime();
     open_results[0] = INPUT_PROXY_SUCCESS;
     open_results[1] = INPUT_PROXY_SUCCESS;
+    open_result_count = 2;
+    compatibility_results[0] = true;
+    read_results[0] = INPUT_PROXY_ERROR_SOURCE_DISCONNECTED;
+    read_results[1] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+    read_result_count = 2;
+    failures += run_runtime_test_with_output(
+        "normal lifecycle logging",
+        &config,
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED,
+        output,
+        sizeof(output)
+    );
+    if (count_occurrences(output, "virtual device created") != 1 ||
+        count_occurrences(output, "source connected") != 1 ||
+        count_occurrences(output, "source disconnected") != 1 ||
+        count_occurrences(output, "source reconnected") != 1 ||
+        strstr(output, "source opened successfully") != NULL ||
+        strstr(output, "type=") != NULL || strstr(output, "code=") != NULL) {
+        fprintf(stderr, "normal lifecycle logging: unexpected output: %s\n", output);
+        failures++;
+    }
+
+    reset_runtime();
+    open_results[0] = INPUT_PROXY_SUCCESS;
+    open_results[1] = INPUT_PROXY_SUCCESS;
     open_results[2] = INPUT_PROXY_SUCCESS;
     open_result_count = 3;
     compatibility_results[0] = false;
@@ -694,6 +802,52 @@ int main(void)
         read_calls != 3 || destroy_calls != 3 || close_calls != 3 ||
         neutralize_calls != 2 || strcmp(operations, "NCDNCDDC") != 0) {
         fprintf(stderr, "incompatible reconnect: bad lifecycle\n");
+        failures++;
+    }
+
+    reset_runtime();
+    open_results[0] = INPUT_PROXY_SUCCESS;
+    open_results[1] = INPUT_PROXY_SUCCESS;
+    open_result_count = 2;
+    compatibility_results[0] = false;
+    read_results[0] = INPUT_PROXY_ERROR_SOURCE_DISCONNECTED;
+    read_results[1] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+    read_result_count = 2;
+    failures += run_runtime_test_with_output(
+        "replacement logging",
+        &config,
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED,
+        output,
+        sizeof(output)
+    );
+    if (count_occurrences(output, "virtual device replaced") != 1 ||
+        count_occurrences(output, "source reconnected") != 1) {
+        fprintf(stderr, "replacement logging: unexpected output: %s\n", output);
+        failures++;
+    }
+
+    reset_runtime();
+    shutdown_after_write = true;
+    {
+        const struct input_proxy_session_config verbose_config = {
+            .source_path = "/dev/input/event-test",
+            .device_name = "proxy test device",
+            .verbose = true
+        };
+
+        failures += run_runtime_test_with_output(
+            "verbose lifecycle logging",
+            &verbose_config,
+            INPUT_PROXY_SUCCESS,
+            output,
+            sizeof(output)
+        );
+    }
+    if (strstr(output, "source opened successfully") == NULL ||
+        strstr(output, "shutdown request handled") == NULL ||
+        strstr(output, "shutdown complete") == NULL ||
+        strstr(output, "type=") != NULL || strstr(output, "code=") != NULL) {
+        fprintf(stderr, "verbose lifecycle logging: unexpected output: %s\n", output);
         failures++;
     }
 
