@@ -3,6 +3,8 @@
 #include <input_proxy/source_device.h>
 #include <input_proxy/virtual_device.h>
 
+#include "proxy_session_internal.h"
+
 #include <stdlib.h>
 #include <string.h>
 

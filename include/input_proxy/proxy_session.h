@@ -12,8 +12,6 @@ struct input_proxy_session_config {
 };
 
 struct input_proxy_session;
-struct input_proxy_source_device;
-struct input_proxy_virtual_device;
 
 enum input_proxy_result input_proxy_session_create(
     struct input_proxy_session **session,
@@ -21,15 +19,6 @@ enum input_proxy_result input_proxy_session_create(
 );
 
 enum input_proxy_result input_proxy_session_run(struct input_proxy_session *session);
-
-/*
- * Read and process one event from an active source/virtual device pair.
- */
-enum input_proxy_result input_proxy_session_process_event(
-    struct input_proxy_session *session,
-    struct input_proxy_source_device *source_device,
-    struct input_proxy_virtual_device *virtual_device
-);
 
 void input_proxy_session_request_shutdown(struct input_proxy_session *session);
 

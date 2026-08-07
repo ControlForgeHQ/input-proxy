@@ -96,6 +96,7 @@ if(BUILD_TESTING)
         proxy-session-test
         PRIVATE
             ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src
     )
 
     add_test(NAME proxy-session-test COMMAND proxy-session-test)
