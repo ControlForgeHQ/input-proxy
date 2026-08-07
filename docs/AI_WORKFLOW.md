@@ -44,19 +44,18 @@ revision responses, and validation results.
 Use the following prompt when launching an implementation agent.
 
 ```text
-You are implementing GitHub issue #<issue number> for this repository.
+Implement the GitHub issue:
 
-Issue:
-https://github.com/fasteddy516/input-proxy/issues/<issue number>
+https://github.com/fasteddy516/input-proxy/issues/<issue>
 
-If you cannot access the GitHub issue, stop immediately and explain why rather than guessing its contents.
+If you cannot access that GitHub issue, stop immediately and explain why rather than guessing its contents.
 
 Before making any changes:
 
 1. Read AGENTS.md.
 2. Read docs/ARCHITECTURE.md.
 3. Read docs/ENGINEERING.md.
-4. Read GitHub issue #<issue number> in its entirety.
+4. Read the GitHub issue linked above in its entirety.
 
 Treat those documents as the authoritative specification.
 
@@ -65,6 +64,7 @@ Your objective is to implement the issue exactly as specified while preserving t
 Guidelines:
 
 - Stay strictly within the scope of the issue.
+- Do not implement functionality from future roadmap items, even if the implementation would become slightly cleaner.
 - Preserve the existing public API unless a genuine technical blocker requires a change.
 - If you believe an architectural or public API change is necessary, stop and explain the issue rather than redesigning the project.
 - Avoid unrelated refactoring.
@@ -87,7 +87,9 @@ Use the following prompt when an implementation agent needs to address review
 feedback on an existing pull request.
 
 ```text
-Read the latest unresolved review comments and discussion on PR #<pull request number>.
+Read the latest unresolved review comments and discussion on this pull request:
+
+https://github.com/fasteddy516/input-proxy/pull/<pr>
 
 Address only the requested review feedback.
 
