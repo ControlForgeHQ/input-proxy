@@ -4,6 +4,7 @@
 
 #include <errno.h>
 #include <libevdev/libevdev.h>
+#include <libevdev/libevdev-uinput.h>
 #include <linux/input-event-codes.h>
 #include <stdio.h>
 #include <string.h>
@@ -231,6 +232,52 @@ int main(void)
     );
     if (input_proxy_virtual_device_get_libevdev_uinput(device) != test_uinput) {
         fprintf(stderr, "successful creation: uinput ownership was not retained\n");
+        failures++;
+    }
+
+    if (!input_proxy_virtual_device_is_compatible(device, source_device)) {
+        fprintf(stderr, "unchanged source was unexpectedly incompatible\n");
+        failures++;
+    }
+    if (input_proxy_virtual_device_is_compatible(NULL, source_device) ||
+        input_proxy_virtual_device_is_compatible(device, NULL)) {
+        fprintf(stderr, "null compatibility input was accepted\n");
+        failures++;
+    }
+
+    libevdev_set_event_value(test_source, EV_ABS, ABS_X, 500);
+    if (!input_proxy_virtual_device_is_compatible(device, source_device)) {
+        fprintf(stderr, "absolute-axis state changed compatibility\n");
+        failures++;
+    }
+
+    libevdev_set_id_vendor(test_source, 0xabcd);
+    if (input_proxy_virtual_device_is_compatible(device, source_device)) {
+        fprintf(stderr, "changed source identity was accepted\n");
+        failures++;
+    }
+    libevdev_set_id_vendor(test_source, 0x1234);
+
+    libevdev_set_abs_maximum(test_source, ABS_X, 1001);
+    if (input_proxy_virtual_device_is_compatible(device, source_device)) {
+        fprintf(stderr, "changed absolute-axis definition was accepted\n");
+        failures++;
+    }
+    libevdev_set_abs_maximum(test_source, ABS_X, 1000);
+
+    if (libevdev_enable_event_code(
+            test_source,
+            EV_KEY,
+            KEY_A,
+            NULL
+        ) != 0) {
+        fprintf(stderr, "failed to add incompatible test capability\n");
+        failures++;
+    } else if (input_proxy_virtual_device_is_compatible(
+            device,
+            source_device
+        )) {
+        fprintf(stderr, "changed source capabilities were accepted\n");
         failures++;
     }
 
