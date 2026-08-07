@@ -1,3 +1,5 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include <input_proxy/proxy_session.h>
 #include <input_proxy/result.h>
 #include <input_proxy/source_device.h>
@@ -7,13 +9,37 @@
 
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
+
+#define EVENT_UNAVAILABLE_DELAY_NS 10000000L
 
 struct input_proxy_session {
     char *source_path;
     char *device_name;
+    struct input_proxy_source_device *source_device;
+    struct input_proxy_virtual_device *virtual_device;
     bool verbose;
     bool shutdown_requested;
 };
+
+static void cleanup_active_devices(struct input_proxy_session *session)
+{
+    input_proxy_virtual_device_destroy(session->virtual_device);
+    session->virtual_device = NULL;
+
+    input_proxy_source_device_close(session->source_device);
+    session->source_device = NULL;
+}
+
+static void wait_for_event(void)
+{
+    const struct timespec delay = {
+        .tv_sec = 0,
+        .tv_nsec = EVENT_UNAVAILABLE_DELAY_NS
+    };
+
+    (void)nanosleep(&delay, NULL);
+}
 
 static char *duplicate_string(const char *source)
 {
@@ -84,15 +110,52 @@ error:
 enum input_proxy_result input_proxy_session_run(
     struct input_proxy_session *session)
 {
+    enum input_proxy_result result;
+
     if (session == NULL) {
         return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
     }
 
-    /*
-     * TODO: Implement the proxy session lifecycle.
-     */
+    result = input_proxy_source_device_open(
+        &session->source_device,
+        session->source_path
+    );
+    if (result != INPUT_PROXY_SUCCESS) {
+        return result;
+    }
 
-    return INPUT_PROXY_ERROR_NOT_IMPLEMENTED;
+    result = input_proxy_virtual_device_create(
+        &session->virtual_device,
+        session->source_device,
+        session->device_name
+    );
+    if (result != INPUT_PROXY_SUCCESS) {
+        cleanup_active_devices(session);
+        return result;
+    }
+
+    result = INPUT_PROXY_SUCCESS;
+    while (!session->shutdown_requested) {
+        result = input_proxy_session_process_event(
+            session,
+            session->source_device,
+            session->virtual_device
+        );
+        if (result == INPUT_PROXY_EVENT_UNAVAILABLE) {
+            wait_for_event();
+            continue;
+        }
+
+        if (result == INPUT_PROXY_SUCCESS) {
+            continue;
+        }
+
+        break;
+    }
+
+    cleanup_active_devices(session);
+
+    return result;
 }
 
 enum input_proxy_result input_proxy_session_process_event(
@@ -132,6 +195,7 @@ void input_proxy_session_destroy(
         return;
     }
 
+    cleanup_active_devices(session);
     free(session->device_name);
     free(session->source_path);
     free(session);
