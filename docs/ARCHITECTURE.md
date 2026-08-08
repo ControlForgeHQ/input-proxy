@@ -593,6 +593,42 @@ requested control interface is not acceptable.
 
 A missing source is a normal operating condition, not an error.
 
+A source that has previously been opened successfully may pass through a short
+device-settling period when it reconnects.
+
+On Linux hotplug systems, the kernel may create the source device node before
+udev has finished applying its final ownership, group, mode, symlinks, or other
+device properties.
+
+The proxy session must therefore distinguish between:
+
+- an initial source-access failure, where the configured source has never been
+  opened successfully;
+- a transient source-access failure during reacquisition of a previously
+  working source.
+
+An access-denied result during initial source acquisition is a fatal
+configuration or permissions error and must not be retried indefinitely.
+
+An access-denied result encountered while reacquiring a source that was
+previously opened successfully may be treated as transient for a bounded
+settling period.
+
+During that settling period:
+
+- retain the persistent virtual device;
+- retain the source-wait lifecycle state;
+- retry using the normal bounded source-retry cadence;
+- avoid repeated log messages for each retry attempt;
+- remain responsive to shutdown.
+
+If access remains denied beyond the bounded settling period, treat the
+condition as an unrecoverable source-access failure rather than waiting
+indefinitely.
+
+The reconnect settling policy exists to tolerate normal hotplug/udev ordering.
+It must not mask persistent permission or configuration errors.
+
 If the virtual device already exists from an earlier connection, source absence
 must not cause it to be destroyed or recreated.
 
@@ -612,6 +648,14 @@ exist because its capabilities are derived from the physical source.
 
 If the source disappears during creation, release only partial source resources
 and return to `WAITING_FOR_SOURCE`.
+
+If a previously working source reappears but cannot yet be accessed because
+device permissions are still settling, release any partial source resources
+and return to the bounded reconnect-settling path rather than terminating the
+session immediately.
+
+This recovery applies only to reacquisition of a source that the session has
+already opened successfully. Initial permission failures remain fatal.
 
 An already-existing persistent virtual device must not be destroyed merely
 because the reconnect attempt failed transiently.

@@ -102,6 +102,18 @@ wait for source
 
 A missing or disconnected source device is not a fatal condition.
 
+Hotplug reconnect may include a short period in which the source device node
+exists before udev has finished applying its final permissions.
+
+A permission-denied result during the first source acquisition is fatal.
+
+After a source has previously been opened successfully, a permission-denied
+result during reconnect may be retried for a bounded settling period before it
+is considered fatal.
+
+Do not treat permission denial as globally equivalent to source absence, and do
+not retry persistent permission failures forever.
+
 The virtual device should remain present across compatible source reconnects.
 
 If the capabilities of the returning source differ from those of the existing
