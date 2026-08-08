@@ -16,12 +16,14 @@
 
 #define EVENT_UNAVAILABLE_DELAY_NS 10000000L
 #define SOURCE_RETRY_DELAY_NS 100000000L
+#define RECONNECT_SETTLING_WINDOW_SECONDS 2
 
 struct input_proxy_session {
     char *source_path;
     char *device_name;
     struct input_proxy_source_device *source_device;
     struct input_proxy_virtual_device *virtual_device;
+    bool source_opened_successfully;
     bool verbose;
     volatile sig_atomic_t shutdown_requested;
 };
@@ -71,12 +73,26 @@ static void wait_for_source(void)
     (void)nanosleep(&delay, NULL);
 }
 
+static bool reconnect_settling_expired(const struct timespec *deadline)
+{
+    struct timespec now;
+
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) {
+        return true;
+    }
+
+    return now.tv_sec > deadline->tv_sec ||
+        (now.tv_sec == deadline->tv_sec && now.tv_nsec >= deadline->tv_nsec);
+}
+
 static enum input_proxy_result create_active_devices(
     struct input_proxy_session *session)
 {
     enum input_proxy_result result;
     bool waiting_logged = false;
     bool replacing_virtual_device;
+    bool permission_settling = false;
+    struct timespec permission_deadline;
 
     while (!session->shutdown_requested) {
         result = input_proxy_source_device_open(
@@ -95,10 +111,27 @@ static enum input_proxy_result create_active_devices(
             wait_for_source();
             continue;
         }
+        if (result == INPUT_PROXY_ERROR_SOURCE_PERMISSION_DENIED &&
+            session->source_opened_successfully) {
+            if (!permission_settling) {
+                if (clock_gettime(CLOCK_MONOTONIC, &permission_deadline) != 0) {
+                    return result;
+                }
+                permission_deadline.tv_sec +=
+                    RECONNECT_SETTLING_WINDOW_SECONDS;
+                permission_settling = true;
+            } else if (reconnect_settling_expired(&permission_deadline)) {
+                return result;
+            }
+
+            wait_for_source();
+            continue;
+        }
         if (result != INPUT_PROXY_SUCCESS) {
             return result;
         }
 
+        session->source_opened_successfully = true;
         log_verbose(session, "source opened successfully");
 
         if (session->virtual_device != NULL &&

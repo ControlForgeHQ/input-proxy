@@ -19,7 +19,7 @@ static enum input_proxy_result create_result;
 static enum input_proxy_result neutralize_result;
 static int fail_create_call;
 static bool compatibility_results[8];
-static enum input_proxy_result open_results[8];
+static enum input_proxy_result open_results[32];
 static enum input_proxy_result read_results[8];
 static enum input_proxy_result sync_read_results[8];
 static struct input_event sync_events[8];
@@ -47,11 +47,23 @@ static bool shutdown_after_write;
 static bool shutdown_during_event_sleep;
 static bool shutdown_during_source_sleep;
 static int shutdown_after_source_sleep_calls;
+static long long monotonic_time_ns;
 
 static struct input_proxy_source_device *const test_source_device =
     (struct input_proxy_source_device *)1;
 static struct input_proxy_virtual_device *const test_virtual_device =
     (struct input_proxy_virtual_device *)1;
+
+int clock_gettime(clockid_t clock_id, struct timespec *time)
+{
+    if (clock_id != CLOCK_MONOTONIC) {
+        return -1;
+    }
+
+    time->tv_sec = monotonic_time_ns / 1000000000LL;
+    time->tv_nsec = monotonic_time_ns % 1000000000LL;
+    return 0;
+}
 
 int nanosleep(const struct timespec *duration, struct timespec *remaining)
 {
@@ -63,6 +75,7 @@ int nanosleep(const struct timespec *duration, struct timespec *remaining)
         }
     } else if (duration->tv_sec == 0 && duration->tv_nsec == 100000000L) {
         source_sleep_calls++;
+        monotonic_time_ns += duration->tv_nsec;
         if (shutdown_during_source_sleep ||
             (shutdown_after_source_sleep_calls > 0 &&
              source_sleep_calls >= shutdown_after_source_sleep_calls)) {
@@ -263,6 +276,7 @@ static void reset_runtime(void)
     shutdown_during_event_sleep = false;
     shutdown_during_source_sleep = false;
     shutdown_after_source_sleep_calls = 0;
+    monotonic_time_ns = 0;
     memset(operations, 0, sizeof(operations));
     memset(compatibility_results, 0, sizeof(compatibility_results));
 }
@@ -654,6 +668,83 @@ int main(void)
     if (open_calls != 1 || create_calls != 0 || close_calls != 0 ||
         destroy_calls != 0) {
         fprintf(stderr, "source open failure: unexpected lifecycle calls\n");
+        failures++;
+    }
+
+    reset_runtime();
+    open_result = INPUT_PROXY_ERROR_SOURCE_PERMISSION_DENIED;
+    failures += run_runtime_test(
+        "initial source permission denied",
+        &config,
+        INPUT_PROXY_ERROR_SOURCE_PERMISSION_DENIED
+    );
+    if (open_calls != 1 || source_sleep_calls != 0 || create_calls != 0 ||
+        close_calls != 0 || destroy_calls != 0) {
+        fprintf(stderr, "initial source permission denied: unexpected retry\n");
+        failures++;
+    }
+
+    reset_runtime();
+    open_results[0] = INPUT_PROXY_SUCCESS;
+    open_results[1] = INPUT_PROXY_ERROR_SOURCE_UNAVAILABLE;
+    open_results[2] = INPUT_PROXY_ERROR_SOURCE_PERMISSION_DENIED;
+    open_results[3] = INPUT_PROXY_ERROR_SOURCE_PERMISSION_DENIED;
+    open_results[4] = INPUT_PROXY_SUCCESS;
+    open_result_count = 5;
+    compatibility_results[0] = true;
+    read_results[0] = INPUT_PROXY_ERROR_SOURCE_DISCONNECTED;
+    read_results[1] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+    read_result_count = 2;
+    failures += run_runtime_test(
+        "transient reconnect permission denied",
+        &config,
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED
+    );
+    if (open_calls != 5 || source_sleep_calls != 3 || create_calls != 1 ||
+        compatibility_calls != 1 || neutralize_calls != 1 ||
+        destroy_calls != 1 || close_calls != 2 ||
+        strcmp(operations, "NCDC") != 0) {
+        fprintf(stderr, "transient reconnect permission denied: bad lifecycle\n");
+        failures++;
+    }
+
+    reset_runtime();
+    open_results[0] = INPUT_PROXY_SUCCESS;
+    open_result_count = 1;
+    open_result = INPUT_PROXY_ERROR_SOURCE_PERMISSION_DENIED;
+    read_results[0] = INPUT_PROXY_ERROR_SOURCE_DISCONNECTED;
+    read_result_count = 1;
+    failures += run_runtime_test_with_output(
+        "persistent reconnect permission denied",
+        &config,
+        INPUT_PROXY_ERROR_SOURCE_PERMISSION_DENIED,
+        output,
+        sizeof(output)
+    );
+    if (open_calls != 22 || source_sleep_calls != 20 || create_calls != 1 ||
+        neutralize_calls != 1 || destroy_calls != 1 || close_calls != 1 ||
+        count_occurrences(output, "waiting for source") > 1 ||
+        strcmp(operations, "NCD") != 0) {
+        fprintf(stderr, "persistent reconnect permission denied: bad lifecycle\n");
+        failures++;
+    }
+
+    reset_runtime();
+    open_results[0] = INPUT_PROXY_SUCCESS;
+    open_result_count = 1;
+    open_result = INPUT_PROXY_ERROR_SOURCE_PERMISSION_DENIED;
+    read_results[0] = INPUT_PROXY_ERROR_SOURCE_DISCONNECTED;
+    read_result_count = 1;
+    shutdown_after_source_sleep_calls = 3;
+    failures += run_runtime_test(
+        "shutdown during reconnect permission settling",
+        &config,
+        INPUT_PROXY_SUCCESS
+    );
+    if (open_calls != 4 || source_sleep_calls != 3 || create_calls != 1 ||
+        neutralize_calls != 1 || destroy_calls != 1 || close_calls != 1 ||
+        strcmp(operations, "NCD") != 0) {
+        fprintf(stderr, "shutdown during permission settling: bad lifecycle\n");
         failures++;
     }
 

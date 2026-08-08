@@ -27,6 +27,9 @@ const char *input_proxy_result_string(enum input_proxy_result result)
         case INPUT_PROXY_ERROR_SOURCE_UNAVAILABLE:
             return "Source device unavailable";
 
+        case INPUT_PROXY_ERROR_SOURCE_PERMISSION_DENIED:
+            return "Permission denied opening source device";
+
         case INPUT_PROXY_ERROR_SOURCE_OPEN_FAILED:
             return "Failed to open source device";
 
