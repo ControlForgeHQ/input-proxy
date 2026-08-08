@@ -47,14 +47,75 @@ event-filtering or remapping system.
 
 ## Command-line interface
 
+`input-proxy` uses a subcommand-oriented command-line interface.
+
+Current commands are:
+
 ```text
-input-proxy --source PATH --name NAME [--verbose]
+input-proxy run --source PATH --name NAME [--verbose]
+
+input-proxy list
+
+input-proxy inspect PATH
+
 input-proxy --help
 input-proxy --version
 ```
 
-The kernel and udev determine the virtual device's `/dev/input/eventN` path.
-The application must not accept or promise a specific destination event path.
+### `run`
+
+Starts the runtime proxy.
+
+Required arguments:
+
+- `--source PATH`
+- `--name NAME`
+
+Optional arguments:
+
+- `--verbose`
+
+### `list`
+
+Displays a concise list of physical input devices that are suitable proxy
+candidates.
+
+The output should remain intentionally brief and human-readable.
+
+Virtual uinput devices should not normally appear in this list.
+
+### `inspect`
+
+Inspects a single physical input device.
+
+The positional argument specifies the source device to inspect.
+
+Inspection is read-only and must never create a virtual device or modify the
+system.
+
+Inspection should provide enough information to answer:
+
+- What is this device?
+- Can `input-proxy` access it?
+- Is the surrounding system configured correctly for proxying it?
+
+Inspection may suggest configuration changes but must never perform them.
+
+### Global options
+
+The following remain global:
+
+- `--help`
+- `--version`
+
+Each subcommand should also support `--help`.
+
+For example:
+
+```text
+input-proxy run --help
+input-proxy inspect --help
+```
 
 ## Version 0.1 scope
 

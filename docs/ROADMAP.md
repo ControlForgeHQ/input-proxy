@@ -7,7 +7,7 @@ be implemented early unless specifically requested.
 
 ---
 
-# Version 0.1
+# Version 0.1.x - Core runtime
 
 ## Goal
 
@@ -79,40 +79,74 @@ identity across normal source-loss conditions.
 
 ---
 
-# Version 0.2
+## Version 0.2.x — Operator experience and diagnostics
 
-## Goal
+Version 0.2 focuses on making `input-proxy` easier to understand, deploy,
+diagnose, and operate without changing its fundamental runtime behaviour.
 
-Improve diagnostics and operational visibility without changing the core proxy
-model.
+### Command-line interface
 
-## Potential enhancements
+- Convert the command-line interface to a subcommand-oriented design.
+- Introduce:
+  - `input-proxy run`
+  - `input-proxy list`
+  - `input-proxy inspect`
+- Preserve global `--help` and `--version`.
+- Provide command-specific help for each subcommand.
+- Improve help formatting with usage summaries, option descriptions, examples,
+  and troubleshooting guidance.
 
-- richer device identity and capability reporting;
-- improved lifecycle and reconnect logging;
-- additional integration and hardware tests;
-- clearer diagnostics for unsupported or incompatible capabilities;
-- visibility into source availability and persistent virtual-device state;
-- optional machine-readable inspection output where useful.
-- simplify versioning
+### Device discovery
 
-Version 0.2 must not introduce configuration files or change the
-one-process-per-device model.
+- Add `input-proxy list`.
+- Present a concise human-readable list of proxy candidate devices.
+- Exclude virtual uinput devices from the default listing.
+- Display only the information needed to identify a source device.
+
+### Device inspection
+
+- Add `input-proxy inspect PATH`.
+- Display:
+  - device identity;
+  - bus/vendor/product information;
+  - capability summary;
+  - permission status;
+  - proxy readiness;
+  - libinput configuration;
+  - relevant udev properties.
+- Detect whether `LIBINPUT_IGNORE_DEVICE` is configured.
+- When appropriate, suggest a suitable read-only udev rule for proxy
+  deployments.
+- Never modify system configuration.
+
+### Runtime diagnostics
+
+- Print a startup banner including:
+  - application name;
+  - version;
+  - project repository.
+- Improve runtime lifecycle diagnostics.
+- Improve contextual fatal error messages.
+- Expand verbose diagnostics with useful operational information while avoiding
+  raw event logging.
 
 ### Build and release improvements
 
 - Make the CMake project version the single authoritative source of version
   information.
-- Generate `include/input_proxy/version.h` from a CMake template during the
-  configure step.
-- Eliminate manual version duplication between `CMakeLists.txt` and
-  `version.h`.
-- Preserve the existing `--version` output and public version API.
-- Ensure release preparation requires updating the version in only one place.
+- Generate `version.h` during configuration.
+- Eliminate manual version duplication.
+- Preserve the existing version API.
+
+### Testing
+
+- Add regression coverage for new command-line behaviour.
+- Add tests covering inspection and listing where practical.
+- Preserve all existing runtime behaviour.
 
 ---
 
-# Version 0.3
+# Version 0.3.x - Runtime control and activity notifications
 
 ## Goal
 
@@ -284,7 +318,7 @@ A representative source-loss sequence while paused should also verify that:
 
 ---
 
-# Version 0.4
+# Version 0.4.x - Deployment and system integration
 
 ## Goal
 
