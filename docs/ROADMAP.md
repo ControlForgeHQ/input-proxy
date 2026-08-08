@@ -94,9 +94,21 @@ model.
 - clearer diagnostics for unsupported or incompatible capabilities;
 - visibility into source availability and persistent virtual-device state;
 - optional machine-readable inspection output where useful.
+- simplify versioning
 
 Version 0.2 must not introduce configuration files or change the
 one-process-per-device model.
+
+### Build and release improvements
+
+- Make the CMake project version the single authoritative source of version
+  information.
+- Generate `include/input_proxy/version.h` from a CMake template during the
+  configure step.
+- Eliminate manual version duplication between `CMakeLists.txt` and
+  `version.h`.
+- Preserve the existing `--version` output and public version API.
+- Ensure release preparation requires updating the version in only one place.
 
 ---
 
@@ -349,6 +361,12 @@ and install the required `/dev/uinput` udev static-node rule when necessary.
 
 The installer should not require sudoers changes, setuid binaries, or execution
 of the long-running proxy process as root.
+
+---
+
+# Maintenance Releases
+
+Patch releases (0.x.y) contain bug fixes, documentation improvements, validation improvements, and narrowly scoped behavior corrections. They do not intentionally introduce new user-visible functionality or architectural changes.
 
 ---
 
