@@ -1,0 +1,75 @@
+name: Bug
+description: Report and correct unexpected behavior.
+title: "[Bug]: "
+labels:
+  - bug
+
+body:
+  - type: textarea
+    id: observed
+    attributes:
+      label: Observed behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction
+    validations:
+      required: false
+
+  - type: textarea
+    id: root_cause
+    attributes:
+      label: Root cause
+      description: Leave blank if unknown.
+    validations:
+      required: false
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: In scope
+    validations:
+      required: true
+
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+    validations:
+      required: true
+
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints
+    validations:
+      required: false
+
+  - type: textarea
+    id: done
+    attributes:
+      label: Definition of done
+    validations:
+      required: true
+
+  - type: textarea
+    id: validation
+    attributes:
+      label: Additional validation
+      value: |
+        cmake -S . -B build
+        cmake --build build
+        ctest --test-dir build --output-on-failure
+        git diff --check
+    validations:
+      required: true

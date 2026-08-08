@@ -1,0 +1,41 @@
+name: Documentation
+description: Documentation improvements or restructuring.
+title: "[Docs]: "
+labels:
+  - documentation
+
+body:
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+    validations:
+      required: true
+
+  - type: textarea
+    id: documents
+    attributes:
+      label: Documents affected
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Scope
+    validations:
+      required: true
+
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+    validations:
+      required: false
+
+  - type: textarea
+    id: done
+    attributes:
+      label: Definition of done
+    validations:
+      required: true

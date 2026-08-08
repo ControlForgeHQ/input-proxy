@@ -1,0 +1,69 @@
+name: Feature
+description: Add or enhance project functionality.
+title: "[Feature]: "
+labels:
+  - feature
+
+body:
+  - type: textarea
+    id: objective
+    attributes:
+      label: Objective
+    validations:
+      required: true
+
+  - type: textarea
+    id: background
+    attributes:
+      label: Background
+      description: Why is this feature needed?
+    validations:
+      required: false
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: In scope
+    validations:
+      required: true
+
+  - type: textarea
+    id: out_of_scope
+    attributes:
+      label: Out of scope
+    validations:
+      required: true
+
+  - type: textarea
+    id: constraints
+    attributes:
+      label: Constraints
+      description: Only constraints unique to this issue.
+    validations:
+      required: false
+
+  - type: textarea
+    id: files
+    attributes:
+      label: Expected files to change
+    validations:
+      required: false
+
+  - type: textarea
+    id: done
+    attributes:
+      label: Definition of done
+    validations:
+      required: true
+
+  - type: textarea
+    id: validation
+    attributes:
+      label: Additional validation
+      value: |
+        cmake -S . -B build
+        cmake --build build
+        ctest --test-dir build --output-on-failure
+        git diff --check
+    validations:
+      required: true
