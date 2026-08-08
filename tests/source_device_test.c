@@ -1,9 +1,14 @@
+#define _POSIX_C_SOURCE 200809L
+
 #include <input_proxy/source_device.h>
 
 #include <errno.h>
 #include <libevdev/libevdev.h>
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
+#include <unistd.h>
 
 static int new_from_fd_result = -ENOTTY;
 static int next_event_result;
@@ -68,6 +73,8 @@ int main(void)
     struct input_proxy_source_device *device;
     struct input_event event;
     int failures = 0;
+    char inaccessible_path[] = "/tmp/input-proxy-source-test-XXXXXX";
+    int inaccessible_fd;
 
     failures += expect_result(
         "null output pointer",
@@ -99,6 +106,29 @@ int main(void)
         fprintf(stderr, "missing source: output pointer was not cleared\n");
         failures++;
     }
+
+    inaccessible_fd = mkstemp(inaccessible_path);
+    if (inaccessible_fd < 0 || close(inaccessible_fd) != 0 ||
+        chmod(inaccessible_path, 0000) != 0) {
+        fprintf(stderr, "permission denied source: setup failed\n");
+        if (inaccessible_fd >= 0) {
+            close(inaccessible_fd);
+        }
+        unlink(inaccessible_path);
+        return 1;
+    }
+    device = (struct input_proxy_source_device *)1;
+    failures += expect_result(
+        "permission denied source",
+        input_proxy_source_device_open(&device, inaccessible_path),
+        INPUT_PROXY_ERROR_SOURCE_PERMISSION_DENIED
+    );
+    if (device != NULL) {
+        fprintf(stderr, "permission denied source: output pointer was not cleared\n");
+        failures++;
+    }
+    chmod(inaccessible_path, 0600);
+    unlink(inaccessible_path);
 
     device = (struct input_proxy_source_device *)1;
     failures += expect_result(

@@ -37,6 +37,9 @@ enum input_proxy_result input_proxy_source_device_open(
         if (errno == ENOENT || errno == ENOTDIR) {
             return INPUT_PROXY_ERROR_SOURCE_UNAVAILABLE;
         }
+        if (errno == EACCES) {
+            return INPUT_PROXY_ERROR_SOURCE_PERMISSION_DENIED;
+        }
 
         return INPUT_PROXY_ERROR_SOURCE_OPEN_FAILED;
     }
