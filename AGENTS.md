@@ -77,16 +77,33 @@ Create implementation pull requests as drafts.
 
 Keep each pull request focused on one issue.
 
-The pull request description should report:
+When completing an implementation issue, include a concise completion summary
+covering:
+
+- implementation summary;
+- validation performed;
+- assumptions made;
+- remaining limitations or known gaps, if any;
+- files changed.
+
+The pull request description should summarize:
 
 - what changed;
+- why it changed;
 - validation performed;
 - anything not validated;
-- assumptions or limitations.
+- assumptions or limitations when relevant.
 
-When responding to requested PR changes, add a PR conversation comment
-summarizing the update and validation so the request-and-response history remains
-documented.
+When responding to requested pull-request changes, add a pull-request
+conversation comment summarizing:
+
+- the requested changes addressed;
+- implementation updates;
+- additional validation performed;
+- any remaining limitations.
+
+Keep the pull-request discussion as the authoritative implementation history
+rather than relying solely on commit messages.
 
 ## When scope or design conflicts
 
