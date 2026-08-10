@@ -55,16 +55,20 @@ static void print_usage(FILE *stream, const char *program_name)
     fprintf(
         stream,
         "Usage:\n"
-        "  %s --source PATH --name NAME [--verbose]\n"
+        "  %s run --source PATH --name NAME [--verbose]\n"
+        "  %s list\n"
+        "  %s inspect PATH\n"
         "  %s --help\n"
         "  %s --version\n",
+        program_name,
+        program_name,
         program_name,
         program_name,
         program_name
     );
 }
 
-static enum input_proxy_result parse_config(
+static enum input_proxy_result parse_run_config(
     int argc,
     char *argv[],
     struct input_proxy_session_config *config)
@@ -77,7 +81,7 @@ static enum input_proxy_result parse_config(
 
     *config = (struct input_proxy_session_config) {0};
 
-    for (index = 1; index < argc; ++index) {
+    for (index = 2; index < argc; ++index) {
         if (strcmp(argv[index], "--source") == 0) {
             if (config->source_path != NULL || index + 1 >= argc) {
                 return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
@@ -115,27 +119,17 @@ static enum input_proxy_result parse_config(
     return INPUT_PROXY_SUCCESS;
 }
 
-int main(int argc, char *argv[])
+static int run_proxy(int argc, char *argv[])
 {
     struct input_proxy_session_config config;
     struct input_proxy_session *session = NULL;
     enum input_proxy_result result;
 
-    if (argc == 2 && strcmp(argv[1], "--help") == 0) {
-        print_usage(stdout, argv[0]);
-        return EXIT_SUCCESS;
-    }
-
-    if (argc == 2 && strcmp(argv[1], "--version") == 0) {
-        printf("input-proxy %s\n", INPUT_PROXY_VERSION_STRING);
-        return EXIT_SUCCESS;
-    }
-
-    result = parse_config(argc, argv, &config);
+    result = parse_run_config(argc, argv, &config);
     if (result != INPUT_PROXY_SUCCESS) {
         fprintf(
             stderr,
-            "input-proxy: invalid command-line arguments: %s\n",
+            "input-proxy: invalid run arguments: %s\n",
             input_proxy_result_string(result)
         );
         print_usage(stderr, argv[0]);
@@ -174,4 +168,44 @@ int main(int argc, char *argv[])
     input_proxy_session_destroy(session);
 
     return result == INPUT_PROXY_SUCCESS ? EXIT_SUCCESS : EXIT_FAILURE;
+}
+
+int main(int argc, char *argv[])
+{
+    const char *command;
+
+    if (argc < 2) {
+        fprintf(stderr, "input-proxy: missing command\n");
+        print_usage(stderr, argv[0]);
+        return EXIT_FAILURE;
+    }
+
+    command = argv[1];
+
+    if (strcmp(command, "--help") == 0 && argc == 2) {
+        print_usage(stdout, argv[0]);
+        return EXIT_SUCCESS;
+    }
+
+    if (strcmp(command, "--version") == 0 && argc == 2) {
+        printf("input-proxy %s\n", INPUT_PROXY_VERSION_STRING);
+        return EXIT_SUCCESS;
+    }
+
+    if (strcmp(command, "run") == 0) {
+        return run_proxy(argc, argv);
+    }
+
+    if (strcmp(command, "list") == 0 || strcmp(command, "inspect") == 0) {
+        fprintf(
+            stderr,
+            "input-proxy: command '%s' is not yet implemented\n",
+            command
+        );
+        return EXIT_FAILURE;
+    }
+
+    fprintf(stderr, "input-proxy: unknown command '%s'\n", command);
+    print_usage(stderr, argv[0]);
+    return EXIT_FAILURE;
 }
