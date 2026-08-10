@@ -50,21 +50,90 @@ static void restore_signal_handlers(void)
     (void)sigaction(SIGTERM, &action, NULL);
 }
 
-static void print_usage(FILE *stream, const char *program_name)
+static void print_top_level_help(FILE *stream)
 {
     fprintf(
         stream,
+        "input-proxy %s\n"
+        "Transparent Linux evdev-to-uinput input proxy.\n"
+        "\n"
         "Usage:\n"
-        "  %s run --source PATH --name NAME [--verbose]\n"
-        "  %s list\n"
-        "  %s inspect PATH\n"
-        "  %s --help\n"
-        "  %s --version\n",
-        program_name,
-        program_name,
-        program_name,
-        program_name,
-        program_name
+        "  input-proxy COMMAND [OPTIONS]\n"
+        "  input-proxy --help\n"
+        "  input-proxy --version\n"
+        "\n"
+        "Commands:\n"
+        "  run      Proxy one physical input device.\n"
+        "  list     List available physical input devices concisely.\n"
+        "  inspect  Inspect one input device with read-only diagnostics.\n"
+        "\n"
+        "Global options:\n"
+        "  --help     Show this help and exit.\n"
+        "  --version  Show the application version and exit.\n"
+        "\n"
+        "Examples:\n"
+        "  input-proxy run --source /dev/input/event0 --name touchscreen\n"
+        "  input-proxy list\n"
+        "  input-proxy inspect /dev/input/event0\n"
+        "\n"
+        "Report bugs and find the project at:\n"
+        "  https://github.com/fasteddy516/input-proxy\n",
+        INPUT_PROXY_VERSION_STRING
+    );
+}
+
+static void print_run_help(FILE *stream)
+{
+    fputs(
+        "Run the input proxy for one physical input device.\n"
+        "\n"
+        "Usage:\n"
+        "  input-proxy run --source PATH --name NAME [--verbose]\n"
+        "\n"
+        "Options:\n"
+        "  --source PATH  Physical evdev source device.\n"
+        "  --name NAME    Name of the virtual input device.\n"
+        "  --verbose      Show additional lifecycle diagnostics.\n"
+        "  --help         Show this help and exit.\n",
+        stream
+    );
+}
+
+static void print_list_help(FILE *stream)
+{
+    fputs(
+        "List available physical input devices concisely.\n"
+        "\n"
+        "Usage:\n"
+        "  input-proxy list\n"
+        "\n"
+        "The listing is intended to identify likely proxy sources without an\n"
+        "exhaustive capability dump. Virtual uinput devices are excluded when\n"
+        "they can be identified reliably.\n"
+        "\n"
+        "Options:\n"
+        "  --help  Show this help and exit.\n",
+        stream
+    );
+}
+
+static void print_inspect_help(FILE *stream)
+{
+    fputs(
+        "Inspect one input device with read-only diagnostics.\n"
+        "\n"
+        "Usage:\n"
+        "  input-proxy inspect PATH\n"
+        "\n"
+        "Arguments:\n"
+        "  PATH  Physical evdev source device to inspect.\n"
+        "\n"
+        "Inspection reports device identity, capabilities, accessibility, and\n"
+        "proxy readiness without modifying the device or system configuration.\n"
+        "\n"
+        "Options:\n"
+        "  --help  Show this help and exit.\n",
+        stream
     );
 }
 
@@ -132,7 +201,7 @@ static int run_proxy(int argc, char *argv[])
             "input-proxy: invalid run arguments: %s\n",
             input_proxy_result_string(result)
         );
-        print_usage(stderr, argv[0]);
+        print_run_help(stderr);
         return EXIT_FAILURE;
     }
 
@@ -176,14 +245,14 @@ int main(int argc, char *argv[])
 
     if (argc < 2) {
         fprintf(stderr, "input-proxy: missing command\n");
-        print_usage(stderr, argv[0]);
+        print_top_level_help(stderr);
         return EXIT_FAILURE;
     }
 
     command = argv[1];
 
     if (strcmp(command, "--help") == 0 && argc == 2) {
-        print_usage(stdout, argv[0]);
+        print_top_level_help(stdout);
         return EXIT_SUCCESS;
     }
 
@@ -193,10 +262,30 @@ int main(int argc, char *argv[])
     }
 
     if (strcmp(command, "run") == 0) {
+        if (argc == 3 && strcmp(argv[2], "--help") == 0) {
+            print_run_help(stdout);
+            return EXIT_SUCCESS;
+        }
+
         return run_proxy(argc, argv);
     }
 
-    if (strcmp(command, "list") == 0 || strcmp(command, "inspect") == 0) {
+    if (strcmp(command, "list") == 0) {
+        if (argc == 3 && strcmp(argv[2], "--help") == 0) {
+            print_list_help(stdout);
+            return EXIT_SUCCESS;
+        }
+
+        fprintf(stderr, "input-proxy: command 'list' is not yet implemented\n");
+        return EXIT_FAILURE;
+    }
+
+    if (strcmp(command, "inspect") == 0) {
+        if (argc == 3 && strcmp(argv[2], "--help") == 0) {
+            print_inspect_help(stdout);
+            return EXIT_SUCCESS;
+        }
+
         fprintf(
             stderr,
             "input-proxy: command '%s' is not yet implemented\n",
@@ -206,6 +295,6 @@ int main(int argc, char *argv[])
     }
 
     fprintf(stderr, "input-proxy: unknown command '%s'\n", command);
-    print_usage(stderr, argv[0]);
+    print_top_level_help(stderr);
     return EXIT_FAILURE;
 }
