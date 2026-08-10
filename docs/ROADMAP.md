@@ -168,6 +168,14 @@ input-proxy inspect PATH
   - synchronization recovery context;
   - source-loss neutralization context.
 - Continue to prohibit raw event dumps in normal and verbose runtime logging.
+- Treat the configured virtual-device name as a unique logical instance
+  identity among simultaneously running `input-proxy` processes.
+- Refuse to start a runtime instance when another running `input-proxy` process
+  already owns the same configured virtual-device name.
+- Ensure duplicate-name detection is race-safe and remains valid for the
+  lifetime of the running instance.
+- Do not rely solely on scanning existing evdev device names to enforce
+  uniqueness.
 
 ## Build and release improvements
 
@@ -298,6 +306,38 @@ It should also provide activity and relevant state-change notifications.
 
 The proxy session remains authoritative for deciding when requested transitions
 are safe to complete.
+
+## Runtime instance discovery
+
+Once the runtime control interface is available, expose enough authoritative
+instance identity and state for local tooling to discover currently running
+`input-proxy` instances.
+
+Extend:
+
+```text id="323bn2"
+input-proxy list
+```
+
+to present both:
+
+- available physical source candidates;
+- currently running `input-proxy` mappings.
+
+Running-instance information should include at least:
+
+- configured source;
+- configured virtual-device name;
+- relevant current runtime state where useful.
+
+The D-Bus runtime-control interface should be the authoritative source for
+running-instance information.
+
+Do not introduce a parallel persistent instance registry, PID-file database, or
+other state-tracking mechanism solely to support listing.
+
+The output should keep available sources and active mappings visually distinct
+while preserving the concise operator-oriented nature of `list`.
 
 ## Runtime integration
 
