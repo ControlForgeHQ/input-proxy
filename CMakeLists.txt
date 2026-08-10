@@ -16,6 +16,7 @@ pkg_check_modules(LIBEVDEV REQUIRED IMPORTED_TARGET libevdev)
 add_executable(
     input-proxy
     src/device_discovery.c
+    src/device_inspection.c
     src/instance_name.c
     src/main.c
     src/proxy_session.c
@@ -58,6 +59,19 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME device-discovery-test COMMAND device-discovery-test)
+
+    add_executable(
+        device-inspection-test
+        tests/device_inspection_test.c
+        src/device_inspection.c
+        src/device_discovery.c
+    )
+    target_include_directories(
+        device-inspection-test
+        PRIVATE ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/src
+    )
+    target_link_libraries(device-inspection-test PRIVATE PkgConfig::LIBEVDEV)
+    add_test(NAME device-inspection-test COMMAND device-inspection-test)
 
     add_executable(
         source-device-test
