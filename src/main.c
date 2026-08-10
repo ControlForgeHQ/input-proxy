@@ -103,10 +103,10 @@ static void print_startup_header(
     const struct input_proxy_session_config *config)
 {
     printf(
-        "input-proxy %s\n"
-        "Repository: https://github.com/fasteddy516/input-proxy\n"
-        "Source: %s\n"
-        "Virtual device: %s\n",
+        "input-proxy: Version=%s\n"
+        "input-proxy: Repository=https://github.com/fasteddy516/input-proxy\n"
+        "input-proxy: Source=%s\n"
+        "input-proxy: DeviceName=%s\n",
         INPUT_PROXY_VERSION_STRING,
         config->source_path,
         config->device_name
