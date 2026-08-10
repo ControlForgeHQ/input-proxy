@@ -4,6 +4,8 @@
 #include <input_proxy/result.h>
 #include <input_proxy/version.h>
 
+#include "device_discovery_internal.h"
+
 #include <stdbool.h>
 #include <signal.h>
 #include <stdio.h>
@@ -255,6 +257,30 @@ static int run_proxy(int argc, char *argv[])
     return result == INPUT_PROXY_SUCCESS ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
+static int list_devices(int argc)
+{
+    enum input_proxy_result result;
+
+    if (argc != 2) {
+        fprintf(stderr, "input-proxy: invalid list arguments\n");
+        print_list_help(stderr);
+        return EXIT_FAILURE;
+    }
+
+    result = input_proxy_list_devices(
+        stdout, "/sys/class/input", "/dev/input");
+    if (result != INPUT_PROXY_SUCCESS) {
+        fprintf(
+            stderr,
+            "input-proxy: failed to enumerate input devices: %s\n",
+            input_proxy_result_string(result)
+        );
+        return EXIT_FAILURE;
+    }
+
+    return EXIT_SUCCESS;
+}
+
 int main(int argc, char *argv[])
 {
     const char *command;
@@ -292,8 +318,7 @@ int main(int argc, char *argv[])
             return EXIT_SUCCESS;
         }
 
-        fprintf(stderr, "input-proxy: command 'list' is not yet implemented\n");
-        return EXIT_FAILURE;
+        return list_devices(argc);
     }
 
     if (strcmp(command, "inspect") == 0) {
