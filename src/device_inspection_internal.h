@@ -4,6 +4,14 @@
 #include <input_proxy/result.h>
 
 #include <stdio.h>
+#include <stddef.h>
+
+void input_proxy_print_wrapped_values(
+    FILE *stream,
+    const char *label,
+    const char *const values[],
+    size_t value_count
+);
 
 enum input_proxy_result input_proxy_inspect_device(
     FILE *stream,

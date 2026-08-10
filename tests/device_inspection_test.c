@@ -54,6 +54,13 @@ int main(void)
     failures += make_directory(udev);
     snprintf(path, sizeof(path), "%s/event7", root);
     if (symlink("/dev/null", path) != 0) failures++;
+    {
+        char by_id[1024];
+        snprintf(by_id, sizeof(by_id), "%s/by-id", root);
+        failures += make_directory(by_id);
+        snprintf(by_id, sizeof(by_id), "%s/by-id/test-device", root);
+        if (symlink("../event7", by_id) != 0) failures++;
+    }
 
     stream = open_memstream(&output, &output_size);
     error_stream = open_memstream(&error, &error_size);
@@ -63,17 +70,42 @@ int main(void)
     fclose(stream); fclose(error_stream);
     if (result != INPUT_PROXY_SUCCESS ||
         strstr(output, "Device identity") == NULL ||
+        strstr(output, "Preferred run source:") == NULL ||
+        strstr(output, "/by-id/test-device") == NULL ||
         strstr(output, "Fixture Keyboard") == NULL ||
         strstr(output, "Bus:                   USB") == NULL ||
         strstr(output, "Source readable:       No (BLOCKER)") == NULL ||
         strstr(output, "/dev/uinput writable:  Yes") == NULL ||
         strstr(output, "No udev rule suggested") == NULL ||
         strstr(output, "Suggested udev rule") != NULL ||
-        strstr(output, "BLOCKED:") == NULL || error[0] != '\0') {
+        strstr(output, "BLOCKED:") == NULL ||
+        strstr(output, "Suggested command") == NULL ||
+        strstr(output, "--source ") == NULL ||
+        strstr(output, "DESIRED DEVICE NAME") == NULL ||
+        strstr(output, "\033[") != NULL || error[0] != '\0') {
         fprintf(stderr, "unexpected inspection result:\n%s%s", output, error);
         failures++;
     }
     free(output); free(error);
+    output = NULL;
+    output_size = 0;
+    stream = open_memstream(&output, &output_size);
+    if (stream == NULL) return 1;
+    {
+        const char *const values[] = {
+            "KEY_ESC", "KEY_1", "KEY_2", "KEY_3", "KEY_4", "KEY_5",
+            "KEY_6", "KEY_7", "KEY_8", "KEY_9", "KEY_0", "KEY_MINUS"
+        };
+        input_proxy_print_wrapped_values(stream, "Keys/buttons:", values,
+                                         sizeof(values) / sizeof(values[0]));
+    }
+    fclose(stream);
+    if (strstr(output, "\n                         KEY_") == NULL ||
+        strstr(output, "\033[") != NULL) {
+        fprintf(stderr, "unexpected wrapped output:\n%s", output);
+        failures++;
+    }
+    free(output);
     if (nftw(root, remove_entry, 16, FTW_DEPTH | FTW_PHYS) != 0) failures++;
     return failures == 0 ? 0 : 1;
 }
