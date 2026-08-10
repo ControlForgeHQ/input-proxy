@@ -266,11 +266,6 @@ static bool is_plausible_source(const char *event_path)
     char absolute_bitmap[1024];
     char relative_bitmap[1024];
     char switch_bitmap[1024];
-    unsigned long bus_type;
-
-    if (read_bus_type(event_path, &bus_type) && bus_type == BUS_CEC) {
-        return false;
-    }
 
     if (!read_line(event_path, "capabilities/key", key_bitmap,
                    sizeof(key_bitmap)) ||

@@ -219,6 +219,11 @@ int main(void)
                               NULL, 0, NULL, 0, NULL, 0);
     snprintf(path, sizeof(path), "%s/event8/device/id/bustype", class_path);
     failures += write_text(path, "001e\n");
+    snprintf(path, sizeof(path), "%s/event12", class_path);
+    failures += create_device(path, "CEC Noise\n", NULL, 0,
+                              NULL, 0, NULL, 0, NULL, 0);
+    snprintf(path, sizeof(path), "%s/event12/device/id/bustype", class_path);
+    failures += write_text(path, "001e\n");
     snprintf(path, sizeof(path), "%s/event11", class_path);
     failures += create_device(path, "Unusual Device\n", unusual_keys, 1,
                               NULL, 0, NULL, 0, NULL, 0);
@@ -268,9 +273,11 @@ int main(void)
         !strstr(output, "Other input") ||
         !strstr(output, "Unusual Device") ||
         !strstr(output, "Unknown") ||
+        !strstr(output, "CEC Remote") ||
+        !strstr(output, "CEC") ||
         strstr(output, "System Button") ||
         strstr(output, "Switch Only") ||
-        strstr(output, "CEC Remote") ||
+        strstr(output, "CEC Noise") ||
         strstr(output, "Virtual Device") ||
         !output_contains_in_order(output, "event2", "event10")) {
         fprintf(stderr, "unexpected discovery output:\n%s", output);
