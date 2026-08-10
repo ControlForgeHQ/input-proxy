@@ -142,19 +142,12 @@ static void print_event_types(FILE *stream, const struct libevdev *device)
     end_list(stream, any);
 }
 
-static bool find_persistent_path(const char *device_path, const struct stat *status,
+static bool find_persistent_path(const char *device_input_path,
+                                 const struct stat *status,
                                  char *persistent_path, size_t path_size)
 {
     static const char *const directories[] = {"by-id", "by-path"};
-    char root[PATH_MAX];
-    char *separator;
     size_t directory_index;
-
-    if (strlen(device_path) >= sizeof(root)) return false;
-    strcpy(root, device_path);
-    separator = strrchr(root, '/');
-    if (separator == NULL) return false;
-    *separator = '\0';
 
     for (directory_index = 0; directory_index < 2; ++directory_index) {
         char directory[PATH_MAX];
@@ -162,7 +155,7 @@ static bool find_persistent_path(const char *device_path, const struct stat *sta
         int count;
         int index;
 
-        if (snprintf(directory, sizeof(directory), "%s/%s", root,
+        if (snprintf(directory, sizeof(directory), "%s/%s", device_input_path,
                      directories[directory_index]) >= (int)sizeof(directory))
             continue;
         count = scandir(directory, &entries, NULL, alphasort);
@@ -189,6 +182,52 @@ static bool find_persistent_path(const char *device_path, const struct stat *sta
         }
         free(entries);
     }
+    return false;
+}
+
+static bool resolve_event_node(const char *sysfs_input_path,
+                               const char *device_input_path,
+                               const struct stat *device_status,
+                               char *event_node, size_t event_node_size,
+                               char *event_sysfs_path, size_t sysfs_path_size)
+{
+    struct dirent **entries = NULL;
+    int count;
+    int index;
+
+    count = scandir(sysfs_input_path, &entries, NULL, alphasort);
+    if (count < 0) return false;
+    for (index = 0; index < count; ++index) {
+        char dev_path[PATH_MAX];
+        const char *ignored_name;
+        FILE *file;
+        unsigned int device_major;
+        unsigned int device_minor;
+        bool match = false;
+
+        if (event_name(entries[index]->d_name, &ignored_name) &&
+            snprintf(dev_path, sizeof(dev_path), "%s/%s/dev", sysfs_input_path,
+                     entries[index]->d_name) < (int)sizeof(dev_path) &&
+            (file = fopen(dev_path, "r")) != NULL) {
+            if (fscanf(file, "%u:%u", &device_major, &device_minor) == 2 &&
+                device_major == major(device_status->st_rdev) &&
+                device_minor == minor(device_status->st_rdev) &&
+                snprintf(event_node, event_node_size, "%s/%s", device_input_path,
+                         entries[index]->d_name) < (int)event_node_size &&
+                snprintf(event_sysfs_path, sysfs_path_size, "%s/%s",
+                         sysfs_input_path, entries[index]->d_name) <
+                    (int)sysfs_path_size)
+                match = true;
+            fclose(file);
+        }
+        free(entries[index]);
+        if (match) {
+            while (++index < count) free(entries[index]);
+            free(entries);
+            return true;
+        }
+    }
+    free(entries);
     return false;
 }
 
@@ -249,11 +288,11 @@ static bool read_udev_properties(const char *root, const struct stat *status,
 
 enum input_proxy_result input_proxy_inspect_device(
     FILE *stream, FILE *error_stream, const char *device_path,
-    const char *sysfs_input_path, const char *uinput_path,
+    const char *sysfs_input_path, const char *device_input_path,
+    const char *uinput_path,
     const char *udev_data_path)
 {
-    const char *node_name;
-    char canonical_device_path[PATH_MAX];
+    char event_node[PATH_MAX];
     char sysfs_path[PATH_MAX];
     char persistent_path[PATH_MAX] = "";
     struct stat status;
@@ -271,23 +310,20 @@ enum input_proxy_result input_proxy_inspect_device(
     if (stream == NULL || error_stream == NULL || device_path == NULL ||
         sysfs_input_path == NULL || uinput_path == NULL || udev_data_path == NULL)
         return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
-    if (event_name(device_path, &node_name)) {
-        if (snprintf(canonical_device_path, sizeof(canonical_device_path), "%s",
-                     device_path) >= (int)sizeof(canonical_device_path))
-            canonical_device_path[0] = '\0';
-    } else if (realpath(device_path, canonical_device_path) == NULL ||
-               !event_name(canonical_device_path, &node_name)) {
-        canonical_device_path[0] = '\0';
-    }
-    if (canonical_device_path[0] == '\0' || stat(device_path, &status) != 0 ||
+    if (device_input_path == NULL || stat(device_path, &status) != 0 ||
         !S_ISCHR(status.st_mode)) {
         fprintf(error_stream, "input-proxy: '%s' is not an input event device\n",
                 device_path);
         return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
     }
-    if (snprintf(sysfs_path, sizeof(sysfs_path), "%s/%s", sysfs_input_path,
-                 node_name) >= (int)sizeof(sysfs_path) ||
-        !input_proxy_read_device_identity(sysfs_path, &identity)) {
+    if (!resolve_event_node(sysfs_input_path, device_input_path, &status,
+                            event_node, sizeof(event_node), sysfs_path,
+                            sizeof(sysfs_path))) {
+        fprintf(error_stream, "input-proxy: '%s' is not an input event device\n",
+                device_path);
+        return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
+    }
+    if (!input_proxy_read_device_identity(sysfs_path, &identity)) {
         fprintf(error_stream, "input-proxy: cannot inspect event metadata for '%s'\n",
                 device_path);
         return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
@@ -298,11 +334,12 @@ enum input_proxy_result input_proxy_inspect_device(
         source_ok = true;
     uinput_fd = open(uinput_path, O_WRONLY | O_NONBLOCK | O_CLOEXEC);
     if (uinput_fd >= 0) uinput_ok = true;
-    (void)find_persistent_path(canonical_device_path, &status,
+    (void)find_persistent_path(device_input_path, &status,
                                persistent_path, sizeof(persistent_path));
 
     fputs("Device identity\n", stream);
     print_value(stream, "Path:", device_path);
+    print_value(stream, "Event node:", event_node);
     print_value(stream, "Preferred run source:", persistent_path);
     print_value(stream, "Name:", source_ok ? libevdev_get_name(device) : identity.name);
     print_value(stream, "Classification:", identity.classification);
@@ -373,11 +410,16 @@ enum input_proxy_result input_proxy_inspect_device(
                 "\n  Suggested udev rule (not applied):\n"
                 "    ACTION==\"add|change\", SUBSYSTEM==\"input\", KERNEL==\"event*\", "
                 "ENV{ID_VENDOR_ID}==\"%s\", ENV{ID_MODEL_ID}==\"%s\", "
-                "ENV{ID_PATH}==\"%s\", ENV{LIBINPUT_IGNORE_DEVICE}=\"1\"\n"
-                "\n  Suggested commands (not run):\n"
-                "    sudo udevadm control --reload-rules\n"
-                "    sudo udevadm trigger --subsystem-match=input --action=change\n",
+                "ENV{ID_PATH}==\"%s\", ENV{LIBINPUT_IGNORE_DEVICE}=\"1\"\n",
                 rule_vendor, rule_model, rule_path);
+            if (strcmp(identity.bus, "USB") == 0)
+                fputs("\n  NOTE: this rule includes ID_PATH and is tied to the device's current\n"
+                      "        physical connection path. Moving the device to another USB port\n"
+                      "        may require updating the rule.\n", stream);
+            fputs("\n  Suggested commands (not run):\n"
+                  "    sudo udevadm control --reload-rules\n"
+                  "    sudo udevadm trigger --subsystem-match=input --action=change\n",
+                  stream);
         } else {
             fputs("  No udev rule suggested: a stable path plus vendor and model identifiers are unavailable.\n", stream);
         }
@@ -397,7 +439,7 @@ enum input_proxy_result input_proxy_inspect_device(
     fputs("\nSuggested command\n\n  input-proxy run \\\n", stream);
     fprintf(stream, "      --source %s \\\n", persistent_path[0] != '\0'
             ? persistent_path : device_path);
-    fputs("      --name \"DESIRED DEVICE NAME\"\n\n", stream);
+    fputs("      --name \"YOUR DEVICE NAME\"\n\n", stream);
 
     if (device != NULL) libevdev_free(device);
     if (source_fd >= 0) close(source_fd);

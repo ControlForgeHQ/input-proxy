@@ -30,6 +30,7 @@ int main(void)
     char root_template[] = "/tmp/input-proxy-inspection-test-XXXXXX";
     char *root = mkdtemp(root_template);
     char sysfs[512], event[512], path[1024], udev[512];
+    char by_id_path[1024], by_path_path[1024];
     char *output = NULL, *error = NULL;
     size_t output_size = 0, error_size = 0;
     FILE *stream, *error_stream;
@@ -51,25 +52,32 @@ int main(void)
     snprintf(path, sizeof(path), "%s/device/capabilities/abs", event); failures += write_text(path, "0\n");
     snprintf(path, sizeof(path), "%s/device/capabilities/rel", event); failures += write_text(path, "0\n");
     snprintf(path, sizeof(path), "%s/device/properties", event); failures += write_text(path, "0\n");
+    snprintf(path, sizeof(path), "%s/dev", event); failures += write_text(path, "1:3\n");
     failures += make_directory(udev);
     snprintf(path, sizeof(path), "%s/event7", root);
     if (symlink("/dev/null", path) != 0) failures++;
     {
-        char by_id[1024];
-        snprintf(by_id, sizeof(by_id), "%s/by-id", root);
-        failures += make_directory(by_id);
-        snprintf(by_id, sizeof(by_id), "%s/by-id/test-device", root);
-        if (symlink("../event7", by_id) != 0) failures++;
+        char alias_directory[1024];
+        snprintf(alias_directory, sizeof(alias_directory), "%s/by-id", root);
+        failures += make_directory(alias_directory);
+        snprintf(by_id_path, sizeof(by_id_path), "%s/by-id/test-device", root);
+        if (symlink("../event7", by_id_path) != 0) failures++;
+        snprintf(alias_directory, sizeof(alias_directory), "%s/by-path", root);
+        failures += make_directory(alias_directory);
+        snprintf(by_path_path, sizeof(by_path_path), "%s/by-path/test-port", root);
+        if (symlink("../event7", by_path_path) != 0) failures++;
     }
 
     stream = open_memstream(&output, &output_size);
     error_stream = open_memstream(&error, &error_size);
     if (failures || stream == NULL || error_stream == NULL) return 1;
-    result = input_proxy_inspect_device(stream, error_stream, path, sysfs,
+    result = input_proxy_inspect_device(stream, error_stream, path, sysfs, root,
                                         "/dev/null", udev);
     fclose(stream); fclose(error_stream);
     if (result != INPUT_PROXY_SUCCESS ||
         strstr(output, "Device identity") == NULL ||
+        strstr(output, "Event node:") == NULL ||
+        strstr(output, path) == NULL ||
         strstr(output, "Preferred run source:") == NULL ||
         strstr(output, "/by-id/test-device") == NULL ||
         strstr(output, "Fixture Keyboard") == NULL ||
@@ -81,12 +89,34 @@ int main(void)
         strstr(output, "BLOCKED:") == NULL ||
         strstr(output, "Suggested command") == NULL ||
         strstr(output, "--source ") == NULL ||
-        strstr(output, "DESIRED DEVICE NAME") == NULL ||
+        strstr(output, "YOUR DEVICE NAME") == NULL ||
         strstr(output, "\033[") != NULL || error[0] != '\0') {
         fprintf(stderr, "unexpected inspection result:\n%s%s", output, error);
         failures++;
     }
     free(output); free(error);
+    {
+        const char *const aliases[] = {by_id_path, by_path_path};
+        size_t alias_index;
+        for (alias_index = 0; alias_index < 2; ++alias_index) {
+            output = NULL; error = NULL; output_size = 0; error_size = 0;
+            stream = open_memstream(&output, &output_size);
+            error_stream = open_memstream(&error, &error_size);
+            if (stream == NULL || error_stream == NULL) return 1;
+            result = input_proxy_inspect_device(stream, error_stream,
+                aliases[alias_index], sysfs, root, "/dev/null", udev);
+            fclose(stream); fclose(error_stream);
+            if (result != INPUT_PROXY_SUCCESS ||
+                strstr(output, aliases[alias_index]) == NULL ||
+                strstr(output, "Event node:") == NULL ||
+                strstr(output, path) == NULL || error[0] != '\0') {
+                fprintf(stderr, "unexpected alias inspection result:\n%s%s",
+                        output, error);
+                failures++;
+            }
+            free(output); free(error);
+        }
+    }
     output = NULL;
     output_size = 0;
     stream = open_memstream(&output, &output_size);

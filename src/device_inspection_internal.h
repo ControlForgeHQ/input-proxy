@@ -18,6 +18,7 @@ enum input_proxy_result input_proxy_inspect_device(
     FILE *error_stream,
     const char *device_path,
     const char *sysfs_input_path,
+    const char *device_input_path,
     const char *uinput_path,
     const char *udev_data_path
 );

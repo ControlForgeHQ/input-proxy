@@ -301,7 +301,7 @@ static int inspect_device(int argc, char *argv[])
         return EXIT_FAILURE;
     }
     result = input_proxy_inspect_device(stdout, stderr, argv[2],
-        "/sys/class/input", "/dev/uinput", "/run/udev/data");
+        "/sys/class/input", "/dev/input", "/dev/uinput", "/run/udev/data");
     return result == INPUT_PROXY_SUCCESS ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
