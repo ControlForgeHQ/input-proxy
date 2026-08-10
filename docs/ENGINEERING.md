@@ -427,13 +427,39 @@ chore: bump version to X.Y.Z
 Pull requests should be created as drafts until implementation and validation
 are ready for review.
 
+A pull request should normally correspond to one GitHub issue.
+
+When a pull request completes the work defined by an issue, its description must
+include a GitHub issue-closing reference so merging the pull request
+automatically closes the associated issue.
+
+Use an explicit closing keyword, preferably:
+
+```text
+Closes #<issue>
+```
+
+Do not rely on non-closing references such as:
+
+```text
+Implements #<issue>
+Related to #<issue>
+Addresses #<issue>
+```
+
+when the pull request is intended to complete that issue.
+
+If one pull request intentionally completes multiple issues, include an explicit
+closing reference for each issue.
+
 A pull request description should summarize:
 
 - what changed;
 - why;
 - validation performed;
 - anything explicitly not validated;
-- assumptions or limitations when relevant.
+- assumptions or limitations when relevant;
+- the issue or issues closed by the pull request.
 
 When follow-up changes are requested on a pull request, the resulting update
 should be documented in the PR conversation so the request-and-response history

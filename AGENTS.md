@@ -77,6 +77,16 @@ Create implementation pull requests as drafts.
 
 Keep each pull request focused on one issue.
 
+When a pull request completes an issue, include an explicit GitHub closing
+reference in the pull request description:
+
+```text
+Closes #<issue>
+```
+
+Do not use a merely descriptive issue reference when the issue is expected to
+close on merge.
+
 When completing an implementation issue, include a concise completion summary
 covering:
 
