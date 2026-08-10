@@ -24,6 +24,12 @@ const char *input_proxy_result_string(enum input_proxy_result result)
         case INPUT_PROXY_ERROR_OUT_OF_MEMORY:
             return "Out of memory";
 
+        case INPUT_PROXY_ERROR_INSTANCE_NAME_OWNED:
+            return "Instance name is already owned";
+
+        case INPUT_PROXY_ERROR_INSTANCE_NAME_OWNERSHIP_FAILED:
+            return "Failed to acquire instance-name ownership";
+
         case INPUT_PROXY_ERROR_SOURCE_UNAVAILABLE:
             return "Source device unavailable";
 

@@ -224,6 +224,15 @@ static int run_proxy(int argc, char *argv[])
 
     result = input_proxy_session_create(&session, &config);
     if (result != INPUT_PROXY_SUCCESS) {
+        if (result == INPUT_PROXY_ERROR_INSTANCE_NAME_OWNED) {
+            fprintf(
+                stderr,
+                "input-proxy: configured name '%s' is already owned by "
+                "another running input-proxy instance\n",
+                config.device_name
+            );
+            return EXIT_FAILURE;
+        }
         fprintf(
             stderr,
             "input-proxy: failed to create proxy session: %s\n",

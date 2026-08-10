@@ -74,6 +74,19 @@ runs the session, and returns its result.
 
 Runtime lifecycle belongs in the proxy-session layer.
 
+Before runtime startup output or device lifecycle begins, the proxy session
+acquires exclusive ownership of the configured virtual-device name. Ownership
+is represented by a bound Linux abstract Unix-domain socket whose address
+contains a fixed application namespace followed by the exact configured name.
+The atomic socket bind makes concurrent acquisition race-safe. The session
+holds the socket for its lifetime, and closing the descriptor on cleanup—or
+kernel cleanup after abnormal process termination—immediately releases the
+name. Because the address is not a filesystem path, spaces and punctuation are
+preserved without creating path-traversal or stale-file behavior.
+
+This ownership namespace is specific to `input-proxy` runtime processes. Linux
+input devices with the same displayed evdev name do not participate in it.
+
 ### `list`
 
 `list` performs read-only device discovery.
@@ -730,6 +743,8 @@ Normal runtime and inspection code must not silently perform these changes.
 The following invariants define the core design:
 
 - one runtime proxy session manages one physical source;
+- each configured virtual-device name has at most one running proxy-session
+  owner;
 - the physical source is recoverable;
 - the virtual device is the stable logical device;
 - temporary compatible source loss does not remove the virtual device;
