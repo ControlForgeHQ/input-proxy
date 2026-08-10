@@ -100,4 +100,12 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME proxy-session-test COMMAND proxy-session-test)
+
+    add_test(
+        NAME cli-test
+        COMMAND
+            ${CMAKE_COMMAND}
+            -DINPUT_PROXY=$<TARGET_FILE:input-proxy>
+            -P ${PROJECT_SOURCE_DIR}/tests/cli_test.cmake
+    )
 endif()
