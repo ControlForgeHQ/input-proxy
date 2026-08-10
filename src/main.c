@@ -99,6 +99,21 @@ static void print_run_help(FILE *stream)
     );
 }
 
+static void print_startup_header(
+    const struct input_proxy_session_config *config)
+{
+    printf(
+        "input-proxy: Version=%s\n"
+        "input-proxy: Repository=https://github.com/fasteddy516/input-proxy\n"
+        "input-proxy: Source=%s\n"
+        "input-proxy: DeviceName=%s\n",
+        INPUT_PROXY_VERSION_STRING,
+        config->source_path,
+        config->device_name
+    );
+    fflush(stdout);
+}
+
 static void print_list_help(FILE *stream)
 {
     fputs(
@@ -223,6 +238,7 @@ static int run_proxy(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
+    print_startup_header(&config);
     result = input_proxy_session_run(session);
     if (result != INPUT_PROXY_SUCCESS) {
         fprintf(
