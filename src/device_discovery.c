@@ -15,9 +15,25 @@
 
 struct device_metadata {
     char name[256];
-    char identity[32];
-    const char *classification;
+    const char *bus;
+    const char *type;
 };
+
+static int compare_event_nodes(
+    const struct dirent **left,
+    const struct dirent **right)
+{
+    const unsigned long left_index = strtoul((*left)->d_name + 5, NULL, 10);
+    const unsigned long right_index = strtoul((*right)->d_name + 5, NULL, 10);
+
+    if (left_index < right_index) {
+        return -1;
+    }
+    if (left_index > right_index) {
+        return 1;
+    }
+    return strcmp((*left)->d_name, (*right)->d_name);
+}
 
 static bool is_event_node_name(const char *name)
 {
@@ -34,6 +50,11 @@ static bool is_event_node_name(const char *name)
     }
 
     return true;
+}
+
+static int select_event_node(const struct dirent *entry)
+{
+    return is_event_node_name(entry->d_name) ? 1 : 0;
 }
 
 static bool read_line(
@@ -119,6 +140,35 @@ static bool capability_has_bit(
            bitmap_has_bit(bitmap, bit);
 }
 
+static bool bitmap_has_any_bit(const char *bitmap)
+{
+    unsigned int bit;
+
+    for (bit = 0; bit <= KEY_MAX; ++bit) {
+        if (bitmap_has_bit(bitmap, bit)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+static bool bitmap_has_only_system_buttons(const char *bitmap)
+{
+    unsigned int bit;
+    bool has_system_button = false;
+
+    for (bit = 0; bit <= KEY_MAX; ++bit) {
+        if (!bitmap_has_bit(bitmap, bit)) {
+            continue;
+        }
+        if (bit != KEY_POWER && bit != KEY_SLEEP && bit != KEY_WAKEUP) {
+            return false;
+        }
+        has_system_button = true;
+    }
+    return has_system_button;
+}
+
 static const char *classify_device(const char *event_path)
 {
     const bool touch = capability_has_bit(
@@ -135,25 +185,25 @@ static const char *classify_device(const char *event_path)
 
     if (capability_has_bit(event_path, "capabilities/key", BTN_TOOL_PEN) ||
         capability_has_bit(event_path, "capabilities/key", BTN_STYLUS)) {
-        return "tablet";
+        return "Tablet";
     }
     if (direct && touch && absolute_position) {
-        return "touchscreen";
+        return "Touchscreen";
     }
     if (pointer && touch && absolute_position) {
-        return "touchpad";
+        return "Touchpad";
     }
     if (capability_has_bit(event_path, "capabilities/key", KEY_A) &&
         capability_has_bit(event_path, "capabilities/key", KEY_Z) &&
         capability_has_bit(event_path, "capabilities/key", KEY_ENTER)) {
-        return "keyboard";
+        return "Keyboard";
     }
     if (capability_has_bit(event_path, "capabilities/rel", REL_X) &&
         capability_has_bit(event_path, "capabilities/rel", REL_Y) &&
         capability_has_bit(event_path, "capabilities/key", BTN_MOUSE)) {
-        return "mouse";
+        return "Mouse";
     }
-    return "other input";
+    return "Other input";
 }
 
 static bool is_virtual_input(const char *event_path)
@@ -166,22 +216,83 @@ static bool is_virtual_input(const char *event_path)
     return strstr(canonical_path, "/devices/virtual/input/") != NULL;
 }
 
-static void read_identity(
-    const char *event_path,
-    char *identity,
-    size_t identity_size)
+static bool read_bus_type(const char *event_path, unsigned long *bus_type)
 {
     char bus[16];
-    char vendor[16];
-    char product[16];
+    char *end_pointer;
 
-    if (read_line(event_path, "id/bustype", bus, sizeof(bus)) &&
-        read_line(event_path, "id/vendor", vendor, sizeof(vendor)) &&
-        read_line(event_path, "id/product", product, sizeof(product))) {
-        snprintf(identity, identity_size, "%s:%s:%s", bus, vendor, product);
-    } else {
-        snprintf(identity, identity_size, "-");
+    if (!read_line(event_path, "id/bustype", bus, sizeof(bus))) {
+        return false;
     }
+    errno = 0;
+    *bus_type = strtoul(bus, &end_pointer, 16);
+    return errno == 0 && *end_pointer == '\0';
+}
+
+static const char *bus_name(unsigned long bus_type)
+{
+    switch (bus_type) {
+        case BUS_PCI: return "PCI";
+        case BUS_ISAPNP: return "ISA PnP";
+        case BUS_USB: return "USB";
+        case BUS_HIL: return "HIL";
+        case BUS_BLUETOOTH: return "Bluetooth";
+        case BUS_VIRTUAL: return "Virtual";
+        case BUS_ISA: return "ISA";
+        case BUS_I8042: return "i8042";
+        case BUS_XTKBD: return "XT";
+        case BUS_RS232: return "RS-232";
+        case BUS_GAMEPORT: return "Gameport";
+        case BUS_PARPORT: return "Parallel";
+        case BUS_AMIGA: return "Amiga";
+        case BUS_ADB: return "ADB";
+        case BUS_I2C: return "I2C";
+        case BUS_HOST: return "Host";
+        case BUS_GSC: return "GSC";
+        case BUS_ATARI: return "Atari";
+        case BUS_SPI: return "SPI";
+        case BUS_RMI: return "RMI";
+        case BUS_CEC: return "CEC";
+        case BUS_INTEL_ISHTP: return "Intel ISHTP";
+        case BUS_AMD_SFH: return "AMD SFH";
+        case BUS_SDW: return "SoundWire";
+        default: return "Unknown";
+    }
+}
+
+static bool is_plausible_source(const char *event_path)
+{
+    char key_bitmap[1024];
+    char absolute_bitmap[1024];
+    char relative_bitmap[1024];
+    char switch_bitmap[1024];
+    unsigned long bus_type;
+
+    if (read_bus_type(event_path, &bus_type) && bus_type == BUS_CEC) {
+        return false;
+    }
+
+    if (!read_line(event_path, "capabilities/key", key_bitmap,
+                   sizeof(key_bitmap)) ||
+        !read_line(event_path, "capabilities/abs", absolute_bitmap,
+                   sizeof(absolute_bitmap)) ||
+        !read_line(event_path, "capabilities/rel", relative_bitmap,
+                   sizeof(relative_bitmap)) ||
+        !read_line(event_path, "capabilities/sw", switch_bitmap,
+                   sizeof(switch_bitmap))) {
+        return true;
+    }
+
+    if (bitmap_has_any_bit(absolute_bitmap) ||
+        bitmap_has_any_bit(relative_bitmap)) {
+        return true;
+    }
+    if (bitmap_has_any_bit(key_bitmap)) {
+        return !bitmap_has_only_system_buttons(key_bitmap);
+    }
+
+    /* Switch-only nodes and nodes without input controls are not candidates. */
+    return false;
 }
 
 static void read_metadata(
@@ -192,8 +303,13 @@ static void read_metadata(
                    sizeof(metadata->name)) || metadata->name[0] == '\0') {
         snprintf(metadata->name, sizeof(metadata->name), "(unknown)");
     }
-    read_identity(event_path, metadata->identity, sizeof(metadata->identity));
-    metadata->classification = classify_device(event_path);
+    {
+        unsigned long bus_type;
+        metadata->bus = read_bus_type(event_path, &bus_type)
+            ? bus_name(bus_type)
+            : "Unknown";
+    }
+    metadata->type = classify_device(event_path);
 }
 
 enum input_proxy_result input_proxy_list_devices(
@@ -209,29 +325,28 @@ enum input_proxy_result input_proxy_list_devices(
         return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
     }
 
-    entry_count = scandir(sysfs_input_path, &entries, NULL, alphasort);
+    entry_count = scandir(
+        sysfs_input_path, &entries, select_event_node, compare_event_nodes);
     if (entry_count < 0) {
         return INPUT_PROXY_ERROR_INTERNAL;
     }
 
-    fprintf(stream, "%-18s %-12s %-14s %s\n",
-            "DEVICE", "TYPE", "BUS:VENDOR:PRODUCT", "NAME");
+    fprintf(stream, "%-18s %-12s %-12s %s\n",
+            "DEVICE", "TYPE", "BUS", "NAME");
 
     for (index = 0; index < entry_count; ++index) {
         char event_path[PATH_MAX];
         char devnode[PATH_MAX];
         struct device_metadata metadata;
 
-        if (is_event_node_name(entries[index]->d_name) &&
-            snprintf(event_path, sizeof(event_path), "%s/%s", sysfs_input_path,
+        if (snprintf(event_path, sizeof(event_path), "%s/%s", sysfs_input_path,
                      entries[index]->d_name) < (int)sizeof(event_path) &&
             snprintf(devnode, sizeof(devnode), "%s/%s", device_path,
                      entries[index]->d_name) < (int)sizeof(devnode) &&
-            !is_virtual_input(event_path)) {
+            !is_virtual_input(event_path) && is_plausible_source(event_path)) {
             read_metadata(event_path, &metadata);
-            fprintf(stream, "%-18s %-12s %-14s %s\n",
-                    devnode,
-                    metadata.classification, metadata.identity, metadata.name);
+            fprintf(stream, "%-18s %-12s %-12s %s\n",
+                    devnode, metadata.type, metadata.bus, metadata.name);
         }
         free(entries[index]);
     }

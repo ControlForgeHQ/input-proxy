@@ -127,6 +127,7 @@ static int create_device(
     WRITE_BITMAP_FILE("capabilities/key", key_bits, key_count);
     WRITE_BITMAP_FILE("capabilities/abs", abs_bits, abs_count);
     WRITE_BITMAP_FILE("capabilities/rel", rel_bits, rel_count);
+    WRITE_BITMAP_FILE("capabilities/sw", NULL, 0);
     WRITE_BITMAP_FILE("properties", property_bits, property_count);
 
 #undef WRITE_DEVICE_FILE
@@ -167,6 +168,9 @@ int main(void)
     const unsigned int mouse_axes[] = {REL_X, REL_Y};
     const unsigned int touchpad_properties[] = {INPUT_PROP_POINTER};
     const unsigned int tablet_keys[] = {BTN_TOOL_PEN, BTN_STYLUS};
+    const unsigned int system_keys[] = {KEY_POWER};
+    const unsigned int switch_bits[] = {SW_HEADPHONE_INSERT};
+    const unsigned int unusual_keys[] = {KEY_F13};
 
     if (root == NULL) {
         return 1;
@@ -180,6 +184,8 @@ int main(void)
     failures += create_device(path, "Test Touchscreen\n",
                               touchscreen_keys, 1, touchscreen_axes, 2,
                               NULL, 0, touchscreen_properties, 1);
+    snprintf(path, sizeof(path), "%s/event10/device/id/bustype", class_path);
+    failures += write_text(path, "0018\n");
     snprintf(path, sizeof(path), "%s/event2", class_path);
     failures += create_device(path, "Test Keyboard\n", keyboard_keys, 3,
                               NULL, 0, NULL, 0, NULL, 0);
@@ -196,6 +202,28 @@ int main(void)
     snprintf(path, sizeof(path), "%s/event6", class_path);
     failures += create_device(path, "Incomplete Device\n", NULL, 0,
                               NULL, 0, NULL, 0, NULL, 0);
+    snprintf(path, sizeof(path), "%s/event6/device/capabilities/key", class_path);
+    if (unlink(path) != 0) {
+        failures++;
+    }
+    snprintf(path, sizeof(path), "%s/event0", class_path);
+    failures += create_device(path, "System Button\n", system_keys, 1,
+                              NULL, 0, NULL, 0, NULL, 0);
+    snprintf(path, sizeof(path), "%s/event1", class_path);
+    failures += create_device(path, "Switch Only\n", NULL, 0,
+                              NULL, 0, NULL, 0, NULL, 0);
+    snprintf(path, sizeof(path), "%s/event1/device/capabilities/sw", class_path);
+    failures += write_bitmap(path, switch_bits, 1);
+    snprintf(path, sizeof(path), "%s/event8", class_path);
+    failures += create_device(path, "CEC Remote\n", keyboard_keys, 3,
+                              NULL, 0, NULL, 0, NULL, 0);
+    snprintf(path, sizeof(path), "%s/event8/device/id/bustype", class_path);
+    failures += write_text(path, "001e\n");
+    snprintf(path, sizeof(path), "%s/event11", class_path);
+    failures += create_device(path, "Unusual Device\n", unusual_keys, 1,
+                              NULL, 0, NULL, 0, NULL, 0);
+    snprintf(path, sizeof(path), "%s/event11/device/id/bustype", class_path);
+    failures += write_text(path, "ffff\n");
 
     snprintf(path, sizeof(path), "%s/devices", root);
     failures += make_directory(path);
@@ -223,19 +251,28 @@ int main(void)
 
     if (result != INPUT_PROXY_SUCCESS ||
         !strstr(output, "DEVICE") ||
+        !strstr(output, "TYPE") ||
+        !strstr(output, "BUS") ||
+        strstr(output, "VENDOR") ||
         !strstr(output, "/dev/input/event10") ||
-        !strstr(output, "touchscreen") ||
-        !strstr(output, "0003:1234:5678") ||
+        !strstr(output, "Touchscreen") ||
+        !strstr(output, "I2C") ||
         !strstr(output, "Test Touchscreen") ||
         !strstr(output, "/dev/input/event2") ||
-        !strstr(output, "keyboard") ||
-        !strstr(output, "mouse") ||
-        !strstr(output, "touchpad") ||
-        !strstr(output, "tablet") ||
+        !strstr(output, "Keyboard") ||
+        !strstr(output, "Mouse") ||
+        !strstr(output, "Touchpad") ||
+        !strstr(output, "Tablet") ||
+        !strstr(output, "USB") ||
         !strstr(output, "Incomplete Device") ||
-        !strstr(output, "other input") ||
+        !strstr(output, "Other input") ||
+        !strstr(output, "Unusual Device") ||
+        !strstr(output, "Unknown") ||
+        strstr(output, "System Button") ||
+        strstr(output, "Switch Only") ||
+        strstr(output, "CEC Remote") ||
         strstr(output, "Virtual Device") ||
-        !output_contains_in_order(output, "event10", "event2")) {
+        !output_contains_in_order(output, "event2", "event10")) {
         fprintf(stderr, "unexpected discovery output:\n%s", output);
         failures++;
     }
