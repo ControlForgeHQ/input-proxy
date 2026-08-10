@@ -6,6 +6,7 @@
 #include <input_proxy/virtual_device.h>
 
 #include "proxy_session_internal.h"
+#include "instance_name_internal.h"
 #include "virtual_device_internal.h"
 
 #include <signal.h>
@@ -21,6 +22,7 @@
 struct input_proxy_session {
     char *source_path;
     char *device_name;
+    struct input_proxy_instance_name *name_ownership;
     struct input_proxy_source_device *source_device;
     struct input_proxy_virtual_device *virtual_device;
     bool source_opened_successfully;
@@ -299,6 +301,14 @@ enum input_proxy_result input_proxy_session_create(
         goto error;
     }
 
+    result = input_proxy_instance_name_acquire(
+        &new_session->name_ownership,
+        new_session->device_name
+    );
+    if (result != INPUT_PROXY_SUCCESS) {
+        goto error;
+    }
+
     new_session->verbose = config->verbose;
 
     *session = new_session;
@@ -434,6 +444,7 @@ void input_proxy_session_destroy(
     }
 
     cleanup_active_devices(session);
+    input_proxy_instance_name_release(session->name_ownership);
     free(session->device_name);
     free(session->source_path);
     free(session);

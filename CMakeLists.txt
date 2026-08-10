@@ -16,6 +16,7 @@ pkg_check_modules(LIBEVDEV REQUIRED IMPORTED_TARGET libevdev)
 add_executable(
     input-proxy
     src/device_discovery.c
+    src/instance_name.c
     src/main.c
     src/proxy_session.c
     src/result.c
@@ -105,6 +106,7 @@ if(BUILD_TESTING)
         proxy-session-test
         tests/proxy_session_test.c
         src/proxy_session.c
+        src/instance_name.c
         src/result.c
     )
 
@@ -116,6 +118,22 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME proxy-session-test COMMAND proxy-session-test)
+
+    add_executable(
+        instance-name-test
+        tests/instance_name_test.c
+        src/instance_name.c
+        src/result.c
+    )
+
+    target_include_directories(
+        instance-name-test
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src
+    )
+
+    add_test(NAME instance-name-test COMMAND instance-name-test)
 
     add_test(
         NAME cli-test
