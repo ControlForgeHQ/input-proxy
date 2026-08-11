@@ -384,13 +384,21 @@ enum input_proxy_result input_proxy_inspect_device(
     }
 
     fputs("\nRuntime accessibility\n", stream);
-    fprintf(stream, "  %-22s %s", "Source readable:", source_ok ? "Yes" : "No");
+    fprintf(stream, "  %-22s %s", "Source readable:",
+            semantic_status(stream, source_ok ? "Yes" : "No",
+                            source_ok ? "32" : "31"));
     if (!source_ok)
         fprintf(stream, " (%s)", semantic_status(stream, "BLOCKER", "31"));
     fputc('\n', stream);
-    fprintf(stream, "  %-22s %s\n", "/dev/uinput exists:",
-            access(uinput_path, F_OK) == 0 ? "Yes" : "No");
-    fprintf(stream, "  %-22s %s", "/dev/uinput writable:", uinput_ok ? "Yes" : "No");
+    {
+        const bool uinput_exists = access(uinput_path, F_OK) == 0;
+        fprintf(stream, "  %-22s %s\n", "/dev/uinput exists:",
+                semantic_status(stream, uinput_exists ? "Yes" : "No",
+                                uinput_exists ? "32" : "31"));
+    }
+    fprintf(stream, "  %-22s %s", "/dev/uinput writable:",
+            semantic_status(stream, uinput_ok ? "Yes" : "No",
+                            uinput_ok ? "32" : "31"));
     if (!uinput_ok)
         fprintf(stream, " (%s)", semantic_status(stream, "BLOCKER", "31"));
     fputc('\n', stream);
@@ -400,23 +408,27 @@ enum input_proxy_result input_proxy_inspect_device(
                                    rule_vendor, sizeof(rule_vendor),
                                    rule_model, sizeof(rule_model),
                                    rule_path, sizeof(rule_path));
-    fprintf(stream, "  %-22s %s\n", "Libinput ignored:", ignored ? "Yes" : "No");
+    fprintf(stream, "  %-22s %s\n", "Libinput ignored:",
+            semantic_status(stream, ignored ? "Yes" : "No",
+                            ignored ? "32" : "33"));
     if (!ignored && !identity.virtual_device) {
-        fprintf(stream, "  %s: the physical source may also be consumed directly by libinput.\n",
+        fprintf(stream, "\n  %s: the physical source may also be consumed directly by libinput.\n",
                 semantic_status(stream, "WARNING", "33"));
         if (safe_rule_value(rule_vendor) && safe_rule_value(rule_model) &&
             safe_rule_value(rule_path)) {
             fprintf(stream,
-                "\n  Suggested udev rule (not applied):\n"
+                "\n  Suggested udev rule:\n"
                 "    ACTION==\"add|change\", SUBSYSTEM==\"input\", KERNEL==\"event*\", "
                 "ENV{ID_VENDOR_ID}==\"%s\", ENV{ID_MODEL_ID}==\"%s\", "
                 "ENV{ID_PATH}==\"%s\", ENV{LIBINPUT_IGNORE_DEVICE}=\"1\"\n",
                 rule_vendor, rule_model, rule_path);
             if (strcmp(identity.bus, "USB") == 0)
-                fputs("\n  NOTE: this rule includes ID_PATH and is tied to the device's current\n"
+                fprintf(stream,
+                      "\n  %s: this rule includes ID_PATH and is tied to the device's current\n"
                       "        physical connection path. Moving the device to another USB port\n"
-                      "        may require updating the rule.\n", stream);
-            fputs("\n  Suggested commands (not run):\n"
+                      "        may require updating the rule.\n",
+                      semantic_status(stream, "NOTE", "33"));
+            fputs("\n  Suggested commands:\n"
                   "    sudo udevadm control --reload-rules\n"
                   "    sudo udevadm trigger --subsystem-match=input --action=change\n",
                   stream);

@@ -86,6 +86,8 @@ int main(void)
         strstr(output, "/dev/uinput writable:  Yes") == NULL ||
         strstr(output, "No udev rule suggested") == NULL ||
         strstr(output, "Suggested udev rule") != NULL ||
+        strstr(output, "(not applied)") != NULL ||
+        strstr(output, "(not run)") != NULL ||
         strstr(output, "BLOCKED:") == NULL ||
         strstr(output, "Suggested command") == NULL ||
         strstr(output, "--source ") == NULL ||
