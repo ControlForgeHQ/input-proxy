@@ -10,6 +10,12 @@ set(CMAKE_C_STANDARD 17)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(CMAKE_C_EXTENSIONS OFF)
 
+configure_file(
+    include/input_proxy/version.h.in
+    generated/include/input_proxy/version.h
+    @ONLY
+)
+
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBEVDEV REQUIRED IMPORTED_TARGET libevdev)
 
@@ -28,6 +34,7 @@ add_executable(
 target_include_directories(
     input-proxy
     PRIVATE
+        ${PROJECT_BINARY_DIR}/generated/include
         ${PROJECT_SOURCE_DIR}/include
 )
 
@@ -154,6 +161,7 @@ if(BUILD_TESTING)
         COMMAND
             ${CMAKE_COMMAND}
             -DINPUT_PROXY=$<TARGET_FILE:input-proxy>
+            -DINPUT_PROXY_VERSION=${PROJECT_VERSION}
             -P ${PROJECT_SOURCE_DIR}/tests/cli_test.cmake
     )
 endif()

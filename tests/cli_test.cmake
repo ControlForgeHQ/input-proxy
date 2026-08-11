@@ -113,7 +113,7 @@ function(assert_run_header)
         )
     endif()
 
-    if(NOT standard_output MATCHES "^input-proxy: Version=[0-9]+\\.[0-9]+\\.[0-9]+")
+    if(NOT standard_output MATCHES "^input-proxy: Version=${INPUT_PROXY_VERSION}")
         message(
             FATAL_ERROR
             "Startup header did not begin with the application version:\n${standard_output}${standard_error}"
@@ -138,10 +138,10 @@ function(assert_run_header)
     endif()
 endfunction()
 
-assert_cli(success "input-proxy [0-9]+\\.[0-9]+\\.[0-9]+.*Transparent Linux evdev-to-uinput input proxy\\..*Usage:.*Commands:.*Global options:.*Examples:.*https://github.com/fasteddy516/input-proxy" --help)
+assert_cli(success "input-proxy ${INPUT_PROXY_VERSION}.*Transparent Linux evdev-to-uinput input proxy\\..*Usage:.*Commands:.*Global options:.*Examples:.*https://github.com/fasteddy516/input-proxy" --help)
 assert_cli_omits("${INPUT_PROXY}" --help)
 assert_cli_omits("input-proxy: Repository=" --help)
-assert_cli(success "input-proxy [0-9]+\\.[0-9]+\\.[0-9]+" --version)
+assert_cli(success "^input-proxy ${INPUT_PROXY_VERSION}" --version)
 assert_cli_omits("input-proxy: Repository=" --version)
 assert_cli(success "Usage:.*input-proxy run --source PATH --name NAME \\[--verbose\\].*--source PATH.*--name NAME.*--verbose" run --help)
 assert_cli_omits("input-proxy: Repository=" run --help)

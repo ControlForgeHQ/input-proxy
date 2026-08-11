@@ -502,16 +502,16 @@ The application version does not:
 input-proxy 0.2.0
 ```
 
-The build should maintain one authoritative version source.
-
-Release preparation should not require manually synchronizing multiple version
-definitions.
+The version in the top-level CMake `project()` command is the authoritative
+project version. CMake generates the public version header from that value, so
+release preparation must not edit runtime source files or synchronize multiple
+version definitions.
 
 ## Releases
 
 Before creating a release:
 
-- ensure the intended version is set;
+- set the intended version in the top-level CMake `project()` command;
 - perform a clean configure and build;
 - run the full regression suite;
 - verify `--version`;
