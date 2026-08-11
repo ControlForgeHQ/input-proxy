@@ -13,12 +13,6 @@
 #include <stdlib.h>
 #include <string.h>
 
-struct device_metadata {
-    char name[256];
-    const char *bus;
-    const char *type;
-};
-
 static int compare_event_nodes(
     const struct dirent **left,
     const struct dirent **right)
@@ -290,21 +284,26 @@ static bool is_plausible_source(const char *event_path)
     return false;
 }
 
-static void read_metadata(
+bool input_proxy_read_device_identity(
     const char *event_path,
-    struct device_metadata *metadata)
+    struct input_proxy_device_identity *identity)
 {
-    if (!read_line(event_path, "name", metadata->name,
-                   sizeof(metadata->name)) || metadata->name[0] == '\0') {
-        snprintf(metadata->name, sizeof(metadata->name), "(unknown)");
+    if (event_path == NULL || identity == NULL) {
+        return false;
+    }
+    if (!read_line(event_path, "name", identity->name,
+                   sizeof(identity->name)) || identity->name[0] == '\0') {
+        snprintf(identity->name, sizeof(identity->name), "(unknown)");
     }
     {
         unsigned long bus_type;
-        metadata->bus = read_bus_type(event_path, &bus_type)
+        identity->bus = read_bus_type(event_path, &bus_type)
             ? bus_name(bus_type)
             : "Unknown";
     }
-    metadata->type = classify_device(event_path);
+    identity->classification = classify_device(event_path);
+    identity->virtual_device = is_virtual_input(event_path);
+    return true;
 }
 
 enum input_proxy_result input_proxy_list_devices(
@@ -332,16 +331,17 @@ enum input_proxy_result input_proxy_list_devices(
     for (index = 0; index < entry_count; ++index) {
         char event_path[PATH_MAX];
         char devnode[PATH_MAX];
-        struct device_metadata metadata;
+        struct input_proxy_device_identity metadata;
 
         if (snprintf(event_path, sizeof(event_path), "%s/%s", sysfs_input_path,
                      entries[index]->d_name) < (int)sizeof(event_path) &&
             snprintf(devnode, sizeof(devnode), "%s/%s", device_path,
                      entries[index]->d_name) < (int)sizeof(devnode) &&
             !is_virtual_input(event_path) && is_plausible_source(event_path)) {
-            read_metadata(event_path, &metadata);
+            input_proxy_read_device_identity(event_path, &metadata);
             fprintf(stream, "%-18s %-12s %-12s %s\n",
-                    devnode, metadata.type, metadata.bus, metadata.name);
+                    devnode, metadata.classification, metadata.bus,
+                    metadata.name);
         }
         free(entries[index]);
     }

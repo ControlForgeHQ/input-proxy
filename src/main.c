@@ -5,6 +5,7 @@
 #include <input_proxy/version.h>
 
 #include "device_discovery_internal.h"
+#include "device_inspection_internal.h"
 
 #include <stdbool.h>
 #include <signal.h>
@@ -290,6 +291,20 @@ static int list_devices(int argc)
     return EXIT_SUCCESS;
 }
 
+static int inspect_device(int argc, char *argv[])
+{
+    enum input_proxy_result result;
+
+    if (argc != 3) {
+        fprintf(stderr, "input-proxy: invalid inspect arguments\n");
+        print_inspect_help(stderr);
+        return EXIT_FAILURE;
+    }
+    result = input_proxy_inspect_device(stdout, stderr, argv[2],
+        "/sys/class/input", "/dev/input", "/dev/uinput", "/run/udev/data");
+    return result == INPUT_PROXY_SUCCESS ? EXIT_SUCCESS : EXIT_FAILURE;
+}
+
 int main(int argc, char *argv[])
 {
     const char *command;
@@ -336,12 +351,7 @@ int main(int argc, char *argv[])
             return EXIT_SUCCESS;
         }
 
-        fprintf(
-            stderr,
-            "input-proxy: command '%s' is not yet implemented\n",
-            command
-        );
-        return EXIT_FAILURE;
+        return inspect_device(argc, argv);
     }
 
     fprintf(stderr, "input-proxy: unknown command '%s'\n", command);
