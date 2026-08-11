@@ -371,6 +371,11 @@ int main(void)
         .device_name = "proxy test device",
         .verbose = false
     };
+    const struct input_proxy_session_config verbose_config = {
+        .source_path = "/dev/input/event-test",
+        .device_name = "proxy test device",
+        .verbose = true
+    };
     struct input_proxy_source_device *const source_device =
         (struct input_proxy_source_device *)1;
     struct input_proxy_virtual_device *const virtual_device =
@@ -867,7 +872,12 @@ int main(void)
         count_occurrences(output, "source connected") != 1 ||
         count_occurrences(output, "source disconnected") != 1 ||
         count_occurrences(output, "source reconnected") != 1 ||
+        count_occurrences(output, "/dev/input/event-test") != 3 ||
+        count_occurrences(output, "proxy test device") != 1 ||
         strstr(output, "source opened successfully") != NULL ||
+        strstr(output, "compatible") != NULL ||
+        strstr(output, "neutraliz") != NULL ||
+        strstr(output, "recovery") != NULL ||
         strstr(output, "type=") != NULL || strstr(output, "code=") != NULL) {
         fprintf(stderr, "normal lifecycle logging: unexpected output: %s\n", output);
         failures++;
@@ -919,26 +929,85 @@ int main(void)
 
     reset_runtime();
     shutdown_after_write = true;
-    {
-        const struct input_proxy_session_config verbose_config = {
-            .source_path = "/dev/input/event-test",
-            .device_name = "proxy test device",
-            .verbose = true
-        };
-
-        failures += run_runtime_test_with_output(
-            "verbose lifecycle logging",
-            &verbose_config,
-            INPUT_PROXY_SUCCESS,
-            output,
-            sizeof(output)
-        );
-    }
-    if (strstr(output, "source opened successfully") == NULL ||
-        strstr(output, "shutdown request handled") == NULL ||
+    failures += run_runtime_test_with_output(
+        "verbose lifecycle logging",
+        &verbose_config,
+        INPUT_PROXY_SUCCESS,
+        output,
+        sizeof(output)
+    );
+    if (strstr(output,
+            "source opened successfully: /dev/input/event-test") == NULL ||
+        strstr(output,
+            "creating virtual device proxy test device from source "
+            "/dev/input/event-test") == NULL ||
+        strstr(output,
+            "shutdown request handled; cleanup completed for source "
+            "/dev/input/event-test and virtual device proxy test device") == NULL ||
         strstr(output, "shutdown complete") == NULL ||
         strstr(output, "type=") != NULL || strstr(output, "code=") != NULL) {
         fprintf(stderr, "verbose lifecycle logging: unexpected output: %s\n", output);
+        failures++;
+    }
+
+    reset_runtime();
+    open_results[0] = INPUT_PROXY_SUCCESS;
+    open_results[1] = INPUT_PROXY_SUCCESS;
+    open_result_count = 2;
+    compatibility_results[0] = true;
+    read_results[0] = INPUT_PROXY_EVENT_SYNC_REQUIRED;
+    read_results[1] = INPUT_PROXY_ERROR_SOURCE_DISCONNECTED;
+    read_results[2] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+    read_result_count = 3;
+    sync_read_results[0] = INPUT_PROXY_EVENT_UNAVAILABLE;
+    sync_read_result_count = 1;
+    failures += run_runtime_test_with_output(
+        "verbose recovery logging",
+        &verbose_config,
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED,
+        output,
+        sizeof(output)
+    );
+    if (strstr(output,
+            "synchronization recovery started for source "
+            "/dev/input/event-test and virtual device proxy test device") == NULL ||
+        strstr(output,
+            "synchronization recovery completed for source "
+            "/dev/input/event-test and virtual device proxy test device") == NULL ||
+        strstr(output,
+            "neutralizing virtual device proxy test device after loss of "
+            "source /dev/input/event-test") == NULL ||
+        strstr(output,
+            "reconnected source /dev/input/event-test is compatible; "
+            "retaining virtual device proxy test device") == NULL ||
+        strstr(output, "type=") != NULL || strstr(output, "code=") != NULL) {
+        fprintf(stderr, "verbose recovery logging: unexpected output: %s\n", output);
+        failures++;
+    }
+
+    reset_runtime();
+    open_results[0] = INPUT_PROXY_SUCCESS;
+    open_results[1] = INPUT_PROXY_ERROR_SOURCE_PERMISSION_DENIED;
+    open_results[2] = INPUT_PROXY_SUCCESS;
+    open_result_count = 3;
+    compatibility_results[0] = true;
+    read_results[0] = INPUT_PROXY_ERROR_SOURCE_DISCONNECTED;
+    read_results[1] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+    read_result_count = 2;
+    failures += run_runtime_test_with_output(
+        "verbose permission settling logging",
+        &verbose_config,
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED,
+        output,
+        sizeof(output)
+    );
+    if (count_occurrences(output,
+            "permission denied during reconnect; allowing 2 seconds for "
+            "permissions to settle") != 1 ||
+        strstr(output, "permission settling period expired") != NULL) {
+        fprintf(stderr,
+            "verbose permission settling logging: unexpected output: %s\n",
+            output);
         failures++;
     }
 
