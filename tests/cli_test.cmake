@@ -68,6 +68,32 @@ function(assert_cli_failure_omits unexpected_pattern)
     endif()
 endfunction()
 
+function(assert_cli_blank_line expected_result)
+    execute_process(
+        COMMAND "${INPUT_PROXY}" ${ARGN}
+        RESULT_VARIABLE actual_result
+        OUTPUT_VARIABLE standard_output
+        ERROR_VARIABLE standard_error
+    )
+
+    string(CONCAT output "${standard_output}" "${standard_error}")
+
+    if(expected_result STREQUAL "success")
+        if(NOT actual_result EQUAL 0)
+            message(FATAL_ERROR "Command unexpectedly failed: ${ARGN}\n${output}")
+        endif()
+    elseif(actual_result EQUAL 0)
+        message(FATAL_ERROR "Command unexpectedly succeeded: ${ARGN}\n${output}")
+    endif()
+
+    if(NOT output MATCHES "\n\n$")
+        message(FATAL_ERROR "Command output lacks a final blank line: ${ARGN}\n${output}")
+    endif()
+    if(output MATCHES "\n\n\n$")
+        message(FATAL_ERROR "Command output has multiple final blank lines: ${ARGN}\n${output}")
+    endif()
+endfunction()
+
 function(assert_run_header)
     execute_process(
         COMMAND
@@ -136,4 +162,16 @@ assert_cli(failure "invalid inspect arguments.*Usage:" inspect)
 assert_cli(failure "invalid inspect arguments.*Usage:" inspect /dev/input/event0 extra)
 assert_cli_failure_omits("input-proxy: Repository=" inspect /dev/input/does-not-exist)
 assert_cli(failure "unknown command '--source'.*Usage:" --source /dev/input/event0 --name test)
+assert_cli_blank_line(success --help)
+assert_cli_blank_line(success --version)
+assert_cli_blank_line(success run --help)
+assert_cli_blank_line(success list)
+assert_cli_blank_line(success list --help)
+assert_cli_blank_line(success inspect --help)
+assert_cli_blank_line(failure inspect /dev/input/does-not-exist)
+assert_cli_blank_line(failure)
+assert_cli_blank_line(failure bogus)
+assert_cli_blank_line(failure run)
+assert_cli_blank_line(failure list unexpected)
+assert_cli_blank_line(failure inspect)
 assert_run_header()

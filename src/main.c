@@ -80,7 +80,7 @@ static void print_top_level_help(FILE *stream)
         "  input-proxy inspect /dev/input/event0\n"
         "\n"
         "Report bugs and find the project at:\n"
-        "  https://github.com/fasteddy516/input-proxy\n",
+        "  https://github.com/fasteddy516/input-proxy\n\n",
         INPUT_PROXY_VERSION_STRING
     );
 }
@@ -97,7 +97,7 @@ static void print_run_help(FILE *stream)
         "  --source PATH  Physical evdev source device.\n"
         "  --name NAME    Name of the virtual input device.\n"
         "  --verbose      Show additional lifecycle diagnostics.\n"
-        "  --help         Show this help and exit.\n",
+        "  --help         Show this help and exit.\n\n",
         stream
     );
 }
@@ -130,7 +130,7 @@ static void print_list_help(FILE *stream)
         "they can be identified reliably.\n"
         "\n"
         "Options:\n"
-        "  --help  Show this help and exit.\n",
+        "  --help  Show this help and exit.\n\n",
         stream
     );
 }
@@ -150,7 +150,7 @@ static void print_inspect_help(FILE *stream)
         "proxy readiness without modifying the device or system configuration.\n"
         "\n"
         "Options:\n"
-        "  --help  Show this help and exit.\n",
+        "  --help  Show this help and exit.\n\n",
         stream
     );
 }
@@ -232,6 +232,7 @@ static int run_proxy(int argc, char *argv[])
                 "another running input-proxy instance\n",
                 config.device_name
             );
+            fputc('\n', stderr);
             return EXIT_FAILURE;
         }
         fprintf(
@@ -239,12 +240,14 @@ static int run_proxy(int argc, char *argv[])
             "input-proxy: failed to create proxy session: %s\n",
             input_proxy_result_string(result)
         );
+        fputc('\n', stderr);
         return EXIT_FAILURE;
     }
 
     active_session = session;
     if (!install_signal_handlers()) {
         fprintf(stderr, "input-proxy: failed to install signal handlers\n");
+        fputc('\n', stderr);
         active_session = NULL;
         input_proxy_session_destroy(session);
         return EXIT_FAILURE;
@@ -263,6 +266,8 @@ static int run_proxy(int argc, char *argv[])
     restore_signal_handlers();
     active_session = NULL;
     input_proxy_session_destroy(session);
+
+    fputc('\n', result == INPUT_PROXY_SUCCESS ? stdout : stderr);
 
     return result == INPUT_PROXY_SUCCESS ? EXIT_SUCCESS : EXIT_FAILURE;
 }
@@ -285,6 +290,7 @@ static int list_devices(int argc)
             "input-proxy: failed to enumerate input devices: %s\n",
             input_proxy_result_string(result)
         );
+        fputc('\n', stderr);
         return EXIT_FAILURE;
     }
 
@@ -302,6 +308,9 @@ static int inspect_device(int argc, char *argv[])
     }
     result = input_proxy_inspect_device(stdout, stderr, argv[2],
         "/sys/class/input", "/dev/input", "/dev/uinput", "/run/udev/data");
+    if (result != INPUT_PROXY_SUCCESS) {
+        fputc('\n', stderr);
+    }
     return result == INPUT_PROXY_SUCCESS ? EXIT_SUCCESS : EXIT_FAILURE;
 }
 
@@ -323,7 +332,7 @@ int main(int argc, char *argv[])
     }
 
     if (strcmp(command, "--version") == 0 && argc == 2) {
-        printf("input-proxy %s\n", INPUT_PROXY_VERSION_STRING);
+        printf("input-proxy %s\n\n", INPUT_PROXY_VERSION_STRING);
         return EXIT_SUCCESS;
     }
 
