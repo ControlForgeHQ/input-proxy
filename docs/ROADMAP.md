@@ -219,158 +219,72 @@ Version 0.2 diagnoses and advises. It does not configure the machine.
 
 ---
 
-# Version 0.3.0 — Runtime control and activity notifications
+# Version 0.3.0 — Runtime awareness and control
 
-## Goal
+## Goals
 
-Allow external software to safely control runtime event delivery while
-preserving source consumption, virtual-device stability, and clean interaction
-boundaries.
+Version 0.3.0 introduces runtime introspection and management capabilities,
+allowing operators and higher-level tooling to observe and interact with
+running `input-proxy` instances.
 
-## Required runtime behaviour
-
-Version 0.3 must:
-
-- provide an explicit paused operating state;
-- support requesting pause and resume;
-- support starting in the paused state;
-- continue reading and processing the source while forwarding is suppressed;
-- keep the persistent virtual device present while paused;
-- preserve requested pause state across source disconnect and reconnect;
-- remain externally controllable while the source is unavailable;
-- suppress paused events rather than queueing or replaying them;
-- complete pause and resume transitions only at safe interaction boundaries;
-- avoid leaving keys, buttons, touch contacts, or multitouch contacts stuck;
-- report lifecycle and pause-state changes externally;
-- emit a coalesced activity notification while paused;
-- keep the interaction that triggered wake activity suppressed;
-- resume forwarding only after that interaction has completed;
-- remain responsive to shutdown in every lifecycle state.
-
-## Pause semantics
-
-A pause request received during an active interaction must not immediately cut
-off forwarding in a way that leaves active virtual state behind.
-
-The session should transition through a pausing state until the current
-interaction reaches a clean boundary.
-
-Once fully paused:
-
-- the physical source remains open when available;
-- input continues to be consumed;
-- events are discarded rather than queued;
-- the virtual device remains present.
-
-## Resume semantics
-
-If the source is neutral when resume is requested, forwarding may resume
-immediately.
-
-If a wake interaction is still active, the session should remain in a resuming
-state until that interaction completes.
-
-The next new interaction may then be forwarded normally.
-
-## Activity notification
-
-While paused, meaningful source activity should generate a coalesced external
-notification.
-
-The activity interface is a wake trigger, not a second event stream.
-
-It must not mirror raw evdev traffic.
+The focus of this release is runtime awareness rather than new proxying
+features.
 
 ## Control interface
 
-The preferred control transport is the local system D-Bus.
+Implement a D-Bus control interface for runtime introspection and management.
 
-The control interface should support operations equivalent to:
+Capabilities should include:
 
-```text id="nyo0zs"
-Pause()
-Resume()
-SetPaused(bool paused)
-```
+- Enumerating currently running `input-proxy` instances.
+- Reporting runtime status, configured source, configured virtual-device name,
+  and other relevant runtime state.
+- Graceful shutdown of individual runtime instances.
+- Querying runtime statistics and health information.
+- Future expansion for runtime configuration where appropriate.
 
-It should expose state equivalent to:
+The D-Bus interface should become the authoritative source of runtime instance
+information.
 
-```text id="c07k0y"
-State
-Paused
-SourceAvailable
-VirtualDeviceAvailable
-```
+Use this runtime information to extend operator tooling. In particular:
 
-It should also provide activity and relevant state-change notifications.
+- `input-proxy list` should report both available physical source devices and
+  currently running `input-proxy` instances.
+- `input-proxy inspect` should report all active `input-proxy` instances
+  currently associated with the inspected physical source.
+- Operators should be able to distinguish between:
+  - a source that is available but not currently proxied;
+  - a source that is currently in use by one or more running `input-proxy`
+    instances.
 
-The proxy session remains authoritative for deciding when requested transitions
-are safe to complete.
+## Graceful shutdown
 
-## Runtime instance discovery
+Support controlled shutdown of running `input-proxy` instances through the
+runtime control interface.
 
-Once the runtime control interface is available, expose enough authoritative
-instance identity and state for local tooling to discover currently running
-`input-proxy` instances.
+Graceful shutdown should:
 
-Extend:
+- stop reading from the source device;
+- destroy the virtual input device cleanly;
+- release all runtime resources;
+- notify clients of state transitions where appropriate.
 
-```text id="323bn2"
-input-proxy list
-```
+## Instance lifecycle
 
-to present both:
+Document and expose the runtime lifecycle for `input-proxy` instances.
 
-- available physical source candidates;
-- currently running `input-proxy` mappings.
+Typical lifecycle states should include:
 
-Running-instance information should include at least:
+- Starting
+- Waiting for source
+- Running
+- Reconnecting
+- Stopping
+- Stopped
+- Failed
 
-- configured source;
-- configured virtual-device name;
-- relevant current runtime state where useful.
-
-The D-Bus runtime-control interface should be the authoritative source for
-running-instance information.
-
-Do not introduce a parallel persistent instance registry, PID-file database, or
-other state-tracking mechanism solely to support listing.
-
-The output should keep available sources and active mappings visually distinct
-while preserving the concise operator-oriented nature of `list`.
-
-## Runtime integration
-
-- Keep the runtime single-threaded unless a demonstrated requirement justifies
-  otherwise.
-- Integrate source input, runtime control, lifecycle transitions, and shutdown
-  through one explicitly coordinated execution model.
-- Do not allow control callbacks to mutate device ownership independently.
-
-## Validation
-
-Version 0.3 should include:
-
-- pause-state transition tests;
-- event-suppression tests;
-- no-replay tests;
-- pause-during-active-interaction tests;
-- resume-during-wake-interaction tests;
-- activity-notification coalescing tests;
-- disconnect/reconnect while paused;
-- control while the source is unavailable;
-- persistent virtual-device validation while paused;
-- representative real-touchscreen validation.
-
-## Non-goals
-
-Version 0.3 does not:
-
-- manage displays or backlights;
-- install services or udev rules;
-- add general event remapping;
-- expose raw input events over D-Bus;
-- introduce network control.
+The runtime control interface should allow operators and client applications to
+observe these state transitions without parsing log output.
 
 ---
 
