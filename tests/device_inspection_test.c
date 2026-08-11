@@ -37,6 +37,78 @@ int main(void)
     enum input_proxy_result result;
     int failures = 0;
 
+    {
+        struct input_proxy_access_remediation access = {
+            .source_ok = false,
+            .source_group = "input",
+            .source_group_readable = true,
+            .source_group_member = false,
+            .uinput_exists = true,
+            .uinput_ok = false,
+            .uinput_group = "input",
+            .uinput_group_writable = true,
+            .uinput_group_member = false,
+            .uinput_module_available = true,
+            .input_group_available = true,
+            .user = "operator"
+        };
+        stream = open_memstream(&output, &output_size);
+        if (stream == NULL) return 1;
+        input_proxy_print_access_remediation(stream, &access);
+        fclose(stream);
+        if (strstr(output, "Runtime accessibility remediation") == NULL ||
+            strstr(output, "sudo usermod -aG input operator") == NULL ||
+            strstr(output, "world") != NULL) {
+            fprintf(stderr, "unexpected group remediation:\n%s", output);
+            failures++;
+        }
+        free(output); output = NULL; output_size = 0;
+
+        access.source_ok = true;
+        access.uinput_exists = true;
+        access.uinput_ok = false;
+        access.uinput_group = "root";
+        access.uinput_group_writable = false;
+        access.uinput_group_member = false;
+        stream = open_memstream(&output, &output_size);
+        if (stream == NULL) return 1;
+        input_proxy_print_access_remediation(stream, &access);
+        fclose(stream);
+        if (strstr(output, "KERNEL==\"uinput\", GROUP=\"input\", MODE=\"0660\"") == NULL ||
+            strstr(output, "0666") != NULL) {
+            fprintf(stderr, "unexpected uinput permission remediation:\n%s", output);
+            failures++;
+        }
+        free(output); output = NULL; output_size = 0;
+
+        access.source_ok = true;
+        access.uinput_exists = false;
+        access.uinput_ok = false;
+        access.uinput_module_available = false;
+        stream = open_memstream(&output, &output_size);
+        if (stream == NULL) return 1;
+        input_proxy_print_access_remediation(stream, &access);
+        fclose(stream);
+        if (strstr(output, "sudo modprobe uinput") == NULL) {
+            fprintf(stderr, "unexpected missing-uinput remediation:\n%s", output);
+            failures++;
+        }
+        free(output); output = NULL; output_size = 0;
+
+        access.source_ok = true;
+        access.uinput_exists = true;
+        access.uinput_ok = true;
+        stream = open_memstream(&output, &output_size);
+        if (stream == NULL) return 1;
+        input_proxy_print_access_remediation(stream, &access);
+        fclose(stream);
+        if (output_size != 0) {
+            fprintf(stderr, "unexpected successful-access remediation:\n%s", output);
+            failures++;
+        }
+        free(output); output = NULL; output_size = 0;
+    }
+
     if (root == NULL) return 1;
     snprintf(sysfs, sizeof(sysfs), "%s/sys", root);
     snprintf(event, sizeof(event), "%s/event7", sysfs);

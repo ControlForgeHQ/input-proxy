@@ -11,6 +11,8 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
+#include <grp.h>
+#include <pwd.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -253,6 +255,117 @@ static bool safe_rule_value(const char *value)
     return true;
 }
 
+static bool safe_account_name(const char *value)
+{
+    size_t index;
+
+    if (value == NULL || value[0] == '\0') return false;
+    for (index = 0; value[index] != '\0'; ++index) {
+        const unsigned char character = (unsigned char)value[index];
+        if (!isalnum(character) && character != '_' && character != '-' &&
+            character != '.')
+            return false;
+    }
+    return true;
+}
+
+static bool supplementary_group_member(gid_t group)
+{
+    gid_t *groups;
+    int count;
+    int index;
+    bool member = getegid() == group;
+
+    if (member) return true;
+    count = getgroups(0, NULL);
+    if (count <= 0) return false;
+    groups = malloc((size_t)count * sizeof(*groups));
+    if (groups == NULL) return false;
+    count = getgroups(count, groups);
+    for (index = 0; index < count; ++index) {
+        if (groups[index] == group) {
+            member = true;
+            break;
+        }
+    }
+    free(groups);
+    return member;
+}
+
+static const char *group_name(gid_t group, char *buffer, size_t size)
+{
+    const struct group *entry = getgrgid(group);
+
+    if (entry == NULL || entry->gr_name == NULL || entry->gr_name[0] == '\0')
+        return NULL;
+    snprintf(buffer, size, "%s", entry->gr_name);
+    return buffer;
+}
+
+void input_proxy_print_access_remediation(
+    FILE *stream, const struct input_proxy_access_remediation *access)
+{
+    bool any = false;
+
+    if (stream == NULL || access == NULL ||
+        (access->source_ok && access->uinput_ok))
+        return;
+
+    print_heading(stream, "Runtime accessibility remediation");
+    if (!access->source_ok && access->source_group != NULL &&
+        access->source_group_readable && !access->source_group_member &&
+        safe_account_name(access->source_group) &&
+        safe_account_name(access->user)) {
+        fprintf(stream,
+            "  Source: group '%s' can read the device, but user '%s' is not a member.\n"
+            "  Add the runtime user to that group, then start a new login session:\n"
+            "    sudo usermod -aG %s %s\n",
+            access->source_group, access->user, access->source_group,
+            access->user);
+        any = true;
+    } else if (!access->source_ok) {
+        fputs("  Source: no safe permission change can be determined from the device's\n"
+              "  current ownership and mode.\n", stream);
+        any = true;
+    }
+
+    if (!access->uinput_exists) {
+        if (!access->uinput_module_available)
+            fputs("  /dev/uinput: the uinput kernel module is not currently available.\n"
+                  "  Load it for this boot, then inspect the device again:\n"
+                  "    sudo modprobe uinput\n", stream);
+        else
+            fputs("  /dev/uinput: the uinput module is available, but the device node is\n"
+                  "  missing. No safe corrective command can be determined from this state.\n",
+                  stream);
+        any = true;
+    } else if (!access->uinput_ok && access->uinput_group != NULL &&
+               access->uinput_group_writable &&
+               !access->uinput_group_member &&
+               safe_account_name(access->uinput_group) &&
+               safe_account_name(access->user)) {
+        fprintf(stream,
+            "  /dev/uinput: group '%s' can write the device, but user '%s' is not a member.\n"
+            "  Add the runtime user to that group, then start a new login session:\n"
+            "    sudo usermod -aG %s %s\n",
+            access->uinput_group, access->user, access->uinput_group,
+            access->user);
+        any = true;
+    } else if (!access->uinput_ok && access->input_group_available) {
+        fputs("  /dev/uinput: its current mode and ownership do not provide group write\n"
+              "  access. Configure the uinput device specifically with this udev rule:\n"
+              "    KERNEL==\"uinput\", GROUP=\"input\", MODE=\"0660\", OPTIONS+=\"static_node=uinput\"\n"
+              "  Then reload the rules and recreate the device node or reboot.\n",
+              stream);
+        any = true;
+    } else if (!access->uinput_ok) {
+        fputs("  /dev/uinput: no safe permission change can be determined from the device's\n"
+              "  current ownership and mode.\n", stream);
+        any = true;
+    }
+    if (any) fputc('\n', stream);
+}
+
 static bool read_udev_properties(const char *root, const struct stat *status,
                                  FILE *stream, char *vendor, size_t vendor_size,
                                  char *model, size_t model_size,
@@ -311,6 +424,13 @@ enum input_proxy_result input_proxy_inspect_device(
     bool source_ok = false;
     bool uinput_ok = false;
     bool ignored = false;
+    bool uinput_exists = false;
+    bool uinput_status_available = false;
+    struct stat uinput_status;
+    char source_group[128];
+    char uinput_group[128];
+    const struct passwd *user_entry;
+    struct input_proxy_access_remediation remediation;
     char rule_vendor[32] = "";
     char rule_model[32] = "";
     char rule_path[512] = "";
@@ -342,6 +462,8 @@ enum input_proxy_result input_proxy_inspect_device(
         source_ok = true;
     uinput_fd = open(uinput_path, O_WRONLY | O_NONBLOCK | O_CLOEXEC);
     if (uinput_fd >= 0) uinput_ok = true;
+    uinput_exists = stat(uinput_path, &uinput_status) == 0;
+    uinput_status_available = uinput_exists;
     (void)find_persistent_path(device_input_path, &status,
                                persistent_path, sizeof(persistent_path));
 
@@ -403,7 +525,6 @@ enum input_proxy_result input_proxy_inspect_device(
         fprintf(stream, " (%s)", semantic_status(stream, "BLOCKER", "31"));
     fputc('\n', stream);
     {
-        const bool uinput_exists = access(uinput_path, F_OK) == 0;
         fprintf(stream, "  %-22s %s\n", "/dev/uinput exists:",
                 semantic_status(stream, uinput_exists ? "Yes" : "No",
                                 uinput_exists ? "32" : "31"));
@@ -416,6 +537,28 @@ enum input_proxy_result input_proxy_inspect_device(
     fputc('\n', stream);
 
     fputc('\n', stream);
+
+    user_entry = getpwuid(geteuid());
+    remediation.source_ok = source_ok;
+    remediation.source_group = group_name(status.st_gid, source_group,
+                                           sizeof(source_group));
+    remediation.source_group_readable = (status.st_mode & S_IRGRP) != 0;
+    remediation.source_group_member = supplementary_group_member(status.st_gid);
+    remediation.uinput_exists = uinput_exists;
+    remediation.uinput_ok = uinput_ok;
+    remediation.uinput_group = uinput_status_available
+        ? group_name(uinput_status.st_gid, uinput_group, sizeof(uinput_group))
+        : NULL;
+    remediation.uinput_group_writable = uinput_status_available &&
+        (uinput_status.st_mode & S_IWGRP) != 0;
+    remediation.uinput_group_member = uinput_status_available &&
+        supplementary_group_member(uinput_status.st_gid);
+    remediation.uinput_module_available =
+        access("/sys/module/uinput", F_OK) == 0;
+    remediation.input_group_available = getgrnam("input") != NULL;
+    remediation.user = user_entry == NULL ? NULL : user_entry->pw_name;
+    input_proxy_print_access_remediation(stream, &remediation);
+
     print_heading(stream, "Udev and libinput context");
     ignored = read_udev_properties(udev_data_path, &status, stream,
                                    rule_vendor, sizeof(rule_vendor),

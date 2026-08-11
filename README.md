@@ -95,6 +95,11 @@ ls -l /dev/input/event0
 ls -l /dev/uinput
 ```
 
+`input-proxy inspect PATH` reports these runtime access checks and, when the
+observed ownership, mode, group membership, or module state supports a safe
+next step, prints concise remediation immediately after them. Inspection only
+reports suggested commands; it never runs them or changes system configuration.
+
 A typical physical source:
 
 ```text
