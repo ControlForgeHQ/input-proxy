@@ -1,11 +1,9 @@
 # input-proxy
 
-`input-proxy` is a small Linux utility that republishes a physical evdev input
-device as a virtual uinput device with a configurable name.
-
-It is intended for situations where otherwise identical input devices need to
-be distinguished by software that cannot identify them using stable hardware
-paths.
+`input-proxy` is a Linux utility that places a controllable intermediary between
+a physical input device and the software that consumes its input. It reads a
+physical evdev device, republishes its capabilities and events through a virtual
+uinput device, and gives that virtual device a configured name.
 
 ```text
 physical evdev device
@@ -14,29 +12,54 @@ physical evdev device
     -> libinput or another input consumer
 ```
 
-The proxy preserves the source device's capabilities and forwards its event
-stream without semantic remapping.
+This is useful when input needs a stable logical identity or a deliberate
+routing point that the physical device alone does not provide. `input-proxy`
+does not remap events: it preserves the source capabilities and forwards the
+event stream without coordinate transformation, gesture interpretation, or
+per-code filtering.
 
-The process remains running when its configured source device is unavailable or
-disconnected. It waits for the device to appear, forwards events while the
-source is present, and automatically resumes operation when the source returns.
+## Why it exists
 
-## Status
+The project was motivated by a small Linux system with multiple displays and
+multiple touchscreens. In a minimal compositor or kiosk environment, two
+otherwise similar touch devices may not expose enough convenient identity for
+the desired touchscreen-to-output routing. A proxy can give each physical
+source a distinct virtual-device name, allowing downstream configuration to
+target the stable logical devices.
 
-Version **0.1.0** provides:
+Linux input stacks and full desktop environments can support touchscreen
+mapping in several ways; this example is not a claim that Linux generally
+cannot map multiple touchscreens. It is one concrete case where an explicit
+intermediary is useful, especially in a deliberately minimal environment.
 
+Touchscreens are also not a special limitation of the proxy. It works with one
+physical evdev source per process and generically reproduces supported evdev
+capabilities, so other input-device types can use the same physical-to-virtual
+model.
+
+## Version 0.2 capabilities
+
+The Version 0.2 command set provides:
+
+- concise physical-device discovery;
+- detailed, read-only device and deployment diagnostics;
+- actionable permission and libinput-configuration guidance where the device
+  can be identified safely;
 - faithful evdev-to-uinput event forwarding;
+- a configurable, uniquely owned virtual-device name;
 - automatic source disconnect and reconnect handling;
-- persistent virtual-device lifetime across compatible reconnects;
+- a persistent virtual-device lifetime across compatible reconnects;
 - capability-aware virtual-device replacement;
-- `SYN_DROPPED` synchronization recovery;
-- virtual-device neutralization after source loss;
-- graceful `SIGINT` / `SIGTERM` shutdown;
-- concise lifecycle logging with optional verbose diagnostics.
+- synchronization recovery and safe neutralization after source loss;
+- concise runtime logging with optional verbose lifecycle diagnostics; and
+- graceful `SIGINT` and `SIGTERM` shutdown.
 
-Future development is described in `docs/ROADMAP.md`.
+The proxy can wait for a configured source that is temporarily unavailable. If
+a connected source disappears, it safely releases active virtual state, keeps a
+compatible virtual device present, and resumes forwarding when the source
+returns.
 
-## Building
+## Building and testing
 
 Building requires a C17 compiler, CMake, pkg-config, and the libevdev
 development package.
@@ -60,86 +83,108 @@ Run the regression tests:
 ctest --test-dir build --output-on-failure
 ```
 
-## Usage
+## Operator workflow
+
+The normal workflow is to discover a device, inspect it, and then run a proxy
+for it.
+
+### 1. Discover source devices
 
 ```sh
-./build/input-proxy \
+./build/input-proxy list
+```
+
+`list` shows a concise table of physical input candidates, including each event
+path, device type, bus, and friendly name. Virtual uinput devices are excluded
+where they can be identified reliably.
+
+### 2. Inspect a candidate
+
+Use the event path reported by `list`:
+
+```sh
+./build/input-proxy inspect /dev/input/event0
+```
+
+`inspect` reports the device identity and capabilities, source and `/dev/uinput`
+access, relevant udev and libinput properties, and an overall proxy-readiness
+result. When the observed state supports a safe recommendation, it also prints
+specific remediation and a suggested `run` command. Inspection is read-only: it
+does not create a proxy or change permissions, udev rules, or other system
+configuration.
+
+Paths such as `/dev/input/event0` can change across boots or reconnections. When
+`inspect` reports a matching persistent `/dev/input/by-id/...` or
+`/dev/input/by-path/...` path, prefer that path for long-running use. The proxy
+reopens the exact configured source path after a disconnect, so a persistent
+path helps it find the intended physical device again.
+
+### 3. Run the proxy
+
+```sh
+./build/input-proxy run \
+    --source /dev/input/by-path/platform-example-event \
+    --name "Touchscreen Proxy"
+```
+
+If no suitable persistent link is available, use the event path from `list`:
+
+```sh
+./build/input-proxy run \
     --source /dev/input/event0 \
     --name "Touchscreen Proxy"
 ```
 
-Additional commands:
+The name identifies the virtual device and must be unique among simultaneously
+running `input-proxy` processes. Add `--verbose` for source identity,
+reconnection, compatibility, synchronization-recovery, and lifecycle detail.
+Normal and verbose modes deliberately do not dump raw input events.
+
+Command-specific and global help are available with:
 
 ```sh
 ./build/input-proxy --help
+./build/input-proxy run --help
+./build/input-proxy list --help
+./build/input-proxy inspect --help
 ./build/input-proxy --version
 ```
 
-Use `--verbose` to explain internal runtime decisions and recovery behavior.
-Normal output remains focused on concise operational lifecycle events. Neither
-mode logs raw input events.
-
 ## Permissions
 
-`input-proxy` does not need to run as root, but the running user must be able to
-read the physical evdev source and access `/dev/uinput`.
+`input-proxy` does not inherently need root. The running user must be able to
+read the selected physical event device and write to `/dev/uinput`.
+Device-node ownership and permissions vary by distribution and deployment.
 
-On Raspberry Pi OS, the normal user is typically a member of the `input` group,
-and physical input devices are normally already accessible through that group.
+Start troubleshooting with the same user that will run the proxy:
 
-Check your current configuration:
-
-```bash
-id
-ls -l /dev/input/event0
-ls -l /dev/uinput
+```sh
+./build/input-proxy inspect /dev/input/event0
 ```
 
-`input-proxy inspect PATH` reports these runtime access checks and, when the
-observed ownership, mode, group membership, or module state supports a safe
-next step, collects concise remediation after the readiness result. Inspection
-only reports suggested commands; it never runs them or changes system
-configuration.
+The inspection result distinguishes source-access and uinput-access problems
+and prints actionable suggestions when it can do so safely. It can also warn
+when a physical source remains visible to libinput and duplicate physical and
+proxied input is likely. The Version 0.2 commands diagnose and advise; they do
+not apply system changes automatically.
 
-A typical physical source:
+On systems that grant input-device access through an `input` group, the user
+running the proxy may need membership in that group and `/dev/uinput` may need
+an appropriate udev rule. Follow the device-specific output from `inspect`
+rather than assuming one permission setup fits every system.
 
-```text
-crw-rw---- root input ... /dev/input/event0
-```
+## Not yet available
 
-If `/dev/uinput` is instead:
+Version 0.2 does not provide runtime D-Bus control, pause and resume, persistent
+service installation, systemd-unit creation, udev-rule installation, packaging,
+configuration files, or general-purpose input remapping. Runtime awareness and
+control are planned for Version 0.3, while persistent installation and service
+integration are planned for Version 0.4.
 
-```text
-crw------- root root ... /dev/uinput
-```
-
-create:
-
-```text
-/etc/udev/rules.d/70-input-proxy-uinput.rules
-```
-
-containing:
-
-```udev
-KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"
-```
-
-Then reboot and verify:
-
-```bash
-ls -l /dev/uinput
-```
-
-Expected:
-
-```text
-crw-rw---- root input ... /dev/uinput
-```
-
-Once both the physical source and `/dev/uinput` are accessible through the
-`input` group, `input-proxy` can be run normally without `sudo`.
+See the [roadmap](docs/ROADMAP.md) for planned releases, the
+[architecture](docs/ARCHITECTURE.md) for design and lifecycle details, and the
+[documentation index](docs/README.md) for the rest of the project documentation.
 
 ## License
 
-Released under the MIT License.
+Released under the [MIT License](LICENSE).
