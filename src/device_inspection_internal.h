@@ -9,6 +9,7 @@
 
 struct input_proxy_access_remediation {
     bool source_ok;
+    const char *source_path;
     const char *source_group;
     bool source_group_readable;
     bool source_group_member;

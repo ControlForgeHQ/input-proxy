@@ -40,6 +40,7 @@ int main(void)
     {
         struct input_proxy_access_remediation access = {
             .source_ok = false,
+            .source_path = "/dev/input/event1",
             .source_group = "input",
             .source_group_readable = true,
             .source_group_member = false,
@@ -60,6 +61,23 @@ int main(void)
             strstr(output, "sudo usermod -aG input operator") == NULL ||
             strstr(output, "world") != NULL) {
             fprintf(stderr, "unexpected group remediation:\n%s", output);
+            failures++;
+        }
+        free(output); output = NULL; output_size = 0;
+
+        access.source_ok = false;
+        access.source_group = NULL;
+        access.uinput_ok = true;
+        stream = open_memstream(&output, &output_size);
+        if (stream == NULL) return 1;
+        input_proxy_print_access_remediation(stream, &access);
+        fclose(stream);
+        if (strstr(output, "WARNING: no safe permission change") == NULL ||
+            strstr(output, "ls -l -- '/dev/input/event1'") == NULL ||
+            strstr(output, "      id") == NULL ||
+            strstr(output, "chmod") != NULL || strstr(output, "chown") != NULL ||
+            strstr(output, "\033[") != NULL) {
+            fprintf(stderr, "unexpected source diagnostic guidance:\n%s", output);
             failures++;
         }
         free(output); output = NULL; output_size = 0;

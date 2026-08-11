@@ -302,6 +302,18 @@ static const char *group_name(gid_t group, char *buffer, size_t size)
     return buffer;
 }
 
+static void print_shell_quoted(FILE *stream, const char *value)
+{
+    size_t index;
+
+    fputc('\'', stream);
+    for (index = 0; value[index] != '\0'; ++index) {
+        if (value[index] == '\'') fputs("'\\''", stream);
+        else fputc(value[index], stream);
+    }
+    fputc('\'', stream);
+}
+
 void input_proxy_print_access_remediation(
     FILE *stream, const struct input_proxy_access_remediation *access)
 {
@@ -329,8 +341,17 @@ void input_proxy_print_access_remediation(
         print_heading(stream, "  Source access");
         fprintf(stream,
             "    %s: no safe permission change can be determined from the device's\n"
-            "             current ownership and mode.\n",
+            "             current ownership and mode.\n"
+            "\n"
+            "    Check the source permissions and current user membership:\n"
+            "\n",
             semantic_status(stream, "WARNING", "33"));
+        if (access->source_path != NULL) {
+            fputs("      ls -l -- ", stream);
+            print_shell_quoted(stream, access->source_path);
+            fputc('\n', stream);
+        }
+        fputs("      id\n", stream);
     }
 
     if (!access->source_ok && !access->uinput_ok) fputc('\n', stream);
@@ -549,7 +570,8 @@ enum input_proxy_result input_proxy_inspect_device(
                                 uinput_exists ? "32" : "31"));
     }
     if (!uinput_exists)
-        fprintf(stream, "  %-22s Unavailable\n", "/dev/uinput writable:");
+        fprintf(stream, "  %-22s %s\n", "/dev/uinput writable:",
+                semantic_status(stream, "Unavailable", "31"));
     else
         fprintf(stream, "  %-22s %s\n", "/dev/uinput writable:",
                 semantic_status(stream, uinput_ok ? "Yes" : "No",
@@ -579,6 +601,7 @@ enum input_proxy_result input_proxy_inspect_device(
 
     user_entry = getpwuid(geteuid());
     remediation.source_ok = source_ok;
+    remediation.source_path = device_path;
     remediation.source_group = group_name(status.st_gid, source_group,
                                            sizeof(source_group));
     remediation.source_group_readable = (status.st_mode & S_IRGRP) != 0;
