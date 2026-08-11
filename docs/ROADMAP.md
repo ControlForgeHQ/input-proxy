@@ -84,8 +84,9 @@ small operator-facing input-device utility.
 - Improve help formatting with:
   - usage summaries;
   - option descriptions;
-  - examples;
-  - troubleshooting guidance.
+  - examples.
+- Provide actionable troubleshooting guidance through `inspect` where the
+  observed system state supports a safe recommendation.
 - Treat the Version 0.1 runtime syntax as superseded by:
 
 ```text id="gvw85a"
