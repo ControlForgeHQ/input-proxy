@@ -37,6 +37,14 @@ static const char *semantic_status(FILE *stream, const char *status,
     return colored;
 }
 
+static void print_heading(FILE *stream, const char *heading)
+{
+    if (color_enabled(stream))
+        fprintf(stream, "\033[1m%s\033[0m\n", heading);
+    else
+        fprintf(stream, "%s\n", heading);
+}
+
 static void begin_list(FILE *stream, const char *label, size_t *column)
 {
     fprintf(stream, "  %-22s ", label);
@@ -337,7 +345,7 @@ enum input_proxy_result input_proxy_inspect_device(
     (void)find_persistent_path(device_input_path, &status,
                                persistent_path, sizeof(persistent_path));
 
-    fputs("Device identity\n", stream);
+    print_heading(stream, "Device identity");
     print_value(stream, "Path:", device_path);
     print_value(stream, "Event node:", event_node);
     print_value(stream, "Preferred run source:", persistent_path);
@@ -352,7 +360,8 @@ enum input_proxy_result input_proxy_inspect_device(
         print_value(stream, "Physical path:", libevdev_get_phys(device));
         print_value(stream, "Unique identifier:", libevdev_get_uniq(device));
 
-        fputs("\nInput characteristics\n", stream);
+        fputc('\n', stream);
+        print_heading(stream, "Input characteristics");
         print_event_types(stream, device);
         print_codes(stream, device, EV_KEY, "Keys/buttons:");
         print_codes(stream, device, EV_REL, "Relative axes:");
@@ -380,10 +389,13 @@ enum input_proxy_result input_proxy_inspect_device(
             if (slots != NULL) fprintf(stream, "  %-22s %d\n", "Multitouch slots:", slots->maximum + 1);
         } else print_value(stream, "Multitouch slots:", NULL);
     } else {
-        fputs("\nInput characteristics\n  Capabilities:          Unavailable (source cannot be opened)\n", stream);
+        fputc('\n', stream);
+        print_heading(stream, "Input characteristics");
+        fputs("  Capabilities:          Unavailable (source cannot be opened)\n", stream);
     }
 
-    fputs("\nRuntime accessibility\n", stream);
+    fputc('\n', stream);
+    print_heading(stream, "Runtime accessibility");
     fprintf(stream, "  %-22s %s", "Source readable:",
             semantic_status(stream, source_ok ? "Yes" : "No",
                             source_ok ? "32" : "31"));
@@ -403,7 +415,8 @@ enum input_proxy_result input_proxy_inspect_device(
         fprintf(stream, " (%s)", semantic_status(stream, "BLOCKER", "31"));
     fputc('\n', stream);
 
-    fputs("\nUdev and libinput context\n", stream);
+    fputc('\n', stream);
+    print_heading(stream, "Udev and libinput context");
     ignored = read_udev_properties(udev_data_path, &status, stream,
                                    rule_vendor, sizeof(rule_vendor),
                                    rule_model, sizeof(rule_model),
@@ -428,7 +441,7 @@ enum input_proxy_result input_proxy_inspect_device(
                       "        physical connection path. Moving the device to another USB port\n"
                       "        may require updating the rule.\n",
                       semantic_status(stream, "NOTE", "33"));
-            fputs("\n  Suggested commands:\n"
+            fputs("\n  Suggested udev rule activation commands:\n"
                   "    sudo udevadm control --reload-rules\n"
                   "    sudo udevadm trigger --subsystem-match=input --action=change\n",
                   stream);
@@ -437,7 +450,8 @@ enum input_proxy_result input_proxy_inspect_device(
         }
     }
 
-    fputs("\nProxy readiness\n", stream);
+    fputc('\n', stream);
+    print_heading(stream, "Proxy readiness");
     if (!source_ok || !uinput_ok)
         fprintf(stream, "  %s: runtime access blockers must be resolved.\n",
                 semantic_status(stream, "BLOCKED", "31"));
@@ -448,10 +462,10 @@ enum input_proxy_result input_proxy_inspect_device(
         fprintf(stream, "  %s: device appears ready for input-proxy run.\n",
                 semantic_status(stream, "READY", "32"));
 
-    fputs("\nSuggested command\n\n  input-proxy run \\\n", stream);
-    fprintf(stream, "      --source %s \\\n", persistent_path[0] != '\0'
-            ? persistent_path : device_path);
-    fputs("      --name \"YOUR DEVICE NAME\"\n\n", stream);
+    fputc('\n', stream);
+    print_heading(stream, "Suggested input-proxy run command");
+    fprintf(stream, "  input-proxy run --source %s --name \"YOUR DEVICE NAME\"\n\n",
+            persistent_path[0] != '\0' ? persistent_path : device_path);
 
     if (device != NULL) libevdev_free(device);
     if (source_fd >= 0) close(source_fd);

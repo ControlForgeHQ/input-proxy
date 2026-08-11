@@ -89,9 +89,10 @@ int main(void)
         strstr(output, "(not applied)") != NULL ||
         strstr(output, "(not run)") != NULL ||
         strstr(output, "BLOCKED:") == NULL ||
-        strstr(output, "Suggested command") == NULL ||
+        strstr(output, "Suggested input-proxy run command\n  input-proxy run --source ") == NULL ||
         strstr(output, "--source ") == NULL ||
         strstr(output, "YOUR DEVICE NAME") == NULL ||
+        strstr(output, "input-proxy run \\\n") != NULL ||
         strstr(output, "\033[") != NULL || error[0] != '\0') {
         fprintf(stderr, "unexpected inspection result:\n%s%s", output, error);
         failures++;
