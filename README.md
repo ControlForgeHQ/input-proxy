@@ -75,7 +75,9 @@ Additional commands:
 ./build/input-proxy --version
 ```
 
-Use `--verbose` to enable additional lifecycle and diagnostic output.
+Use `--verbose` to explain internal runtime decisions and recovery behavior.
+Normal output remains focused on concise operational lifecycle events. Neither
+mode logs raw input events.
 
 ## Permissions
 
