@@ -347,5 +347,7 @@ enum input_proxy_result input_proxy_list_devices(
     }
     free(entries);
 
+    fputc('\n', stream);
+
     return INPUT_PROXY_SUCCESS;
 }

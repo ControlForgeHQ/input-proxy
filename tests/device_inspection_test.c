@@ -93,7 +93,10 @@ int main(void)
         strstr(output, "--source ") == NULL ||
         strstr(output, "YOUR DEVICE NAME") == NULL ||
         strstr(output, "input-proxy run \\\n") != NULL ||
-        strstr(output, "\033[") != NULL || error[0] != '\0') {
+        strstr(output, "\033[") != NULL || output_size < 2 ||
+        strcmp(output + output_size - 2, "\n\n") != 0 ||
+        (output_size >= 3 && strcmp(output + output_size - 3, "\n\n\n") == 0) ||
+        error[0] != '\0') {
         fprintf(stderr, "unexpected inspection result:\n%s%s", output, error);
         failures++;
     }

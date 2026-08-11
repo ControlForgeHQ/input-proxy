@@ -279,6 +279,8 @@ int main(void)
         strstr(output, "Switch Only") ||
         strstr(output, "CEC Noise") ||
         strstr(output, "Virtual Device") ||
+        output_size < 2 || strcmp(output + output_size - 2, "\n\n") != 0 ||
+        (output_size >= 3 && strcmp(output + output_size - 3, "\n\n\n") == 0) ||
         !output_contains_in_order(output, "event2", "event10")) {
         fprintf(stderr, "unexpected discovery output:\n%s", output);
         failures++;
