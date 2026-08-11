@@ -48,7 +48,7 @@ int main(void)
             .uinput_group = "input",
             .uinput_group_writable = true,
             .uinput_group_member = false,
-            .uinput_module_available = true,
+            .uinput_module_loaded = true,
             .input_group_available = true,
             .user = "operator"
         };
@@ -84,7 +84,7 @@ int main(void)
         access.source_ok = true;
         access.uinput_exists = false;
         access.uinput_ok = false;
-        access.uinput_module_available = false;
+        access.uinput_module_loaded = false;
         stream = open_memstream(&output, &output_size);
         if (stream == NULL) return 1;
         input_proxy_print_access_remediation(stream, &access);
@@ -154,22 +154,45 @@ int main(void)
         strstr(output, "/by-id/test-device") == NULL ||
         strstr(output, "Fixture Keyboard") == NULL ||
         strstr(output, "Bus:                   USB") == NULL ||
-        strstr(output, "Source readable:       No (BLOCKER)") == NULL ||
+        strstr(output, "Source readable:       No\n") == NULL ||
         strstr(output, "/dev/uinput writable:  Yes") == NULL ||
         strstr(output, "No udev rule suggested") == NULL ||
         strstr(output, "Suggested udev rule") != NULL ||
         strstr(output, "(not applied)") != NULL ||
         strstr(output, "(not run)") != NULL ||
-        strstr(output, "BLOCKED:") == NULL ||
-        strstr(output, "Suggested input-proxy run command\n  input-proxy run --source ") == NULL ||
-        strstr(output, "--source ") == NULL ||
-        strstr(output, "YOUR DEVICE NAME") == NULL ||
+        strstr(output, "NOT READY: runtime access issues must be resolved.") == NULL ||
+        strstr(output, "Runtime accessibility remediation") == NULL ||
+        strstr(output, "Libinput remediation") == NULL ||
+        strstr(output, "Proxy readiness") >
+            strstr(output, "Runtime accessibility remediation") ||
+        strstr(output, "Runtime accessibility remediation") >
+            strstr(output, "Libinput remediation") ||
+        strstr(output, "Suggested input-proxy run command") != NULL ||
+        strstr(output, "(BLOCKER)") != NULL ||
         strstr(output, "input-proxy run \\\n") != NULL ||
         strstr(output, "\033[") != NULL || output_size < 2 ||
         strcmp(output + output_size - 2, "\n\n") != 0 ||
         (output_size >= 3 && strcmp(output + output_size - 3, "\n\n\n") == 0) ||
         error[0] != '\0') {
         fprintf(stderr, "unexpected inspection result:\n%s%s", output, error);
+        failures++;
+    }
+    free(output); free(error);
+    output = NULL; error = NULL; output_size = 0; error_size = 0;
+    stream = open_memstream(&output, &output_size);
+    error_stream = open_memstream(&error, &error_size);
+    if (stream == NULL || error_stream == NULL) return 1;
+    result = input_proxy_inspect_device(stream, error_stream, path, sysfs, root,
+                                        "/definitely/missing/uinput", udev);
+    fclose(stream); fclose(error_stream);
+    if (result != INPUT_PROXY_SUCCESS ||
+        strstr(output, "/dev/uinput exists:    No") == NULL ||
+        strstr(output, "/dev/uinput writable:  Unavailable") == NULL ||
+        strstr(output, "/dev/uinput writable:  No") != NULL ||
+        strstr(output, "Suggested input-proxy run command") != NULL ||
+        error[0] != '\0') {
+        fprintf(stderr, "unexpected missing-uinput inspection result:\n%s%s",
+                output, error);
         failures++;
     }
     free(output); free(error);

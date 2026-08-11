@@ -17,7 +17,7 @@ struct input_proxy_access_remediation {
     const char *uinput_group;
     bool uinput_group_writable;
     bool uinput_group_member;
-    bool uinput_module_available;
+    bool uinput_module_loaded;
     bool input_group_available;
     const char *user;
 };

@@ -305,65 +305,86 @@ static const char *group_name(gid_t group, char *buffer, size_t size)
 void input_proxy_print_access_remediation(
     FILE *stream, const struct input_proxy_access_remediation *access)
 {
-    bool any = false;
-
     if (stream == NULL || access == NULL ||
         (access->source_ok && access->uinput_ok))
         return;
 
     print_heading(stream, "Runtime accessibility remediation");
+    fputc('\n', stream);
     if (!access->source_ok && access->source_group != NULL &&
         access->source_group_readable && !access->source_group_member &&
         safe_account_name(access->source_group) &&
         safe_account_name(access->user)) {
+        print_heading(stream, "  Source access");
         fprintf(stream,
-            "  Source: group '%s' can read the device, but user '%s' is not a member.\n"
-            "  Add the runtime user to that group, then start a new login session:\n"
-            "    sudo usermod -aG %s %s\n",
+            "    Group \"%s\" can read this device, but user \"%s\" is not a member.\n"
+            "\n"
+            "    Suggested command:\n"
+            "      sudo usermod -aG %s %s\n"
+            "\n"
+            "    %s: start a new login session before testing again.\n",
             access->source_group, access->user, access->source_group,
-            access->user);
-        any = true;
+            access->user, semantic_status(stream, "NOTE", "33"));
     } else if (!access->source_ok) {
-        fputs("  Source: no safe permission change can be determined from the device's\n"
-              "  current ownership and mode.\n", stream);
-        any = true;
+        print_heading(stream, "  Source access");
+        fprintf(stream,
+            "    %s: no safe permission change can be determined from the device's\n"
+            "             current ownership and mode.\n",
+            semantic_status(stream, "WARNING", "33"));
     }
 
+    if (!access->source_ok && !access->uinput_ok) fputc('\n', stream);
     if (!access->uinput_exists) {
-        if (!access->uinput_module_available)
-            fputs("  /dev/uinput: the uinput kernel module is not currently available.\n"
-                  "  Load it for this boot, then inspect the device again:\n"
-                  "    sudo modprobe uinput\n", stream);
+        print_heading(stream, "  /dev/uinput access");
+        if (!access->uinput_module_loaded)
+            fputs("    The device node is missing and the uinput module is not loaded in the\n"
+                  "    running kernel.\n"
+                  "\n"
+                  "    Suggested command:\n"
+                  "      sudo modprobe uinput\n", stream);
         else
-            fputs("  /dev/uinput: the uinput module is available, but the device node is\n"
-                  "  missing. No safe corrective command can be determined from this state.\n",
-                  stream);
-        any = true;
+            fprintf(stream,
+                "    The uinput module is loaded in the running kernel, but the device node\n"
+                "    is missing.\n"
+                "\n"
+                "    %s: no safe corrective command can be determined from this state.\n",
+                semantic_status(stream, "WARNING", "33"));
     } else if (!access->uinput_ok && access->uinput_group != NULL &&
                access->uinput_group_writable &&
                !access->uinput_group_member &&
                safe_account_name(access->uinput_group) &&
                safe_account_name(access->user)) {
+        print_heading(stream, "  /dev/uinput access");
         fprintf(stream,
-            "  /dev/uinput: group '%s' can write the device, but user '%s' is not a member.\n"
-            "  Add the runtime user to that group, then start a new login session:\n"
-            "    sudo usermod -aG %s %s\n",
+            "    Group \"%s\" can write this device, but user \"%s\" is not a member.\n"
+            "\n"
+            "    Suggested command:\n"
+            "      sudo usermod -aG %s %s\n"
+            "\n"
+            "    %s: start a new login session before testing again.\n",
             access->uinput_group, access->user, access->uinput_group,
-            access->user);
-        any = true;
+            access->user, semantic_status(stream, "NOTE", "33"));
     } else if (!access->uinput_ok && access->input_group_available) {
-        fputs("  /dev/uinput: its current mode and ownership do not provide group write\n"
-              "  access. Configure the uinput device specifically with this udev rule:\n"
-              "    KERNEL==\"uinput\", GROUP=\"input\", MODE=\"0660\", OPTIONS+=\"static_node=uinput\"\n"
-              "  Then reload the rules and recreate the device node or reboot.\n",
+        print_heading(stream, "  /dev/uinput access");
+        fputs("    The device exists, but the current user cannot open it for writing.\n"
+              "\n"
+              "    Suggested udev rule:\n"
+              "      KERNEL==\"uinput\", GROUP=\"input\", MODE=\"0660\", OPTIONS+=\"static_node=uinput\"\n"
+              "\n"
+              "    Suggested udev rule activation commands:\n"
+              "      sudo udevadm control --reload-rules\n"
+              "      sudo udevadm trigger --name-match=uinput\n",
               stream);
-        any = true;
     } else if (!access->uinput_ok) {
-        fputs("  /dev/uinput: no safe permission change can be determined from the device's\n"
-              "  current ownership and mode.\n", stream);
-        any = true;
+        print_heading(stream, "  /dev/uinput access");
+        fprintf(stream,
+            "    The device exists, but the current user cannot open it for writing.\n"
+            "\n"
+            "    %s: no safe permission change can be determined from the device's\n"
+            "             current ownership and mode.\n",
+            semantic_status(stream, "WARNING", "33"));
     }
-    if (any) fputc('\n', stream);
+    fputc('\n', stream);
 }
 
 static bool read_udev_properties(const char *root, const struct stat *status,
@@ -521,22 +542,40 @@ enum input_proxy_result input_proxy_inspect_device(
     fprintf(stream, "  %-22s %s", "Source readable:",
             semantic_status(stream, source_ok ? "Yes" : "No",
                             source_ok ? "32" : "31"));
-    if (!source_ok)
-        fprintf(stream, " (%s)", semantic_status(stream, "BLOCKER", "31"));
     fputc('\n', stream);
     {
         fprintf(stream, "  %-22s %s\n", "/dev/uinput exists:",
                 semantic_status(stream, uinput_exists ? "Yes" : "No",
                                 uinput_exists ? "32" : "31"));
     }
-    fprintf(stream, "  %-22s %s", "/dev/uinput writable:",
-            semantic_status(stream, uinput_ok ? "Yes" : "No",
-                            uinput_ok ? "32" : "31"));
-    if (!uinput_ok)
-        fprintf(stream, " (%s)", semantic_status(stream, "BLOCKER", "31"));
-    fputc('\n', stream);
+    if (!uinput_exists)
+        fprintf(stream, "  %-22s Unavailable\n", "/dev/uinput writable:");
+    else
+        fprintf(stream, "  %-22s %s\n", "/dev/uinput writable:",
+                semantic_status(stream, uinput_ok ? "Yes" : "No",
+                                uinput_ok ? "32" : "31"));
 
     fputc('\n', stream);
+    print_heading(stream, "Udev and libinput context");
+    ignored = read_udev_properties(udev_data_path, &status, stream,
+                                   rule_vendor, sizeof(rule_vendor),
+                                   rule_model, sizeof(rule_model),
+                                   rule_path, sizeof(rule_path));
+    fprintf(stream, "  %-22s %s\n", "Libinput ignored:",
+            semantic_status(stream, ignored ? "Yes" : "No",
+                            ignored ? "32" : "33"));
+
+    fputc('\n', stream);
+    print_heading(stream, "Proxy readiness");
+    if (!source_ok || !uinput_ok)
+        fprintf(stream, "  %s: runtime access issues must be resolved.\n",
+                semantic_status(stream, "NOT READY", "31"));
+    else if (!ignored && !identity.virtual_device)
+        fprintf(stream, "  %s: runtime access is available; libinput ignore is not configured.\n",
+                semantic_status(stream, "READY WITH WARNINGS", "33"));
+    else
+        fprintf(stream, "  %s: device appears ready for input-proxy run.\n",
+                semantic_status(stream, "READY", "32"));
 
     user_entry = getpwuid(geteuid());
     remediation.source_ok = source_ok;
@@ -553,21 +592,17 @@ enum input_proxy_result input_proxy_inspect_device(
         (uinput_status.st_mode & S_IWGRP) != 0;
     remediation.uinput_group_member = uinput_status_available &&
         supplementary_group_member(uinput_status.st_gid);
-    remediation.uinput_module_available =
-        access("/sys/module/uinput", F_OK) == 0;
+    remediation.uinput_module_loaded = access("/sys/module/uinput", F_OK) == 0;
     remediation.input_group_available = getgrnam("input") != NULL;
     remediation.user = user_entry == NULL ? NULL : user_entry->pw_name;
-    input_proxy_print_access_remediation(stream, &remediation);
+    if (!source_ok || !uinput_ok) {
+        fputc('\n', stream);
+        input_proxy_print_access_remediation(stream, &remediation);
+    }
 
-    print_heading(stream, "Udev and libinput context");
-    ignored = read_udev_properties(udev_data_path, &status, stream,
-                                   rule_vendor, sizeof(rule_vendor),
-                                   rule_model, sizeof(rule_model),
-                                   rule_path, sizeof(rule_path));
-    fprintf(stream, "  %-22s %s\n", "Libinput ignored:",
-            semantic_status(stream, ignored ? "Yes" : "No",
-                            ignored ? "32" : "33"));
     if (!ignored && !identity.virtual_device) {
+        fputc('\n', stream);
+        print_heading(stream, "Libinput remediation");
         fprintf(stream, "\n  %s: the physical source may also be consumed directly by libinput.\n",
                 semantic_status(stream, "WARNING", "33"));
         if (safe_rule_value(rule_vendor) && safe_rule_value(rule_model) &&
@@ -589,26 +624,18 @@ enum input_proxy_result input_proxy_inspect_device(
                   "    sudo udevadm trigger --subsystem-match=input --action=change\n",
                   stream);
         } else {
-            fputs("  No udev rule suggested: a stable path plus vendor and model identifiers are unavailable.\n", stream);
+            fputs("\n  No udev rule suggested: a stable path plus vendor and model identifiers are unavailable.\n",
+                  stream);
         }
     }
 
+    if (source_ok && uinput_ok) {
+        fputc('\n', stream);
+        print_heading(stream, "Suggested input-proxy run command");
+        fprintf(stream, "  input-proxy run --source %s --name \"YOUR DEVICE NAME\"\n",
+                persistent_path[0] != '\0' ? persistent_path : device_path);
+    }
     fputc('\n', stream);
-    print_heading(stream, "Proxy readiness");
-    if (!source_ok || !uinput_ok)
-        fprintf(stream, "  %s: runtime access blockers must be resolved.\n",
-                semantic_status(stream, "BLOCKED", "31"));
-    else if (!ignored && !identity.virtual_device)
-        fprintf(stream, "  %s: runtime access is available; libinput ignore is not configured.\n",
-                semantic_status(stream, "READY WITH WARNINGS", "33"));
-    else
-        fprintf(stream, "  %s: device appears ready for input-proxy run.\n",
-                semantic_status(stream, "READY", "32"));
-
-    fputc('\n', stream);
-    print_heading(stream, "Suggested input-proxy run command");
-    fprintf(stream, "  input-proxy run --source %s --name \"YOUR DEVICE NAME\"\n\n",
-            persistent_path[0] != '\0' ? persistent_path : device_path);
 
     if (device != NULL) libevdev_free(device);
     if (source_fd >= 0) close(source_fd);
