@@ -656,7 +656,10 @@ int main(void)
         output,
         sizeof(output)
     );
-    if (count_occurrences(output, "waiting for source") != 1 ||
+    if (count_occurrences(
+            output,
+            "input-proxy: waiting for source: /dev/input/event-test\n"
+        ) != 1 ||
         count_occurrences(output, "shutdown complete") != 1 ||
         strstr(output, "source opened successfully") != NULL) {
         fprintf(stderr, "source wait logging: unexpected output: %s\n", output);

@@ -112,7 +112,7 @@ static enum input_proxy_result create_active_devices(
         if (result == INPUT_PROXY_ERROR_SOURCE_UNAVAILABLE) {
             if (!waiting_logged) {
                 printf(
-                    "input-proxy: waiting for source %s\n",
+                    "input-proxy: waiting for source: %s\n",
                     session->source_path
                 );
                 fflush(stdout);
