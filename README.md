@@ -21,6 +21,10 @@ libinput, compositor, or another input consumer
 This is useful whenever input needs a stable logical identity or a deliberate
 routing point that the physical device alone does not provide.
 
+The configured proxy name becomes that stable logical identity. In Version 0.3
+this evolves into the validated **Instance Name**, which also becomes the
+runtime-control identity and the basis for future persistent deployment.
+
 `input-proxy` does **not** remap events. It faithfully forwards the source event
 stream while preserving the source device's supported capabilities. It performs
 no coordinate transformation, gesture interpretation, or per-code filtering.
@@ -110,7 +114,9 @@ Otherwise use the event path reported by `list`:
 ```
 
 The configured name becomes the virtual device name and must be unique among
-simultaneously running `input-proxy` processes.
+simultaneously running `input-proxy` processes. Beginning with Version 0.3, this
+validated name also becomes the canonical runtime Instance Name used throughout
+the project.
 
 Add `--verbose` to include detailed lifecycle diagnostics such as source
 identity, reconnect handling, compatibility decisions, synchronization recovery,
@@ -230,9 +236,11 @@ installation and service integration are planned for Version 0.4.
 
 For additional project information see:
 
-- [Roadmap](docs/ROADMAP.md)
-- [Architecture](docs/ARCHITECTURE.md)
 - [Documentation index](docs/README.md)
+- [Architecture](docs/ARCHITECTURE.md)
+- [D-Bus Interface](docs/DBUS_INTERFACE.md)
+- [Roadmap](docs/ROADMAP.md)
+- [Engineering Principles](docs/ENGINEERING.md)
 
 ---
 

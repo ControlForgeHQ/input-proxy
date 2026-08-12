@@ -34,16 +34,32 @@ input subsystem
     -> human-readable diagnostics
 ```
 
-Future control functionality follows a separate control path:
+Runtime observation and control follow a separate control path:
 
 ```text
-external controller
-    -> control service
-    -> proxy-session state request
+external client
+    -> system D-Bus
+    -> input-proxy instance
+    -> proxy session
 ```
 
 Data flow, diagnostics, runtime policy, and external control must remain
 architecturally distinct.
+
+### Terminology
+
+- **Proxy Session**: the runtime policy and lifecycle authority for one logical
+  proxy instance.
+- **Physical Source**: the configured evdev device that supplies input events.
+- **Virtual Device**: the persistent uinput device presented to input consumers.
+- **Instance Name**: the validated, operator-supplied identity of one logical
+  proxy instance.
+- **Source Availability**: the current ability of the proxy session to acquire
+  and communicate with its configured physical source.
+- **Runtime Control**: observation and state requests delivered through the
+  optional D-Bus control plane.
+- **Runtime Activity**: a coalesced indication of recent physical-source input,
+  not a transport for raw input events.
 
 ## Command-line architecture
 
@@ -52,7 +68,7 @@ architecturally distinct.
 The primary command structure is:
 
 ```text
-input-proxy run --source PATH --name NAME [--verbose]
+input-proxy run --source PATH --name INSTANCE_NAME [--verbose]
 
 input-proxy list
 
@@ -74,18 +90,27 @@ runs the session, and returns its result.
 
 Runtime lifecycle belongs in the proxy-session layer.
 
+`--name` specifies the Instance Name. The Instance Name is also used as the
+virtual uinput device name and identifies the instance throughout runtime
+control, diagnostics, and future persistent deployment.
+
 Before runtime startup output or device lifecycle begins, the proxy session
-acquires exclusive ownership of the configured virtual-device name. Ownership
-is represented by a bound Linux abstract Unix-domain socket whose address
-contains a fixed application namespace followed by the exact configured name.
-The atomic socket bind makes concurrent acquisition race-safe. The session
-holds the socket for its lifetime, and closing the descriptor on cleanup—or
-kernel cleanup after abnormal process termination—immediately releases the
-name. Because the address is not a filesystem path, spaces and punctuation are
-preserved without creating path-traversal or stale-file behavior.
+acquires exclusive ownership of the configured Instance Name. Ownership is
+represented by a bound Linux abstract Unix-domain socket whose address contains
+a fixed application namespace followed by the exact configured name.
+
+The atomic socket bind makes concurrent acquisition race-safe. The session holds
+the socket for its lifetime, and closing the descriptor on cleanup—or kernel
+cleanup after abnormal process termination—immediately releases the name.
 
 This ownership namespace is specific to `input-proxy` runtime processes. Linux
 input devices with the same displayed evdev name do not participate in it.
+
+When D-Bus runtime control is available, successful acquisition of the
+corresponding well-known D-Bus service name provides an additional assertion of
+the same Instance Name ownership. The abstract socket remains the runtime's
+authoritative Instance Name uniqueness mechanism, while D-Bus exposes that
+identity to external clients.
 
 ### `list`
 
@@ -187,7 +212,7 @@ device.
 It owns:
 
 - configured source path;
-- configured virtual-device name;
+- configured Instance Name;
 - current physical source device;
 - persistent virtual device;
 - runtime lifecycle state;
@@ -195,9 +220,9 @@ It owns:
 - reconnect policy;
 - synchronization recovery;
 - source-loss neutralization;
+- pause and resume state;
+- runtime activity state;
 - shutdown handling.
-
-Future runtime-control state also belongs to the session.
 
 Every source event must pass through session-level policy before being written to
 the virtual device.
@@ -207,7 +232,7 @@ The source-device layer must not write directly to the virtual device.
 The virtual-device layer must not independently read the physical source.
 
 This boundary ensures that reconnect handling, synchronization recovery,
-neutralization, pause/resume policy, and future runtime control are applied
+neutralization, pause/resume policy, and runtime control are applied
 consistently.
 
 ## Source device
@@ -492,7 +517,7 @@ Normal operation must not perform:
 - key remapping;
 - selective per-code transformation.
 
-Any future suppression behavior, such as pause support, remains session policy
+Suppression behavior, including pause support, remains session policy
 and must operate on complete interaction semantics rather than turning the
 project into a general event-filtering framework.
 
@@ -515,7 +540,7 @@ source-loss lifecycle as disconnection during normal forwarding.
 
 ## Runtime lifecycle
 
-The current runtime lifecycle is conceptually:
+The resource lifecycle is conceptually:
 
 ```text
 STARTING
@@ -555,78 +580,33 @@ EXIT
 
 An unrecoverable failure transitions to cleanup and process exit.
 
-The implementation does not require a generalized state-machine framework, but
-lifecycle transitions must remain explicit and understandable.
+Pause is an event-forwarding policy within the proxy session rather than a
+separate resource lifecycle.
 
-## Future pause and runtime control
-
-Future pause/resume support extends the proxy-session lifecycle.
-
-The relevant conceptual states are:
+Conceptually:
 
 ```text
 ACTIVE
-PAUSING
+  |
+  | Pause()
+  v
 PAUSED
-RESUMING
+  |
+  | Resume()
+  v
+ACTIVE
 ```
 
-Pause changes event delivery, not source consumption.
+While paused, the session continues to consume an available Physical Source and
+retains the Virtual Device. Source loss and reconnect continue to follow the
+normal resource lifecycle shown above.
 
-While paused:
+The requested pause state survives source loss. If the source returns while the
+session is paused, the session remains paused until an explicit `Resume()`
+request succeeds.
 
-- the physical source remains open when available;
-- the source event queue continues to be drained;
-- suppressed events are not replayed;
-- the persistent virtual device remains present.
-
-A pause request received during an active interaction must not leave the virtual
-device in partially active state.
-
-Likewise, resume must occur only at a safe input boundary so that the wake
-interaction itself is not leaked to the virtual device.
-
-The requested pause state must survive temporary source loss and reconnect.
-
-## Future control service
-
-External runtime control belongs in a control-service component.
-
-The preferred transport is system D-Bus.
-
-Its responsibility is to translate external requests into proxy-session state
-requests and expose session state back to external clients.
-
-The control service must not:
-
-- read source events directly;
-- write virtual-device events directly;
-- own source or virtual-device lifecycle;
-- decide independently when a pause/resume transition is complete;
-- manage displays or backlights.
-
-The proxy session remains authoritative.
-
-Future control operations are expected to include equivalents of:
-
-```text
-Pause()
-Resume()
-SetPaused(bool)
-```
-
-and state such as:
-
-```text
-State
-Paused
-SourceAvailable
-VirtualDeviceAvailable
-```
-
-Paused-source activity may produce a coalesced activity notification.
-
-That notification is a wake signal, not a second raw-event transport.
+The implementation does not require a generalized state-machine framework, but
+lifecycle and pause-state transitions must remain explicit and understandable.
 
 ## Device discovery
 
@@ -721,7 +701,7 @@ Architecturally:
 - diagnostics should remain useful both interactively and under a service
   manager.
 
-## Runtime control architecture
+## Runtime control
 
 Version 0.3 adds runtime observation and control without changing the fundamental
 one-process-per-source proxy model.
@@ -765,7 +745,7 @@ Each running proxy instance MUST remain independently operable.
 One `input-proxy run` process continues to own:
 
 - one configured physical source;
-- one configured virtual-device name;
+- one configured Instance Name;
 - one proxy session;
 - one virtual uinput device when source state permits;
 - one runtime-control endpoint when D-Bus is available.
@@ -815,101 +795,55 @@ the proxy process.
 Future systemd integration remains responsible for service start, stop, restart,
 enablement, and persistence.
 
-### Decentralized instance discovery
+### Instance identity
 
-Every `input-proxy` runtime process independently connects to the system D-Bus
-when possible.
+Every running proxy has one stable Instance Name. It is supplied through
+`--name`, validated before runtime startup, and MUST be unique among
+simultaneously running proxy instances.
 
-Each connected process owns one well-known D-Bus service name within the
-`input-proxy` namespace.
+The Instance Name is the canonical identity of the proxy throughout the project.
+Other runtime and deployment identifiers are derived from it rather than
+introducing additional independent identities.
 
-The initial naming model is:
+The same Instance Name identifies:
 
-```text
-net.controlforge.InputProxy1.Instance.p<PID>
-```
-
-For example:
-
-```text
-net.controlforge.InputProxy1.Instance.p1842
-```
-
-The process identifier is used only as an ephemeral machine-safe D-Bus address.
-
-Clients MUST NOT treat the D-Bus service name as the persistent logical identity
-of a proxy instance.
-
-Clients discover running instances by:
-
-1. enumerating names currently owned on the system bus;
-2. selecting names within the `net.controlforge.InputProxy1.Instance.` namespace;
-3. querying the public instance properties from each matching service.
-
-No additional registry process is required.
-
-If a proxy process terminates, its D-Bus connection and service-name ownership
-disappear automatically.
-
-### Runtime identities
-
-Three different identities serve different purposes and MUST remain distinct.
-
-#### Logical runtime identity
-
-The configured virtual-device name is the operator-facing logical identity.
-
-Example:
-
-```text
-HDMI-A-1-Touch
-```
-
-This identity:
-
-- is configured through `--name`;
-- appears in operator-facing output and logs;
-- is unique among simultaneously running `input-proxy` processes;
-- is enforced independently of D-Bus.
-
-The existing race-safe runtime name-ownership mechanism remains authoritative
-for this uniqueness requirement.
-
-#### D-Bus identity
-
-The D-Bus service name is an IPC address.
-
-Example:
-
-```text
-net.controlforge.InputProxy1.Instance.p1842
-```
-
-It is:
-
-- machine-generated;
-- valid only for the current process lifetime;
-- not intended for persistence;
-- not intended for operator configuration.
-
-Clients that need a specific logical instance SHOULD discover current services
-and match the `DeviceName` property.
-
-#### Deployment identity
-
-Future persistent deployments may assign a systemd instance identity.
+- the logical proxy instance;
+- the virtual uinput device;
+- the D-Bus runtime endpoint;
+- operator-facing logs and diagnostics;
+- the future systemd service instance.
 
 For example:
 
 ```text
-input-proxy@hdmi-a-1-touch.service
+Instance Name:  HDMI-A-1-Touch
+Virtual device: HDMI-A-1-Touch
+D-Bus service:  net.controlforge.InputProxy1.Instance.HDMI-A-1-Touch
+Future service: input-proxy@HDMI-A-1-Touch.service
 ```
 
-This identity belongs to deployment configuration and may remain stable across
-boots.
+One validation routine MUST establish that the supplied value is safe in every
+downstream representation.
 
-The systemd instance identity MUST NOT be assumed to equal either the configured
-`DeviceName` or the D-Bus service name.
+Exact Instance Name syntax and length constraints belong to
+`docs/DBUS_INTERFACE.md` and the command-line contract.
+
+### Decentralized discovery
+
+Every runtime process independently connects to the system D-Bus when possible
+and requests one well-known service name derived from its Instance Name:
+
+```text
+net.controlforge.InputProxy1.Instance.<InstanceName>
+```
+
+Clients that know an Instance Name can address it directly. Clients that need to
+enumerate running proxies list currently owned names in the
+`net.controlforge.InputProxy1.Instance.` namespace.
+
+No additional registry process is required. If a process terminates, D-Bus
+releases its name automatically. A restarted logical instance reclaims the same
+well-known name, so its D-Bus address is stable across process lifetimes.
 
 ### D-Bus availability
 
@@ -951,79 +885,28 @@ Each process exports only its own runtime instance.
 
 No process exports objects representing other proxies.
 
-### Public runtime properties
+### Public runtime interface
 
-The initial runtime-control interface exposes the following read-only
-properties:
+The D-Bus object exposes the public runtime contract for one proxy instance.
 
-```text
-DeviceName             string
-Source                 string
-Version                string
-PID                    uint32
-Paused                 boolean
-SourceAvailable        boolean
-ActivityWhileRunning   boolean
-ActivityWhilePaused    boolean
-```
+The interface provides read-only observation of instance identity, Source
+Availability, pause state, and Runtime Activity. Independent runtime conditions
+remain independent rather than being collapsed into an ambiguous generalized
+state.
 
-`DeviceName`, `Source`, `Version`, and `PID` are stable for the life of the
-runtime process.
+The control surface allows clients to request paused or forwarding operation.
+Those requests MUST be deterministic and idempotent. A toggle-style operation is
+not part of the architecture.
 
-`Paused`, `SourceAvailable`, `ActivityWhileRunning`, and
-`ActivityWhilePaused` may change while the process is running.
+Process termination and restart remain outside the runtime-control interface.
 
-Changes to observable properties SHOULD use the standard
-`org.freedesktop.DBus.Properties.PropertiesChanged` mechanism rather than
-project-specific property-change signals.
+Standard D-Bus interfaces provide properties, change notification,
+introspection, and peer communication where applicable. The project-specific
+interface must not duplicate those facilities.
 
-A generalized runtime-state enumeration is intentionally not exposed initially.
-
-Independent runtime conditions SHOULD be represented directly rather than
-combined into an ambiguous state value.
-
-### Runtime control methods
-
-The initial project-specific control surface contains only:
-
-```text
-Pause()
-Resume()
-```
-
-Both methods MUST be idempotent.
-
-Calling `Pause()` while already paused MUST succeed without repeating
-neutralization unnecessarily.
-
-Calling `Resume()` while already forwarding MUST succeed without altering
-runtime behaviour unnecessarily.
-
-A toggle-style method MUST NOT be provided.
-
-Clients must be able to request a desired state deterministically.
-
-Process termination is outside the runtime-control interface and MUST NOT be
-implemented as a D-Bus method.
-
-### Standard D-Bus interfaces
-
-The runtime object SHOULD support applicable standard D-Bus interfaces rather
-than duplicating their functionality.
-
-These include:
-
-```text
-org.freedesktop.DBus.Properties
-org.freedesktop.DBus.Introspectable
-org.freedesktop.DBus.Peer
-```
-
-The standard peer `Ping()` method SHOULD provide end-to-end communication
-verification.
-
-A project-specific `Ping()` method is unnecessary unless a future requirement
-demonstrates otherwise.
+The exact public service contract—including property names and types, methods,
+errors, notifications, Instance Name validation limits, and client
+expectations—is defined exclusively in `docs/DBUS_INTERFACE.md`.
 
 ### Pause semantics
 
@@ -1073,101 +956,17 @@ switches as continuously active input controls.
 
 ### Runtime activity tracking
 
-Runtime activity tracking is available only when D-Bus integration is active.
+Runtime activity is derived from physical-source input, not virtual-device
+output. Raw input events MUST NOT be transported through D-Bus.
 
-The runtime exposes two independent boolean properties:
+The runtime reports activity independently for forwarding and paused operation.
+Running activity uses a retriggerable hold interval. Paused activity uses a
+throttled indication suitable for wake or attention handling; events arriving
+during the throttle interval do not continuously extend it.
 
-```text
-ActivityWhileRunning
-ActivityWhilePaused
-```
-
-These properties report source-device activity, not virtual-device output.
-
-Raw input events MUST NOT be transported through D-Bus.
-
-Unless future hardware validation demonstrates a need for narrower filtering,
-source activity is defined as any physical source event other than `EV_SYN`.
-
-#### Activity while running
-
-`ActivityWhileRunning` represents recent source activity while forwarding is
-enabled.
-
-When meaningful source activity is detected:
-
-```text
-ActivityWhileRunning = true
-```
-
-The property remains true for a retriggerable hold interval.
-
-Every additional activity event while forwarding is enabled restarts the hold
-timer.
-
-After the configured interval expires without further activity:
-
-```text
-ActivityWhileRunning = false
-```
-
-The runtime option controlling this interval is:
-
-```text
---activity-timeout-ms VALUE
-```
-
-The default is:
-
-```text
-5000 ms
-```
-
-The accepted range MUST be bounded to sane values. Exact minimum and maximum
-values belong to the D-Bus/runtime-control interface specification.
-
-#### Activity while paused
-
-`ActivityWhilePaused` provides a throttled activity indication while input
-forwarding is paused.
-
-When meaningful source activity is first detected while paused:
-
-```text
-ActivityWhilePaused = true
-```
-
-The property remains true for a short throttle interval and then returns to
-false.
-
-Additional activity during the active throttle interval does not repeatedly
-extend the interval.
-
-After the property returns to false, later activity may assert it again.
-
-This produces a debounced/coalesced indication suitable for clients that use
-paused input activity as a wake or attention trigger without exposing raw input
-events.
-
-The runtime option controlling this interval is:
-
-```text
---detection-throttle-ms VALUE
-```
-
-The default is:
-
-```text
-250 ms
-```
-
-The accepted range MUST be bounded to sane values. Exact minimum and maximum
-values belong to the D-Bus/runtime-control interface specification.
-
-The two activity properties are mutually exclusive in normal operation:
-
-- while forwarding, `ActivityWhilePaused` remains false;
-- while paused, `ActivityWhileRunning` remains false.
+These indications are mutually exclusive in normal operation and are available
+only while D-Bus integration is active. Exact property names, timing options,
+defaults, bounds, and transition rules belong to `docs/DBUS_INTERFACE.md`.
 
 ### Device discovery integration
 
@@ -1210,7 +1009,7 @@ template-unit deployment model.
 The intended Version 0.4 relationship is:
 
 ```text
-input-proxy@instance.service
+input-proxy@<InstanceName>.service
         |
         v
 one input-proxy run process
@@ -1220,6 +1019,10 @@ one independent D-Bus runtime endpoint
 ```
 
 A future systemd service instance supervises exactly one `input-proxy` process.
+
+The service instance uses the same validated Instance Name as the runtime and
+D-Bus endpoint. Process lifetime remains owned by systemd or another launcher,
+not by D-Bus.
 
 No future service-management requirement should require replacing the
 decentralized Version 0.3 runtime-control model with a central orchestrator.
@@ -1262,28 +1065,34 @@ one logical virtual input device.
 
 ## Installation boundary
 
-Future installation functionality may modify persistent system configuration.
+Version 0.4 installation may modify persistent system configuration.
 
-That functionality must remain separate from runtime and read-only diagnostic
-modes.
+Installation remains architecturally separate from runtime and read-only
+diagnostic modes.
 
 The installer may manage artifacts such as:
 
 - udev rules;
 - `/dev/uinput` permissions;
 - persistent source mappings;
-- systemd units;
-- D-Bus policy/service files.
+- systemd service instances;
+- D-Bus policy or service metadata.
 
-Normal runtime and inspection code must not silently perform these changes.
+Persistent installation is expected to derive the systemd service instance from
+the same validated Instance Name used by the runtime and D-Bus endpoint.
+
+Normal runtime and inspection code must not silently perform persistent system
+changes.
+
+Detailed installation workflow, release scope, and sequencing belong in
+`docs/ROADMAP.md`.
 
 ## Architectural invariants
 
 The following invariants define the core design:
 
 - one runtime proxy session manages one physical source;
-- each configured virtual-device name has at most one running proxy-session
-  owner;
+- each Instance Name has at most one running proxy-session owner;
 - the physical source is recoverable;
 - the virtual device is the stable logical device;
 - temporary compatible source loss does not remove the virtual device;
@@ -1294,5 +1103,6 @@ The following invariants define the core design:
 - normal runtime does not modify persistent system configuration;
 - diagnostic modes are read-only;
 - the project does not perform general-purpose input remapping;
-- future external control requests session transitions rather than manipulating
+- D-Bus runtime control is optional and never required for event forwarding;
+- external runtime-control requests session transitions rather than manipulating
   device resources directly.

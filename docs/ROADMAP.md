@@ -220,48 +220,136 @@ Version 0.2 diagnoses and advises. It does not configure the machine.
 
 ---
 
-## Version 0.3 – Runtime control and observability
+# Version 0.3.0 — Runtime control and observability
 
-**Objective:** Introduce decentralized runtime observation and control while
-preserving the existing one-process-per-source architecture.
+## Goal
 
-### Runtime control
+Introduce decentralized runtime observation and control while preserving the
+existing one-process-per-source architecture and evdev-to-uinput data path.
 
-- Implement optional system D-Bus integration using a decentralized,
-  one-instance-per-process model.
-- Register each running proxy as an independent D-Bus service without requiring
-  a central manager or registry daemon.
-- Expose the documented public D-Bus interface, including runtime properties,
-  idempotent `Pause()` and `Resume()` methods, and standard D-Bus interfaces
-  where applicable.
-- Continue normal proxy operation when D-Bus is unavailable, logging a startup
-  warning while preserving full evdev-to-uinput functionality.
+Version 0.3 establishes the validated Instance Name as the stable logical
+identity used by the virtual device and runtime-control interface.
 
-### Runtime observability
+## Runtime control
 
-- Expose runtime state, source availability, and activity information through
-  the public D-Bus interface.
-- Extend `list` to discover and display running proxy instances alongside
-  available physical source devices.
-- Extend `inspect` to report any running proxy instances associated with the
-  inspected source device.
+- Add optional system D-Bus integration.
+- Keep each `input-proxy` runtime process independently operable.
+- Register each running proxy as an independent D-Bus service.
+- Derive the well-known D-Bus service name directly from the validated Instance
+  Name.
+- Do not introduce a central manager, registry daemon, or runtime supervisor.
+- Expose the documented public D-Bus interface.
+- Provide deterministic, idempotent:
+  - `Pause()`
+  - `Resume()`
+- Use standard D-Bus interfaces where applicable.
+- Continue normal evdev-to-uinput operation when D-Bus is unavailable.
+- Report a startup warning when D-Bus runtime control cannot be initialized.
 
-### Runtime behaviour
+## Instance identity
 
-- Implement safe pause and resume semantics that preserve correctness while
-  suppressing event forwarding.
-- Synchronize the virtual device to the current physical source state when
-  resuming from pause.
-- Implement configurable runtime activity detection for both forwarding and
-  paused operation using the documented timeout and throttle semantics.
+- Treat `--name` as the operator-supplied Instance Name.
+- Validate the Instance Name before runtime startup.
+- Require the Instance Name to be unique among simultaneously running
+  `input-proxy` instances.
+- Use the same Instance Name for:
+  - the logical proxy instance;
+  - the virtual uinput device;
+  - the D-Bus runtime endpoint;
+  - operator-facing diagnostics and logging;
+  - future persistent systemd deployment.
+- Define exact Instance Name syntax and compatibility requirements in the public
+  D-Bus interface specification.
 
-### Documentation
+## Runtime observability
 
-- Publish the runtime control architecture.
+- Expose runtime information through the public D-Bus interface.
+- Include observation of:
+  - Instance Name;
+  - configured source;
+  - runtime version;
+  - process identifier;
+  - pause state;
+  - source availability;
+  - activity while forwarding;
+  - activity while paused.
+- Use standard D-Bus property-change notification rather than project-specific
+  state-change signals where practical.
+- Do not expose an ambiguous generalized runtime-state value.
+
+## Runtime activity
+
+- Track physical-source activity when D-Bus runtime control is available.
+- Provide separate activity indications for:
+  - forwarding operation;
+  - paused operation.
+- Add configurable:
+  - `--activity-timeout-ms`
+  - `--detection-throttle-ms`
+- Use a retriggerable hold interval for activity while forwarding.
+- Use a throttled indication for activity while paused.
+- Do not transport raw input events through D-Bus.
+
+## Pause and resume behaviour
+
+- Keep the physical source open and consuming events while paused when the
+  source is available.
+- Neutralize active virtual input state when transitioning to paused operation.
+- Suppress source events while paused without replaying them later.
+- Preserve requested pause state across source loss and reconnect.
+- On resume, synchronize relevant stateful virtual controls to the current
+  physical source state before normal forwarding resumes.
+- Do not require the physical source to reach an assumed all-neutral state
+  before resuming.
+
+## Device discovery
+
+- Extend `input-proxy list` with awareness of running proxy instances.
+- Discover running proxies through the system D-Bus when available.
+- Display current source-to-instance mappings.
+- Explicitly report when D-Bus is available but no proxy instances are running.
+- Continue physical-device discovery when D-Bus is unavailable and report that
+  runtime-instance information could not be queried.
+
+## Device inspection
+
+- Extend `input-proxy inspect PATH` with awareness of running proxy instances.
+- Report any running proxy instances associated with the inspected physical
+  source.
+- Support multiple running proxies referring to the same physical source.
+- Remain silent about runtime instances when D-Bus is available but no matching
+  instances are found.
+- Continue physical-device inspection when D-Bus is unavailable and report that
+  runtime-instance information could not be queried.
+
+## Documentation
+
+- Publish the runtime-control architecture.
 - Publish the public D-Bus interface specification.
-- Document runtime discovery, pause/resume behaviour, and client interaction
-  expectations.
-  
+- Document:
+  - Instance Name requirements;
+  - runtime discovery;
+  - pause and resume behaviour;
+  - activity semantics;
+  - client expectations;
+  - D-Bus compatibility requirements.
+
+## Non-goals
+
+Version 0.3 does not introduce:
+
+- a central runtime manager or registry daemon;
+- process start, stop, or restart control through D-Bus;
+- persistent systemd service installation;
+- packaging;
+- automatic persistent system configuration;
+- configuration files;
+- raw input-event transport through D-Bus;
+- general-purpose input remapping.
+
+Version 0.3 adds a runtime control plane. Persistent deployment remains Version
+0.4 work.
+
 ---
 
 # Version 0.4.0 — Deployment and system integration
@@ -287,38 +375,46 @@ minimal.
 
 ## Interactive installation
 
-Add:
+- Add:
 
-```text id="t9txl2"
+```text
 input-proxy install
 ```
 
-The interactive installer should:
-
-- enumerate available input devices;
-- allow source selection;
-- optionally identify a device through observed activity;
-- propose or request a unique virtual-device name;
-- configure a stable logical instance identity;
-- allow the instance to start active or paused;
-- create the required persistent source mapping;
-- configure source permissions where required;
-- configure `/dev/uinput` access where required;
-- configure the systemd service instance;
-- configure D-Bus support;
-- reload affected system services where required;
-- enable and start the configured instance;
-- report all persistent changes before applying them.
+- Use the existing discovery and inspection capabilities to validate the
+  requested deployment before persistent configuration is created.
+- Enumerate available input devices.
+- Allow source selection.
+- Optionally identify a source through observed activity.
+- Propose or request a validated Instance Name.
+- Derive persistent runtime artifacts from that Instance Name.
+- Allow the instance to start active or paused.
+- Create the required persistent source mapping.
+- Configure source permissions where required.
+- Configure `/dev/uinput` access where required.
+- Configure the corresponding systemd service instance.
+- Configure required D-Bus policy or service metadata.
+- Reload affected system services where required.
+- Enable and start the configured instance.
+- Report all persistent changes before applying them.
+- Do not create a persistent service when inspection reports unresolved runtime
+  readiness blockers.
 
 ## Non-interactive installation
 
 Support a scriptable form where practical, for example:
 
-```text id="jwyf9m"
+```text
 input-proxy install \
     --source PATH \
-    --name NAME
+    --name INSTANCE_NAME
 ```
+
+The supplied Instance Name must satisfy the same validation rules used by
+`input-proxy run`.
+
+Non-interactive installation must perform the same deployment-readiness
+validation as interactive installation.
 
 Additional explicit options may be added when needed to remove ambiguity.
 
@@ -399,6 +495,5 @@ The following remain outside the intended scope of `input-proxy`:
 - GUI configuration;
 - network input transport.
 
-External software may use future runtime-control interfaces for display
-management or automation, but `input-proxy` itself remains focused on Linux
-input proxying.
+External software may use the runtime-control interface for display management
+or automation, but `input-proxy` itself remains focused on Linux input proxying.

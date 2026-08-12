@@ -93,6 +93,9 @@ specific deployment environment.
 For example, runtime logging uses standard output and standard error rather than
 depending directly on systemd or journald.
 
+Similarly, runtime control builds on the standard D-Bus system bus rather than
+requiring a project-specific manager or registry daemon.
+
 Add a platform-specific dependency only when it provides functionality that
 cannot reasonably be achieved using the project's existing platform interfaces.
 
