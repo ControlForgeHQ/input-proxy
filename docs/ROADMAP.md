@@ -220,73 +220,48 @@ Version 0.2 diagnoses and advises. It does not configure the machine.
 
 ---
 
-# Version 0.3.0 — Runtime awareness and control
+## Version 0.3 – Runtime control and observability
 
-## Goals
+**Objective:** Introduce decentralized runtime observation and control while
+preserving the existing one-process-per-source architecture.
 
-Version 0.3.0 introduces runtime introspection and management capabilities,
-allowing operators and higher-level tooling to observe and interact with
-running `input-proxy` instances.
+### Runtime control
 
-The focus of this release is runtime awareness rather than new proxying
-features.
+- Implement optional system D-Bus integration using a decentralized,
+  one-instance-per-process model.
+- Register each running proxy as an independent D-Bus service without requiring
+  a central manager or registry daemon.
+- Expose the documented public D-Bus interface, including runtime properties,
+  idempotent `Pause()` and `Resume()` methods, and standard D-Bus interfaces
+  where applicable.
+- Continue normal proxy operation when D-Bus is unavailable, logging a startup
+  warning while preserving full evdev-to-uinput functionality.
 
-## Control interface
+### Runtime observability
 
-Implement a D-Bus control interface for runtime introspection and management.
+- Expose runtime state, source availability, and activity information through
+  the public D-Bus interface.
+- Extend `list` to discover and display running proxy instances alongside
+  available physical source devices.
+- Extend `inspect` to report any running proxy instances associated with the
+  inspected source device.
 
-Capabilities should include:
+### Runtime behaviour
 
-- Enumerating currently running `input-proxy` instances.
-- Reporting runtime status, configured source, configured virtual-device name,
-  and other relevant runtime state.
-- Graceful shutdown of individual runtime instances.
-- Querying runtime statistics and health information.
-- Future expansion for runtime configuration where appropriate.
+- Implement safe pause and resume semantics that preserve correctness while
+  suppressing event forwarding.
+- Synchronize the virtual device to the current physical source state when
+  resuming from pause.
+- Implement configurable runtime activity detection for both forwarding and
+  paused operation using the documented timeout and throttle semantics.
 
-The D-Bus interface should become the authoritative source of runtime instance
-information.
+### Documentation
 
-Use this runtime information to extend operator tooling. In particular:
-
-- `input-proxy list` should report both available physical source devices and
-  currently running `input-proxy` instances.
-- `input-proxy inspect` should report all active `input-proxy` instances
-  currently associated with the inspected physical source.
-- Operators should be able to distinguish between:
-  - a source that is available but not currently proxied;
-  - a source that is currently in use by one or more running `input-proxy`
-    instances.
-
-## Graceful shutdown
-
-Support controlled shutdown of running `input-proxy` instances through the
-runtime control interface.
-
-Graceful shutdown should:
-
-- stop reading from the source device;
-- destroy the virtual input device cleanly;
-- release all runtime resources;
-- notify clients of state transitions where appropriate.
-
-## Instance lifecycle
-
-Document and expose the runtime lifecycle for `input-proxy` instances.
-
-Typical lifecycle states should include:
-
-- Starting
-- Waiting for source
-- Running
-- Reconnecting
-- Stopping
-- Stopped
-- Failed
-
-The runtime control interface should allow operators and client applications to
-observe these state transitions without parsing log output.
-
+- Publish the runtime control architecture.
+- Publish the public D-Bus interface specification.
+- Document runtime discovery, pause/resume behaviour, and client interaction
+  expectations.
+  
 ---
 
 # Version 0.4.0 — Deployment and system integration
