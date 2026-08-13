@@ -187,8 +187,14 @@ Requirements:
 
 - Idempotent.
 - Safe to call repeatedly.
-- Synchronizes the virtual device to the current physical source state before
-  forwarding resumes.
+- When the source is available, synchronizes the virtual device to current
+  physical-source state before changing `Paused` to `false` and resuming
+  forwarding.
+- When the source is unavailable, changes `Paused` to `false` without treating
+  Source Availability as a method failure. No forwarding occurs until a source
+  returns and required synchronization succeeds.
+- Does not replay activity that occurred while forwarding was suppressed.
+- Does not repeat synchronization when the instance is already unpaused.
 
 ## 8. Authorization
 

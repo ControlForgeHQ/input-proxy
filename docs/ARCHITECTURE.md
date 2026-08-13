@@ -427,7 +427,11 @@ When the source reappears:
 2. initialize source state;
 3. compare it with the existing virtual device;
 4. retain or replace the virtual device as required;
-5. resume forwarding.
+5. if the session is paused, continue consuming source events without
+   forwarding them;
+6. if the session is not paused, synchronize the virtual device to current
+   source state;
+7. resume forwarding only after required synchronization succeeds.
 
 A reconnect is a lifecycle transition, not process reinitialization.
 
@@ -934,24 +938,52 @@ logically paused when the source returns.
 
 ### Resume semantics
 
-Resume MUST restore forwarding from the current physical source state rather
-than replaying activity that occurred while paused.
+Resume requests unpaused operation. It MUST restore forwarding from the current
+physical source state rather than replaying activity that occurred while
+paused.
 
-The implementation SHOULD synchronize relevant stateful virtual controls to the
-source's current state before normal forwarding resumes.
+Synchronizing the virtual device to current physical-source state is a mandatory
+precondition whenever an unpaused session transitions from not forwarding to
+forwarding. This includes:
 
-Relevant state may include:
+- resuming with an available source;
+- reacquiring a compatible source while unpaused;
+- creating a replacement virtual device for an incompatible source while
+  unpaused.
 
-- current `EV_KEY` state;
-- current `EV_SW` state;
-- current absolute-axis state;
-- current Type-B multitouch slot/contact state.
+Required synchronization includes current state for supported:
 
-Relative motion and other transient events that occurred during the pause are
-discarded.
+- `EV_KEY` controls, including buttons and `BTN_TOUCH`;
+- `EV_SW` controls;
+- absolute axes;
+- Type-B multitouch slots, tracking identifiers, and per-contact absolute
+  values.
 
-The synchronization sequence SHOULD end with an appropriate synchronization
-boundary before normal event forwarding resumes.
+The session SHOULD emit only values required to make virtual state match current
+source state. The synchronization sequence MUST form one coherent state update
+and end with `EV_SYN` / `SYN_REPORT` before normal event forwarding begins.
+
+Relative motion, miscellaneous events, synchronization events, historical
+press/release sequences, and other transient activity that occurred while
+forwarding was suppressed are discarded.
+
+When resume is requested with an available source, the session remains paused
+until required synchronization succeeds. If synchronization does not complete,
+normal forwarding MUST NOT begin and the session MUST NOT report a successful
+transition to unpaused operation.
+
+When resume is requested without an available source, the session records
+unpaused operation immediately. `Paused` becomes false while `SourceAvailable`
+remains false, and no forwarding occurs. When the source returns, required
+synchronization precedes forwarding.
+
+Calling resume while the session is already unpaused is an idempotent no-op and
+does not require another synchronization sequence.
+
+When a source returns while the session remains paused, normal source
+initialization and compatibility handling occur, but active source state MUST
+NOT be synchronized into the virtual device. The session continues consuming
+and suppressing source events until resume is requested.
 
 Resume MUST NOT require the physical device to reach an assumed all-neutral
 state.
