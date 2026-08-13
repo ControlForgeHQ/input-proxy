@@ -429,21 +429,62 @@ D-Bus runtime control is optional.
 Failure by `input-proxy` to connect to the system bus or acquire its well-known
 service name MUST NOT prevent normal evdev-to-uinput operation.
 
-When D-Bus is unavailable:
+D-Bus integration is available only after the complete runtime object has been
+exported and the process owns its well-known service name. The service-name
+request MUST NOT queue behind an existing owner. Partial initialization is
+cleaned up and is not exposed through the connection's unique bus name.
+
+Initialization failures are classified as follows:
+
+| Category | Meaning | Runtime outcome |
+|----------|---------|-----------------|
+| System bus unavailable | The system bus endpoint is absent or unreachable. | D-Bus integration is disabled; forwarding continues. |
+| Bus connection rejected | Authentication or connection policy prevents access to the system bus. | D-Bus integration is disabled; forwarding continues. |
+| Service-name ownership denied | System-bus policy does not permit the process to own its derived name. | D-Bus integration is disabled; forwarding continues. |
+| Service name already owned | Another bus connection owns the exact derived name. | D-Bus integration is disabled; forwarding continues. |
+| Invalid derived identifier | A validated Instance Name unexpectedly produces an invalid D-Bus identifier. | D-Bus integration is disabled; forwarding continues. |
+| Object export or initialization failure | Object registration, interface setup, or another internal D-Bus initialization step fails. | Partial D-Bus state is cleaned up; forwarding continues. |
+
+Startup MUST report a warning that distinguishes these categories and includes
+the affected service name or initialization stage where relevant. Platform
+error codes are diagnostic details and are not part of this public contract.
+
+A service-name collision is a D-Bus namespace or deployment conflict. It is not
+the normal result for another conforming `input-proxy` process with the same
+Instance Name because authoritative Instance Name ownership is acquired before
+D-Bus initialization. The collision does not invalidate that ownership or stop
+input forwarding.
+
+An invalid derived identifier after successful Instance Name validation is an
+internal project invariant violation. The diagnostic MUST identify derivation
+or validation as defective rather than report invalid operator input.
+
+When D-Bus initialization is unavailable:
 
 - runtime control is unavailable;
 - D-Bus runtime activity tracking is unavailable;
 - the proxy continues normal input forwarding;
 - startup reports a warning.
 
-Clients MUST tolerate a running instance temporarily losing its D-Bus owner
-because the process exited or restarted.
+If an established connection is lost, runtime control and D-Bus activity
+tracking become unavailable immediately, activity timers and state are
+discarded, and forwarding continues. A later reinitialization starts both
+activity properties at `false` and repeats complete no-queue service-name
+acquisition.
+
+Clients MUST tolerate an instance losing its D-Bus owner because its connection
+was lost or its process exited or restarted.
 
 A client that already knows the Instance Name SHOULD continue to use the same
 well-known service name and detect when ownership returns.
 
 A client performing enumeration SHOULD refresh its discovered instance set when
 bus-name ownership changes.
+
+Clients may infer that an owned well-known service name exposes the complete
+public interface. They MUST NOT infer why an expected name is absent. Absence may
+mean that the proxy is not running or that D-Bus connection, policy, ownership,
+or initialization failed.
 
 Method completion, idempotence, and fatal state-correction errors are defined in
 the Methods section.

@@ -904,15 +904,56 @@ well-known name, so its D-Bus address is stable across process lifetimes.
 
 D-Bus runtime control is optional.
 
-Failure to connect to the system D-Bus or acquire the runtime service name MUST
-NOT prevent the proxy from operating.
+Runtime identity and D-Bus initialization occur in this order:
+
+1. validate the Instance Name;
+2. acquire authoritative abstract-socket Instance Name ownership;
+3. derive the D-Bus identifiers;
+4. connect to the system bus;
+5. export the runtime object and interfaces;
+6. request the well-known service name without queueing;
+7. mark D-Bus integration available.
+
+D-Bus integration is all-or-nothing. It MUST NOT be reported as available until
+every initialization step succeeds. Clients address only the well-known service
+name; exporting an object under the connection's unique name is not a degraded
+public control plane.
+
+Failure to connect, export the complete interface, or acquire the runtime
+service name MUST NOT prevent the proxy from operating.
 
 When D-Bus initialization fails:
 
-- `input-proxy run` MUST log a clear startup warning;
+- `input-proxy run` MUST log a clear startup warning that identifies the failed
+  stage and underlying platform reason where available;
+- partial object exports, service-name ownership, connections, activity timers,
+  and activity state MUST be cleaned up;
 - normal evdev-to-uinput proxy operation MUST continue;
 - pause/resume control through D-Bus is unavailable;
 - D-Bus activity tracking is disabled.
+
+The service-name request MUST use no-queue behavior. If the name is already
+owned, the process disables D-Bus integration rather than waiting to acquire the
+name later. Any future explicit reinitialization attempt repeats the complete
+sequence and again requests the name without queueing.
+
+Because authoritative abstract-socket ownership is acquired first, a D-Bus
+service-name collision cannot be another conforming `input-proxy` process with
+the same Instance Name. It indicates another name owner or an inconsistent
+deployment and MUST be diagnosed as a D-Bus namespace conflict. The conflict
+does not invalidate the process's authoritative Instance Name ownership and
+does not prevent forwarding.
+
+Rejection of a derived identifier after successful Instance Name validation is
+an internal invariant violation, not an operator naming error. The diagnostic
+MUST identify name derivation or validation as defective while the core proxy
+continues without D-Bus integration.
+
+If an established D-Bus connection is lost, the runtime MUST immediately mark
+D-Bus integration unavailable, cancel activity timers, discard activity state,
+stop exposing runtime control, report the loss without repeated log flooding,
+and continue normal input forwarding. Automatic retry cadence is not an
+architectural requirement.
 
 The core proxy runtime MUST remain usable without D-Bus.
 
