@@ -1,5 +1,13 @@
 # Documentation
 
+## Start here
+
+Begin with the [project README](../README.md) for an introduction, current
+capabilities, operator workflow, build instructions, and runtime-permission
+guidance.
+
+## Reference documents
+
 Project documentation is organized by responsibility. Each document has one
 authoritative purpose and should not duplicate information owned elsewhere.
 
