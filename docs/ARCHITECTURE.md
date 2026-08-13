@@ -779,6 +779,11 @@ D-Bus owns:
 - method dispatch;
 - property-change delivery.
 
+System-bus policy controls which processes may own project service names and
+which messages may reach them. `input-proxy` independently authorizes
+state-changing method requests from authenticated caller credentials. Transport
+policy and runtime method authorization are separate enforcement boundaries.
+
 The process launcher owns process lifetime.
 
 This may be:

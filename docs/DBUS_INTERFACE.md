@@ -190,7 +190,35 @@ Requirements:
 - Synchronizes the virtual device to the current physical source state before
   forwarding resumes.
 
-## 8. Activity semantics
+## 8. Authorization
+
+Public properties and the standard D-Bus interfaces are available to every
+client that system-bus policy permits to communicate with the service.
+
+`Pause()` and `Resume()` change runtime state. `input-proxy` MUST authorize each
+call using the caller's authenticated Unix credentials. A call is authorized
+only when the caller's Unix user identifier:
+
+- is `0`; or
+- equals the effective user identifier of the running `input-proxy` process.
+
+If caller credentials cannot be obtained or the caller is not authorized, the
+method MUST return `org.freedesktop.DBus.Error.AccessDenied` without changing
+proxy state.
+
+Authorization is non-interactive. The methods MUST NOT invoke polkit or request
+user confirmation.
+
+System-bus policy may further restrict service-name ownership or message
+delivery, but it MUST NOT broaden the service-level authorization rule.
+
+Version 0.3 does not install or modify system-bus policy. An administrator or
+development environment must provide policy that permits the intended runtime
+and client access. Supported persistent policy installation is Version 0.4
+deployment work. Missing or restrictive policy may make D-Bus integration
+unavailable, but MUST NOT prevent normal evdev-to-uinput forwarding.
+
+## 9. Activity semantics
 
 ### Running activity
 
@@ -226,7 +254,7 @@ Meaning:
 - The property returns to `false` when the throttle expires.
 - A later activity may assert it again.
 
-## 9. Discovery
+## 10. Discovery
 
 Clients that already know the desired Instance Name SHOULD communicate directly
 with:
@@ -256,7 +284,7 @@ Clients MUST NOT enumerate services and then match a separate `DeviceName`
 property to identify an instance. The Instance Name is already encoded in the
 well-known service name.
 
-## 10. Error handling
+## 11. Error handling
 
 D-Bus runtime control is optional.
 
@@ -281,7 +309,7 @@ bus-name ownership changes.
 
 `Pause()` and `Resume()` remain idempotent whenever the service is available.
 
-## 11. Client expectations
+## 12. Client expectations
 
 Clients MUST NOT assume:
 
@@ -294,7 +322,7 @@ Clients MUST NOT assume:
 Clients MAY assume that a logical instance restarted with the same validated
 Instance Name will request the same well-known D-Bus service name.
 
-## 12. Compatibility
+## 13. Compatibility
 
 The public D-Bus interface is a versioned contract.
 
@@ -314,7 +342,7 @@ Breaking changes include:
 
 Breaking changes require a new interface version.
 
-## 13. Example session
+## 14. Example session
 
 For a known Instance Name:
 
