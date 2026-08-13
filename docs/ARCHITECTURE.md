@@ -1047,9 +1047,9 @@ Running activity uses a retriggerable hold interval. Paused activity uses a
 throttled indication suitable for wake or attention handling; events arriving
 during the throttle interval do not continuously extend it.
 
-These indications are mutually exclusive in normal operation and are available
-only while D-Bus integration is active. Exact property names, timing options,
-defaults, bounds, and transition rules belong to `docs/DBUS_INTERFACE.md`.
+These indications MUST remain mutually exclusive and are available only while
+D-Bus integration is active. Exact property names, timing options, defaults,
+bounds, and transition rules belong to `docs/DBUS_INTERFACE.md`.
 
 ### Device discovery integration
 

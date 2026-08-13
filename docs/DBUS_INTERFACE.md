@@ -287,6 +287,20 @@ unavailable, but MUST NOT prevent normal evdev-to-uinput forwarding.
 
 ## 9. Activity semantics
 
+Runtime activity is derived only from physical-source input. Virtual events
+generated for neutralization or synchronization are not activity.
+
+The activity properties are mode-scoped and MUST remain mutually exclusive:
+
+| `Paused` | Property eligible to become `true` | Property forced to `false` |
+|----------|------------------------------------|----------------------------|
+| `false` | `ActivityWhileRunning` | `ActivityWhilePaused` |
+| `true` | `ActivityWhilePaused` | `ActivityWhileRunning` |
+
+Source Availability does not select the activity mode. No new indication can be
+triggered while the source is unavailable because no physical-source events are
+received.
+
 ### Running activity
 
 Controlled by:
@@ -320,6 +334,63 @@ Meaning:
 - Additional activity during the throttle interval does not extend the interval.
 - The property returns to `false` when the throttle expires.
 - A later activity may assert it again.
+
+### Pause-state transitions
+
+When a successful pause transition commits `Paused=true`, the service MUST:
+
+1. cancel the running-activity timer;
+2. set `ActivityWhileRunning=false`;
+3. commit `Paused=true`;
+4. report all changed properties in one `PropertiesChanged` notification;
+5. send the successful method reply.
+
+Subsequent physical-source events may assert only `ActivityWhilePaused`.
+
+When a successful resume transition commits `Paused=false`, the service MUST:
+
+1. cancel the paused-activity throttle interval;
+2. set `ActivityWhilePaused=false`;
+3. complete required synchronization when a source is available;
+4. commit `Paused=false`;
+5. report all changed properties in one `PropertiesChanged` notification;
+6. send the successful method reply.
+
+Subsequent physical-source events may assert only `ActivityWhileRunning`.
+Resuming while the source is unavailable still clears
+`ActivityWhilePaused`; it does not assert running activity.
+
+A timer belongs to the pause mode in which it was created. Leaving that mode
+cancels it. A canceled or expired timer MUST NOT update a property after a later
+pause-state transition.
+
+Idempotent method calls do not disturb the active mode's timer or indication.
+Calling `Pause()` while already paused does not clear or restart
+`ActivityWhilePaused`. Calling `Resume()` while already unpaused does not clear
+or restart `ActivityWhileRunning`. The inactive property remains false.
+
+If required neutralization or synchronization fails, the pause-state transition
+is not committed and no successful activity-property transition is published.
+Fatal cleanup proceeds as defined in the Methods section.
+
+### Source loss
+
+Source loss does not change the selected activity mode. An indication already
+active for that mode completes its existing interval normally. No new indication
+is triggered while the source is absent. Source-loss neutralization is generated
+on the virtual side and does not count as activity.
+
+### D-Bus initialization
+
+When D-Bus activity tracking is initialized or reinitialized, both activity
+properties start as `false`. Earlier intervals are not reconstructed, and
+activity observed while D-Bus integration was unavailable is not replayed. The
+first eligible physical-source event after initialization begins the indication
+for the current pause mode.
+
+When a pause-state transition clears an active indication, the corresponding
+`PropertiesChanged` notification includes both `Paused` and the cleared activity
+property. Properties whose values did not change are not included.
 
 ## 10. Discovery
 
