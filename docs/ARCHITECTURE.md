@@ -511,38 +511,91 @@ ordering and must not turn persistent permission problems into infinite retries.
 ## Source compatibility after reconnect
 
 A persistent virtual device may be retained only if it can correctly represent
-the reconnected source.
+the reconnected source. Compatibility means exact equality of the externally
+relevant identity and event representation already exposed by the virtual
+device. It is not a subset relationship or an estimate that two sources are
+probably the same physical device.
 
-Compatibility must consider properties that affect event representation,
-including where relevant:
+The compatibility comparison is:
 
-- event types;
-- event codes;
-- absolute-axis definitions;
-- input properties;
-- identity/capability metadata used to construct the virtual device.
+| Field class | Required comparison |
+|-------------|---------------------|
+| Bus type | Exact equality |
+| Vendor identifier | Exact equality |
+| Product identifier | Exact equality |
+| Version identifier | Exact equality |
+| Unique identifier | Exact nullable-string equality |
+| Input properties | Exact set equality |
+| Event types | Exact set equality |
+| Event codes within every event type | Exact set equality |
+| Absolute-axis minimum | Exact equality |
+| Absolute-axis maximum | Exact equality |
+| Absolute-axis fuzz | Exact equality |
+| Absolute-axis flat | Exact equality |
+| Absolute-axis resolution | Exact equality |
+| Repeat delay and period | Exact equality |
+
+Exact set equality means that both additions and removals are incompatible. A
+virtual device with extra capabilities does not correctly represent a source
+that no longer provides them.
+
+Changes to bus type, vendor, product, version, or unique identifier require
+replacement even when event capabilities are unchanged. Retaining the old
+virtual device would expose stale source identity.
+
+Compatibility deliberately ignores runtime state and metadata that is not part
+of the represented virtual device:
+
+| Field | Treatment |
+|-------|-----------|
+| Current `EV_KEY` values | Ignore; synchronize as runtime state |
+| Current `EV_SW` values | Ignore; synchronize as runtime state |
+| Current absolute-axis values | Ignore; synchronize as runtime state |
+| Current multitouch contacts and slot values | Ignore; synchronize or suppress according to pause mode |
+| Source display name | Ignore; the virtual name is the configured Instance Name |
+| Source physical-location string | Ignore; it is not part of the virtual representation |
+| Configured source path | Ignore for compatibility; it selects the acquisition target |
+| Event timestamps | Ignore; they are transient event data |
+| Kernel-assigned event-node path | Ignore; it is a lifecycle artifact |
 
 If the source is compatible:
 
 ```text
-retain virtual device
-    -> initialize new source
-    -> resume forwarding
+initialize source
+    -> retain virtual device
+    -> if paused, consume and suppress source events
+    -> if unpaused, synchronize current state
+    -> begin forwarding only after synchronization succeeds
 ```
+
+A compatible reconnect does not produce a virtual-device removal/addition
+cycle.
 
 If the source is incompatible:
 
 ```text
-new source
+initialize source
     -> destroy old virtual device
     -> create replacement from new source
-    -> resume forwarding
+    -> if paused, consume and suppress source events
+    -> if unpaused, synchronize current state
+    -> begin forwarding only after synchronization succeeds
 ```
 
-Capability incompatibility is recoverable.
+Input consumers observe removal of the old virtual device and addition of the
+replacement. The replacement retains the configured Instance Name and virtual
+device name. The process, D-Bus endpoint, and configured source identity remain
+the same logical proxy instance. Linux input and udev already expose the device
+removal/addition cycle; the D-Bus interface does not duplicate it with a
+project-specific replacement signal.
 
-The session should terminate only if the required replacement virtual device
-cannot be created or another unrecoverable failure occurs.
+Identity or capability incompatibility is recoverable through replacement.
+
+If the required replacement cannot be created, the session MUST close the
+reconnected source and terminate with failure. It MUST NOT forward through the
+incompatible old device, retain a source without a usable virtual
+representation, or retry replacement indefinitely within the same lifecycle
+transition.
 
 ## Event forwarding
 
