@@ -91,9 +91,17 @@ validated before runtime startup.
 
 A valid Instance Name:
 
-- begins with an alphabetic character or underscore;
-- contains only letters, digits, underscores, and hyphens;
+- is between 1 and 79 ASCII bytes long;
+- begins with an ASCII letter or underscore;
+- contains only ASCII letters, digits, underscores, and hyphens;
 - is unique among simultaneously running proxy instances.
+
+Instance Names are case-sensitive. Whitespace is not permitted and is not
+trimmed. Names are not normalized, escaped, substituted, truncated, or
+case-converted. No Instance Names are reserved.
+
+Invalid names MUST be rejected before Instance Name ownership, startup output,
+source acquisition, or virtual-device creation begins.
 
 The Instance Name is used consistently for:
 
@@ -103,7 +111,12 @@ The Instance Name is used consistently for:
 - runtime diagnostics and logging.
 
 One validation routine establishes that the supplied value is suitable for every
-representation derived from the Instance Name.
+representation derived from the Instance Name. Each derived representation uses
+the validated Instance Name verbatim.
+
+Uniqueness comparisons use the exact, case-sensitive Instance Name. Because
+derived identifiers preserve the validated name without transformation, two
+syntactically different valid names do not map to the same derived identifier.
 
 ## 6. Public properties
 
