@@ -59,6 +59,14 @@ Interface
 net.controlforge.InputProxy1.Instance
 ```
 
+The project controls the `controlforge.net` domain. The corresponding
+`net.controlforge` D-Bus namespace is the project's permanent public namespace.
+
+`InputProxy1` identifies major version 1 of the complete public D-Bus API
+namespace, including service names and project-specific interface names.
+Backward-compatible additions retain this namespace. An incompatible change to
+either contract requires a new major-version namespace.
+
 The well-known service name is the stable D-Bus address of the logical proxy
 instance.
 
