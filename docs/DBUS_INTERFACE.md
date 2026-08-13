@@ -162,39 +162,100 @@ virtual device name is derived directly from the same Instance Name.
 
 ## 7. Methods
 
-The runtime-control interface provides deterministic, idempotent methods.
+The runtime-control interface provides synchronous, deterministic, idempotent
+state requests.
 
-Calling `Pause()` while already paused or `Resume()` while already forwarding is
-not an error and does not alter the resulting runtime state.
+| Method | Input signature | Output signature | Successful completion |
+|--------|-----------------|------------------|-----------------------|
+| `Pause` | `()` | `()` | The requested paused state has been committed. |
+| `Resume` | `()` | `()` | The requested unpaused state has been committed. |
 
-Process lifetime is intentionally outside the scope of this interface.
+The corresponding project-specific introspection members are:
+
+```xml
+<method name="Pause"/>
+<method name="Resume"/>
+```
+
+Neither method accepts options, returns state, or supports no-reply semantics.
+Clients obtain resulting runtime state through the public properties.
+
+For a successful state change, the service performs operations in this order:
+
+1. complete required neutralization or synchronization;
+2. commit the new `Paused` value;
+3. emit the corresponding `PropertiesChanged` notification;
+4. send the successful method reply.
+
+The successful reply confirms that the requested state has been committed.
+Clients reconstructing state after a connection or service restart SHOULD read
+the current properties rather than relying on earlier notifications.
+
+Process lifetime remains outside the requested control surface. Fatal method
+failure may nevertheless terminate the process as defined below.
 
 ### Pause()
 
-Requests the paused state.
+`Pause()` requests paused operation.
 
-Requirements:
+When the source is available, successful completion means:
 
-- Idempotent.
-- Safe to call repeatedly.
-- Neutralizes active virtual interaction before suppressing forwarding.
+- required neutralization has completed;
+- `Paused` is `true`;
+- source events continue to be consumed and are suppressed.
+
+When the source is unavailable, `Pause()` records `Paused=true` without treating
+Source Availability as a method failure. A returning source remains suppressed.
+
+Calling `Pause()` while already paused succeeds without repeating
+neutralization.
 
 ### Resume()
 
-Requests forwarding to resume.
+`Resume()` requests unpaused operation.
 
-Requirements:
+When the source is available, successful completion means:
 
-- Idempotent.
-- Safe to call repeatedly.
-- When the source is available, synchronizes the virtual device to current
-  physical-source state before changing `Paused` to `false` and resuming
-  forwarding.
-- When the source is unavailable, changes `Paused` to `false` without treating
-  Source Availability as a method failure. No forwarding occurs until a source
-  returns and required synchronization succeeds.
-- Does not replay activity that occurred while forwarding was suppressed.
-- Does not repeat synchronization when the instance is already unpaused.
+- required synchronization has completed, including its final `SYN_REPORT`;
+- `Paused` is `false`;
+- normal forwarding may begin.
+
+When the source is unavailable, `Resume()` records `Paused=false` without
+treating Source Availability as a method failure. `SourceAvailable` remains
+false, no forwarding occurs, and required synchronization precedes forwarding
+when a source returns.
+
+Calling `Resume()` while already unpaused succeeds without repeating
+synchronization. Activity that occurred while forwarding was suppressed is not
+replayed.
+
+### Method errors
+
+The methods define the following service-level errors:
+
+| Error | Meaning | Session outcome |
+|-------|---------|-----------------|
+| `org.freedesktop.DBus.Error.AccessDenied` | The caller is unauthorized or authenticated caller credentials cannot be obtained. | The session continues unchanged. |
+| `net.controlforge.InputProxy1.Error.StateCorrectionFailed` | Required neutralization or synchronization could not be completed safely. | The virtual device is destroyed and the session terminates. |
+
+`StateCorrectionFailed` covers unavailable or incomplete mandatory state, a
+corrective event-write failure, failure to emit the final synchronization
+boundary, and source loss during a partially applied synchronization. The
+human-readable error message and runtime diagnostics SHOULD identify the failed
+operation without creating additional public error names.
+
+An operation that fails with `StateCorrectionFailed` does not commit a new
+`Paused` value or emit a successful property transition.
+
+When state correction fails during a method call, the service SHOULD attempt to
+return `net.controlforge.InputProxy1.Error.StateCorrectionFailed` before fatal
+cleanup disconnects it from the bus. Delivery cannot be guaranteed while the
+service is terminating. Clients MUST treat receipt of `StateCorrectionFailed`
+and loss of the service owner before a reply as failed operations with the same
+fatal session outcome.
+
+Standard errors generated by D-Bus transport or dispatch remain defined by
+D-Bus and are not additional project method errors.
 
 ## 8. Authorization
 
@@ -313,14 +374,8 @@ well-known service name and detect when ownership returns.
 A client performing enumeration SHOULD refresh its discovered instance set when
 bus-name ownership changes.
 
-`Pause()` and `Resume()` remain idempotent whenever the service is available.
-
-Failure to obtain required state or complete neutralization or synchronization
-is fatal to the proxy session. A `Pause()` or `Resume()` call that encounters
-such a failure MUST NOT return success or publish the requested transition as
-successful. The process destroys the virtual device and terminates, causing its
-well-known service-name ownership to disappear. Clients MUST tolerate either a
-method error or service loss while the fatal cleanup completes.
+Method completion, idempotence, and fatal state-correction errors are defined in
+the Methods section.
 
 ## 12. Client expectations
 
