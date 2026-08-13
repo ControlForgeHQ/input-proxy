@@ -89,7 +89,7 @@ small operator-facing input-device utility.
   observed system state supports a safe recommendation.
 - Treat the Version 0.1 runtime syntax as superseded by:
 
-```text id="gvw85a"
+```text
 input-proxy run --source PATH --name NAME [--verbose]
 ```
 
@@ -107,7 +107,7 @@ input-proxy run --source PATH --name NAME [--verbose]
 
 - Add:
 
-```text id="ckg0ev"
+```text
 input-proxy list
 ```
 
@@ -126,7 +126,7 @@ input-proxy list
 
 - Add:
 
-```text id="u2a88v"
+```text
 input-proxy inspect PATH
 ```
 
