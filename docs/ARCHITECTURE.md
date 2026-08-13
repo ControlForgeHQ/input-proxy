@@ -508,6 +508,39 @@ Persistent permission denial after the settling period is fatal.
 This behavior exists specifically to tolerate demonstrated hotplug/udev
 ordering and must not turn persistent permission problems into infinite retries.
 
+## Lifecycle failure policy
+
+The proxy session classifies failures according to the operation and lifecycle
+context in which they occur. A low-level error is recoverable only when the
+session has a defined transition that preserves its correctness invariants.
+Errors must not be retried merely because they might be temporary.
+
+The runtime applies the following policy:
+
+| Originating operation | Result category | Session policy | Retry policy | Virtual-device lifetime | Diagnostic and process result |
+|-----------------------|-----------------|----------------|--------------|-------------------------|-------------------------------|
+| Initial source open or reacquisition | Source unavailable | Remain in `WAITING_FOR_SOURCE`. | Retry at the normal source-wait cadence until shutdown. | Retain an existing virtual device; none exists during initial acquisition. | Report the wait state once on standard output without log flooding; no process exit. |
+| Initial source open | Permission denied | Treat as a configuration or access failure. | Do not retry. | No virtual device has been created. | Report the error on standard error and terminate with failure. |
+| Source reacquisition | Permission denied | Allow the bounded reconnect-settling behavior defined above. | Retry only until the settling deadline. | Retain the existing neutralized virtual device during settling. | Use verbose lifecycle diagnostics during settling; persistent denial is reported on standard error and terminates with failure. |
+| Initial source open or reacquisition | Generic open or source-initialization failure | Treat as fatal because the session has no defined evidence that retry is safe or useful. | Do not retry automatically. | Destroy any retained virtual device during cleanup. | Report the failed operation on standard error and terminate with failure. |
+| Normal read or synchronization-recovery read | Source disconnected | Enter the source-loss lifecycle. Neutralize the virtual device, close the source, and wait for reacquisition. | Retry source acquisition at the normal source-wait cadence after successful neutralization. | Retain the neutralized virtual device. | Report the disconnect as a lifecycle event on standard output; no process exit. |
+| Normal read or synchronization-recovery read | Generic read failure | Treat as fatal. A read failure that is not classified as source disconnection must not be converted into an indefinite reconnect loop. | Do not retry. | Destroy the virtual device and close the source during cleanup. | Report the failed read on standard error and terminate with failure. |
+| Normal event forwarding | Virtual-device event-write failure | Treat as fatal because the kernel-visible virtual state may no longer match the forwarded source stream. | Do not retry the write or replace the virtual device in place. | Destroy the virtual device and close the source during cleanup. | Report the failed write on standard error and terminate with failure. |
+| Initial virtual-device creation | Creation failure | Close the source and terminate. | Do not retry within the session. | Release any partially initialized virtual-device resources. | Report the creation failure on standard error and terminate with failure. |
+| Reconnect compatibility comparison | Compatible source | Retain the existing virtual device and continue according to pause state. | Not applicable. | Retain the existing virtual device. | Report normal reconnection; no process exit. |
+| Reconnect compatibility comparison | Incompatible source | Perform the replacement transition defined below. | Make one replacement attempt for that reconnect transition. | Destroy the old virtual device before creating its replacement. | Successful replacement continues the session; replacement failure is reported on standard error and terminates with failure. |
+| Neutralization or required state synchronization | State-correction failure | Apply the fail-closed policy defined in `State-correction failure`. | Do not retry or replace in place. | Destroy the virtual device and close the source. | Report a fatal diagnostic and terminate with failure. |
+| Session setup or runtime policy | Invalid internal state, resource exhaustion, or another internal failure | Treat as fatal unless another section explicitly defines a recoverable transition. | Do not retry automatically. | Release all resources owned by the session. | Report the failure on standard error and terminate with failure. |
+
+A fatal result always enters cleanup, releases Instance Name and D-Bus ownership,
+destroys any virtual device, closes any physical source, and returns a nonzero
+process exit status. A normal `SIGINT` or `SIGTERM` shutdown performs the same
+resource cleanup but returns success.
+
+Automatic restart after a fatal result belongs to an external supervisor or an
+operator. The runtime must not introduce an unbounded retry loop for an error
+category that this architecture classifies as fatal.
+
 ## Source compatibility after reconnect
 
 A persistent virtual device may be retained only if it can correctly represent
