@@ -235,7 +235,6 @@ The methods define the following service-level errors:
 
 | Error | Meaning | Session outcome |
 |-------|---------|-----------------|
-| `org.freedesktop.DBus.Error.AccessDenied` | The caller is unauthorized or authenticated caller credentials cannot be obtained. | The session continues unchanged. |
 | `net.controlforge.InputProxy1.Error.StateCorrectionFailed` | Required neutralization or synchronization could not be completed safely. | The virtual device is destroyed and the session terminates. |
 
 `StateCorrectionFailed` covers unavailable or incomplete mandatory state, a
@@ -259,25 +258,20 @@ D-Bus and are not additional project method errors.
 
 ## 8. Authorization
 
-Public properties and the standard D-Bus interfaces are available to every
-client that system-bus policy permits to communicate with the service.
+System-bus policy is authoritative for all access to the exported interface,
+including public properties, standard D-Bus interfaces, `Pause()`, and
+`Resume()`. The policy determines which clients may send messages to each
+instance and which runtime processes may own project service names.
 
-`Pause()` and `Resume()` change runtime state. `input-proxy` MUST authorize each
-call using the caller's authenticated Unix credentials. A call is authorized
-only when the caller's Unix user identifier:
+`input-proxy` MUST NOT apply a second authorization rule based on caller Unix
+credentials, user or group identifiers, polkit, or interactive confirmation. A
+method call delivered to the service by the system bus is authorized and is
+processed according to the method and session-state semantics defined by this
+interface.
 
-- is `0`; or
-- equals the effective user identifier of the running `input-proxy` process.
-
-If caller credentials cannot be obtained or the caller is not authorized, the
-method MUST return `org.freedesktop.DBus.Error.AccessDenied` without changing
-proxy state.
-
-Authorization is non-interactive. The methods MUST NOT invoke polkit or request
-user confirmation.
-
-System-bus policy may further restrict service-name ownership or message
-delivery, but it MUST NOT broaden the service-level authorization rule.
+Rejected clients receive the access error selected by the system bus without
+the request reaching `input-proxy`. Such transport-policy errors are standard
+D-Bus errors and are not service-level method errors defined by this interface.
 
 Version 0.3 does not install or modify system-bus policy. An administrator or
 development environment must provide policy that permits the intended runtime
