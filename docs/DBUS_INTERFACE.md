@@ -315,6 +315,13 @@ bus-name ownership changes.
 
 `Pause()` and `Resume()` remain idempotent whenever the service is available.
 
+Failure to obtain required state or complete neutralization or synchronization
+is fatal to the proxy session. A `Pause()` or `Resume()` call that encounters
+such a failure MUST NOT return success or publish the requested transition as
+successful. The process destroys the virtual device and terminates, causing its
+well-known service-name ownership to disappear. Clients MUST tolerate either a
+method error or service loss while the fatal cleanup completes.
+
 ## 12. Client expectations
 
 Clients MUST NOT assume:

@@ -417,6 +417,52 @@ Parallel shadow state should be introduced only if a concrete Linux input state
 is demonstrated to be unavailable or unreliable through the kernel-visible
 virtual device.
 
+## State-correction failure
+
+State correction includes:
+
+- neutralization after source loss;
+- neutralization when entering paused operation;
+- synchronization before an unpaused session begins forwarding.
+
+Selective neutralization requires complete kernel-visible virtual state for all
+supported `EV_KEY` controls and, for Type-B multitouch devices, the tracking
+identifier of every slot. A query result is incomplete when the virtual device
+advertises a required capability but its current value cannot be obtained.
+
+Synchronization requires complete current physical-source state for the
+stateful controls defined by the Resume semantics. Querying current virtual
+state to avoid redundant synchronization events is optional. If that comparison
+state is unavailable, the session may emit a complete source-state
+synchronization instead.
+
+The session MUST NOT treat unavailable or incomplete state as inactive or
+neutral. It MUST NOT compensate by blindly resetting supported values, ending
+unverified multitouch contacts, replaying stored events, or continuing with a
+partially completed correction sequence.
+
+The virtual device can no longer be trusted when:
+
+- a mandatory state query fails or returns incomplete state;
+- writing any required neutralization or synchronization event fails;
+- the final `EV_SYN` / `SYN_REPORT` cannot be emitted;
+- the physical source disappears during synchronization after the virtual
+  device may have been partially changed.
+
+Any such failure is fatal to the proxy session. The session MUST:
+
+1. stop or withhold normal forwarding;
+2. destroy the virtual device;
+3. close the physical source if it remains open;
+4. report a clear fatal diagnostic identifying the failed operation;
+5. terminate with a failure result.
+
+The session MUST NOT attempt in-place continuation or automatic virtual-device
+replacement after a state-correction failure. Process cleanup releases Instance
+Name ownership and any D-Bus service-name ownership normally. A process
+supervisor or operator may subsequently start a new session from a clean
+lifecycle boundary.
+
 ## Reconnect
 
 After source loss, the session waits for the configured source to return.
