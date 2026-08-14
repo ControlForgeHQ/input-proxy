@@ -7,6 +7,12 @@ struct input_proxy_session;
 struct input_proxy_source_device;
 struct input_proxy_virtual_device;
 
+enum input_proxy_result input_proxy_session_synchronize_state(
+    struct input_proxy_session *session,
+    const struct input_proxy_source_device *source_device,
+    struct input_proxy_virtual_device *virtual_device
+);
+
 /*
  * Read and process one event from an active source/virtual device pair.
  */

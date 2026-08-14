@@ -5,6 +5,7 @@
 #include <input_proxy/virtual_device.h>
 
 #include "proxy_session_internal.h"
+#include "source_device_internal.h"
 
 #include <linux/input.h>
 #include <stdio.h>
@@ -17,6 +18,8 @@ static enum input_proxy_result write_result;
 static enum input_proxy_result open_result;
 static enum input_proxy_result create_result;
 static enum input_proxy_result neutralize_result;
+static enum input_proxy_result capture_state_result;
+static enum input_proxy_result state_write_result;
 static int fail_create_call;
 static bool compatibility_results[8];
 static enum input_proxy_result open_results[32];
@@ -25,7 +28,10 @@ static enum input_proxy_result sync_read_results[8];
 static struct input_event sync_events[8];
 static struct input_event source_event;
 static struct input_event written_events[8];
-static char operations[16];
+static struct input_event state_written_events[16];
+static struct input_event captured_state_events[8];
+static size_t captured_state_event_count;
+static char operations[64];
 static int operation_count;
 static int open_calls;
 static int open_result_count;
@@ -34,8 +40,14 @@ static int compatibility_calls;
 static int close_calls;
 static int destroy_calls;
 static int neutralize_calls;
+static int capture_state_calls;
 static int read_calls;
 static int write_calls;
+static int state_write_calls;
+static size_t state_writes_remaining;
+static int fail_state_write_call;
+static char barrier_operations[64];
+static int barrier_operation_count;
 static int read_result_count;
 static int sync_read_calls;
 static int sync_read_result_count;
@@ -114,6 +126,32 @@ void input_proxy_source_device_close(struct input_proxy_source_device *device)
     }
 }
 
+enum input_proxy_result input_proxy_source_device_capture_state(
+    const struct input_proxy_source_device *device,
+    struct input_proxy_source_state *state)
+{
+    if (device != test_source_device || state == NULL) {
+        return INPUT_PROXY_ERROR_INTERNAL;
+    }
+
+    capture_state_calls++;
+    barrier_operations[barrier_operation_count++] = 'Q';
+    if (capture_state_result == INPUT_PROXY_SUCCESS) {
+        state->events = captured_state_events;
+        state->event_count = captured_state_event_count;
+        state_writes_remaining = captured_state_event_count + 1;
+    }
+    return capture_state_result;
+}
+
+void input_proxy_source_state_destroy(struct input_proxy_source_state *state)
+{
+    if (state != NULL) {
+        state->events = NULL;
+        state->event_count = 0;
+    }
+}
+
 enum input_proxy_result input_proxy_virtual_device_create(
     struct input_proxy_virtual_device **device,
     const struct input_proxy_source_device *source_device,
@@ -174,6 +212,7 @@ enum input_proxy_result input_proxy_source_device_read_event(
         read_result = read_results[read_calls];
     }
     read_calls++;
+    barrier_operations[barrier_operation_count++] = 'R';
 
     if (read_result == INPUT_PROXY_SUCCESS) {
         *event = source_event;
@@ -206,10 +245,25 @@ enum input_proxy_result input_proxy_virtual_device_write_event(
 {
     (void)device;
 
+    if (state_writes_remaining > 0) {
+        if (state_write_calls < 16) {
+            state_written_events[state_write_calls] = *event;
+        }
+        state_write_calls++;
+        state_writes_remaining--;
+        barrier_operations[barrier_operation_count++] =
+            event->type == EV_SYN && event->code == SYN_REPORT ? 'B' : 'T';
+        if (state_write_calls == fail_state_write_call) {
+            return INPUT_PROXY_ERROR_EVENT_WRITE_FAILED;
+        }
+        return state_write_result;
+    }
+
     if (write_calls < 8) {
         written_events[write_calls] = *event;
     }
     write_calls++;
+    barrier_operations[barrier_operation_count++] = 'F';
 
     if (shutdown_after_write) {
         input_proxy_session_request_shutdown(running_session);
@@ -252,6 +306,8 @@ static void reset_runtime(void)
     open_result = INPUT_PROXY_SUCCESS;
     create_result = INPUT_PROXY_SUCCESS;
     neutralize_result = INPUT_PROXY_SUCCESS;
+    capture_state_result = INPUT_PROXY_SUCCESS;
+    state_write_result = INPUT_PROXY_SUCCESS;
     fail_create_call = 0;
     read_result = INPUT_PROXY_SUCCESS;
     write_result = INPUT_PROXY_SUCCESS;
@@ -263,8 +319,14 @@ static void reset_runtime(void)
     close_calls = 0;
     destroy_calls = 0;
     neutralize_calls = 0;
+    capture_state_calls = 0;
+    captured_state_event_count = 0;
     read_calls = 0;
     write_calls = 0;
+    state_write_calls = 0;
+    state_writes_remaining = 0;
+    fail_state_write_call = 0;
+    barrier_operation_count = 0;
     read_result_count = 0;
     sync_read_calls = 0;
     sync_read_result_count = 0;
@@ -278,6 +340,8 @@ static void reset_runtime(void)
     shutdown_after_source_sleep_calls = 0;
     monotonic_time_ns = 0;
     memset(operations, 0, sizeof(operations));
+    memset(state_written_events, 0, sizeof(state_written_events));
+    memset(barrier_operations, 0, sizeof(barrier_operations));
     memset(compatibility_results, 0, sizeof(compatibility_results));
 }
 
@@ -418,6 +482,77 @@ int main(void)
     if (session == NULL) {
         return 1;
     }
+
+    captured_state_events[0] = (struct input_event) {
+        .type = EV_KEY, .code = KEY_A, .value = 1
+    };
+    captured_state_events[1] = (struct input_event) {
+        .type = EV_SW, .code = SW_LID, .value = 1
+    };
+    captured_state_events[2] = (struct input_event) {
+        .type = EV_ABS, .code = ABS_X, .value = 321
+    };
+    captured_state_event_count = 3;
+    failures += expect_result(
+        "current-state synchronization",
+        input_proxy_session_synchronize_state(
+            session,
+            source_device,
+            virtual_device
+        ),
+        INPUT_PROXY_SUCCESS
+    );
+    if (capture_state_calls != 1 || state_write_calls != 4 ||
+        memcmp(&state_written_events[0], &captured_state_events[0],
+               sizeof(state_written_events[0])) != 0 ||
+        memcmp(&state_written_events[1], &captured_state_events[1],
+               sizeof(state_written_events[1])) != 0 ||
+        memcmp(&state_written_events[2], &captured_state_events[2],
+               sizeof(state_written_events[2])) != 0 ||
+        state_written_events[3].type != EV_SYN ||
+        state_written_events[3].code != SYN_REPORT) {
+        fprintf(stderr, "current-state synchronization: bad event sequence\n");
+        failures++;
+    }
+
+    capture_state_result = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+    previous_write_calls = state_write_calls;
+    failures += expect_result(
+        "current-state query failure",
+        input_proxy_session_synchronize_state(
+            session,
+            source_device,
+            virtual_device
+        ),
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED
+    );
+    if (state_write_calls != previous_write_calls) {
+        fprintf(stderr, "current-state query failure: unexpected write\n");
+        failures++;
+    }
+
+    capture_state_result = INPUT_PROXY_SUCCESS;
+    state_write_result = INPUT_PROXY_ERROR_EVENT_WRITE_FAILED;
+    failures += expect_result(
+        "current-state write failure",
+        input_proxy_session_synchronize_state(
+            session,
+            source_device,
+            virtual_device
+        ),
+        INPUT_PROXY_ERROR_EVENT_WRITE_FAILED
+    );
+    state_write_result = INPUT_PROXY_SUCCESS;
+    captured_state_event_count = 0;
+    write_calls = 0;
+    state_write_calls = 0;
+    state_writes_remaining = 0;
+    barrier_operation_count = 0;
+    capture_state_calls = 0;
+    operation_count = 0;
+    memset(written_events, 0, sizeof(written_events));
+    memset(operations, 0, sizeof(operations));
+    memset(barrier_operations, 0, sizeof(barrier_operations));
 
     failures += expect_result(
         "null session",
@@ -632,7 +767,9 @@ int main(void)
         INPUT_PROXY_SUCCESS
     );
     if (read_calls != 1 || write_calls != 1 || close_calls != 1 ||
-        destroy_calls != 1 || strcmp(operations, "DC") != 0) {
+        destroy_calls != 1 || capture_state_calls != 1 ||
+        strcmp(barrier_operations, "QBRF") != 0 ||
+        strcmp(operations, "DC") != 0) {
         fprintf(stderr, "shutdown while actively forwarding: bad cleanup\n");
         failures++;
     }
@@ -873,7 +1010,8 @@ int main(void)
         read_calls != 7 || write_calls != 3 || destroy_calls != 1 ||
         close_calls != 3 || sync_read_calls != 2 ||
         event_sleep_calls != 1 || source_sleep_calls != 2 ||
-        neutralize_calls != 2 || sleep_duration_failures != 0 ||
+        neutralize_calls != 2 || capture_state_calls != 3 ||
+        sleep_duration_failures != 0 ||
         strcmp(operations, "NCNCDC") != 0) {
         fprintf(stderr, "disconnect and reconnect: bad lifecycle\n");
         failures++;
@@ -927,7 +1065,8 @@ int main(void)
     );
     if (open_calls != 3 || create_calls != 3 || compatibility_calls != 2 ||
         read_calls != 3 || destroy_calls != 3 || close_calls != 3 ||
-        neutralize_calls != 2 || strcmp(operations, "NCDNCDDC") != 0) {
+        neutralize_calls != 2 || capture_state_calls != 3 ||
+        strcmp(operations, "NCDNCDDC") != 0) {
         fprintf(stderr, "incompatible reconnect: bad lifecycle\n");
         failures++;
     }
@@ -1092,6 +1231,53 @@ int main(void)
     if (neutralize_calls != 1 || close_calls != 1 || destroy_calls != 1 ||
         strcmp(operations, "NCD") != 0) {
         fprintf(stderr, "neutralization write failure: bad lifecycle\n");
+        failures++;
+    }
+
+    reset_runtime();
+    capture_state_result = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+    failures += run_runtime_test(
+        "startup state query failure",
+        &config,
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED
+    );
+    if (capture_state_calls != 1 || state_write_calls != 0 || read_calls != 0 ||
+        close_calls != 1 || destroy_calls != 1 ||
+        strcmp(operations, "DC") != 0) {
+        fprintf(stderr, "startup state query failure: bad lifecycle\n");
+        failures++;
+    }
+
+    reset_runtime();
+    state_write_result = INPUT_PROXY_ERROR_EVENT_WRITE_FAILED;
+    failures += run_runtime_test(
+        "startup synchronization write failure",
+        &config,
+        INPUT_PROXY_ERROR_EVENT_WRITE_FAILED
+    );
+    if (capture_state_calls != 1 || state_write_calls != 1 || read_calls != 0 ||
+        close_calls != 1 || destroy_calls != 1 ||
+        strcmp(operations, "DC") != 0) {
+        fprintf(stderr, "startup synchronization write failure: bad lifecycle\n");
+        failures++;
+    }
+
+    reset_runtime();
+    captured_state_events[0] = (struct input_event) {
+        .type = EV_KEY, .code = KEY_A, .value = 1
+    };
+    captured_state_event_count = 1;
+    fail_state_write_call = 2;
+    failures += run_runtime_test(
+        "startup synchronization boundary failure",
+        &config,
+        INPUT_PROXY_ERROR_EVENT_WRITE_FAILED
+    );
+    if (capture_state_calls != 1 || state_write_calls != 2 || read_calls != 0 ||
+        close_calls != 1 || destroy_calls != 1 ||
+        strcmp(barrier_operations, "QTB") != 0 ||
+        strcmp(operations, "DC") != 0) {
+        fprintf(stderr, "startup synchronization boundary failure: bad lifecycle\n");
         failures++;
     }
 
