@@ -43,6 +43,9 @@ int main(void)
         .record_count = 3
     };
     const struct input_proxy_runtime_snapshot unavailable_snapshot = {0};
+    const struct input_proxy_runtime_snapshot empty_snapshot = {
+        .available = true
+    };
     int failures = 0;
 
     if (!input_proxy_should_suggest_run(true, true, 0) ||
@@ -188,6 +191,17 @@ int main(void)
     };
 
     stream = open_memstream(&output, &output_size);
+    if (stream == NULL) return 1;
+    input_proxy_print_runtime_associations(
+        stream, &empty_snapshot, path, by_id_path);
+    fclose(stream);
+    if (output[0] != '\0') {
+        fprintf(stderr, "no-match runtime association output was not silent\n");
+        failures++;
+    }
+    free(output); output = NULL; output_size = 0;
+
+    stream = open_memstream(&output, &output_size);
     error_stream = open_memstream(&error, &error_size);
     if (failures || stream == NULL || error_stream == NULL) return 1;
     result = input_proxy_inspect_device(stream, error_stream, path, sysfs, root,
@@ -210,7 +224,9 @@ int main(void)
         strstr(output, "NOT READY: runtime access issues must be resolved.") == NULL ||
         strstr(output, "Runtime accessibility remediation") == NULL ||
         strstr(output, "Libinput remediation") == NULL ||
-        strstr(output, "Running input-proxy instances:\n") == NULL ||
+        strstr(output, "Associated proxy instances\n") == NULL ||
+        strstr(output, "Associated proxy instances:\n") != NULL ||
+        strstr(output, "Running input-proxy instances") != NULL ||
         strstr(output, "  EventSource [") == NULL ||
         strstr(output, path) == NULL ||
         strstr(output, "  PersistentSource [") == NULL ||
@@ -268,6 +284,7 @@ int main(void)
                 strstr(output, aliases[alias_index]) == NULL ||
                 strstr(output, "Event node:") == NULL ||
                 strstr(output, path) == NULL ||
+                strstr(output, "Associated proxy instances\n") == NULL ||
                 strstr(output, "  EventSource [") == NULL ||
                 strstr(output, "  PersistentSource [") == NULL ||
                 strstr(output, "Unrelated") != NULL || error[0] != '\0') {

@@ -418,6 +418,41 @@ bool input_proxy_should_suggest_run(
         associated_instance_count == 0;
 }
 
+void input_proxy_print_runtime_associations(
+    FILE *stream,
+    const struct input_proxy_runtime_snapshot *snapshot,
+    const char *event_node,
+    const char *preferred_source)
+{
+    size_t index;
+    bool heading_printed = false;
+
+    if (stream == NULL || snapshot == NULL || event_node == NULL) {
+        return;
+    }
+    if (!snapshot->available) {
+        fputs("Runtime instance information unavailable: system D-Bus could "
+            "not be queried.\n\n", stream);
+        return;
+    }
+    for (index = 0; index < snapshot->record_count; ++index) {
+        if (!input_proxy_runtime_record_matches_device(
+                &snapshot->records[index], event_node, preferred_source)) {
+            continue;
+        }
+        if (!heading_printed) {
+            print_heading(stream, "Associated proxy instances");
+            heading_printed = true;
+        }
+        fprintf(stream, "  %s [%s]\n",
+            snapshot->records[index].instance_name,
+            snapshot->records[index].source_path);
+    }
+    if (heading_printed) {
+        fputc('\n', stream);
+    }
+}
+
 static bool read_udev_properties(const char *root, const struct stat *status,
                                  FILE *stream, char *vendor, size_t vendor_size,
                                  char *model, size_t model_size,
@@ -675,7 +710,7 @@ enum input_proxy_result input_proxy_inspect_device(
     }
     fputc('\n', stream);
 
-    input_proxy_runtime_print_inspect(stream, runtime_snapshot,
+    input_proxy_print_runtime_associations(stream, runtime_snapshot,
         event_node, persistent_path);
 
     if (device != NULL) libevdev_free(device);

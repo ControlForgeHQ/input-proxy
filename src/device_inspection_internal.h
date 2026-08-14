@@ -43,6 +43,13 @@ bool input_proxy_should_suggest_run(
     size_t associated_instance_count
 );
 
+void input_proxy_print_runtime_associations(
+    FILE *stream,
+    const struct input_proxy_runtime_snapshot *snapshot,
+    const char *event_node,
+    const char *preferred_source
+);
+
 enum input_proxy_result input_proxy_inspect_device(
     FILE *stream,
     FILE *error_stream,

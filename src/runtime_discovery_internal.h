@@ -34,8 +34,9 @@ size_t input_proxy_runtime_association_count(
     const struct input_proxy_runtime_snapshot *snapshot,
     const char *event_node,
     const char *preferred_source);
-void input_proxy_runtime_print_inspect(
-    FILE *stream, const struct input_proxy_runtime_snapshot *snapshot,
-    const char *event_node, const char *preferred_source);
+bool input_proxy_runtime_record_matches_device(
+    const struct input_proxy_runtime_record *record,
+    const char *event_node,
+    const char *preferred_source);
 
 #endif

@@ -192,7 +192,7 @@ void input_proxy_runtime_print_list(
     fputc('\n', stream);
 }
 
-static bool record_matches_device(
+bool input_proxy_runtime_record_matches_device(
     const struct input_proxy_runtime_record *record,
     const char *event_node,
     const char *preferred_source)
@@ -214,43 +214,10 @@ size_t input_proxy_runtime_association_count(
         return 0;
     }
     for (index = 0; index < snapshot->record_count; ++index) {
-        if (record_matches_device(
+        if (input_proxy_runtime_record_matches_device(
                 &snapshot->records[index], event_node, preferred_source)) {
             count++;
         }
     }
     return count;
-}
-
-void input_proxy_runtime_print_inspect(
-    FILE *stream, const struct input_proxy_runtime_snapshot *snapshot,
-    const char *event_node, const char *preferred_source)
-{
-    size_t index;
-    bool heading_printed = false;
-
-    if (stream == NULL || snapshot == NULL || event_node == NULL) {
-        return;
-    }
-    if (!snapshot->available) {
-        fputs("Runtime instance information unavailable: system D-Bus could "
-            "not be queried.\n\n", stream);
-        return;
-    }
-    for (index = 0; index < snapshot->record_count; ++index) {
-        if (!record_matches_device(
-                &snapshot->records[index], event_node, preferred_source)) {
-            continue;
-        }
-        if (!heading_printed) {
-            fputs("Running input-proxy instances:\n", stream);
-            heading_printed = true;
-        }
-        fprintf(stream, "  %s [%s]\n",
-            snapshot->records[index].instance_name,
-            snapshot->records[index].source_path);
-    }
-    if (heading_printed) {
-        fputc('\n', stream);
-    }
 }

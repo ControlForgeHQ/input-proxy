@@ -53,24 +53,6 @@ static char *render_list(const struct input_proxy_runtime_snapshot *snapshot)
     return output;
 }
 
-static char *render_inspect(
-    const struct input_proxy_runtime_snapshot *snapshot,
-    const char *event_node,
-    const char *preferred_source)
-{
-    char *output = NULL;
-    size_t output_size = 0;
-    FILE *stream = open_memstream(&output, &output_size);
-
-    if (stream == NULL) {
-        return NULL;
-    }
-    input_proxy_runtime_print_inspect(
-        stream, snapshot, event_node, preferred_source);
-    fclose(stream);
-    return output;
-}
-
 static int test_discovery_filtering_race_and_sorting(void)
 {
     static const char *const names[] = {
@@ -93,7 +75,6 @@ static int test_discovery_filtering_race_and_sorting(void)
     struct lookup_fixture fixture = {entries, 4, 0};
     struct input_proxy_runtime_snapshot snapshot;
     char *list_output;
-    char *inspect_output;
     const char *alpha_position;
     const char *zulu_position;
     int failures = 0;
@@ -113,8 +94,6 @@ static int test_discovery_filtering_race_and_sorting(void)
     }
 
     list_output = render_list(&snapshot);
-    inspect_output = render_inspect(
-        &snapshot, "/dev/input/event3", "/dev/input/event9");
     alpha_position = list_output == NULL ? NULL : strstr(list_output, "Alpha");
     zulu_position = list_output == NULL ? NULL : strstr(list_output, "Zulu");
     if (list_output == NULL ||
@@ -129,22 +108,14 @@ static int test_discovery_filtering_race_and_sorting(void)
             list_output == NULL ? "(null)\n" : list_output);
         failures++;
     }
-    if (inspect_output == NULL ||
-        strcmp(inspect_output,
-            "Running input-proxy instances:\n"
-            "  Alpha [/dev/input/event3]\n"
-            "  FinalComponent [/dev/input/event9]\n"
-            "  Zulu [/dev/input/event3]\n\n") != 0 ||
-        input_proxy_runtime_association_count(&snapshot,
+    if (input_proxy_runtime_association_count(&snapshot,
             "/dev/input/event3", "/dev/input/event9") != 3 ||
         input_proxy_runtime_association_count(&snapshot,
             "/dev/input/event0", "/dev/input/by-id/missing") != 0) {
-        fprintf(stderr, "runtime inspect formatting failed:\n%s",
-            inspect_output == NULL ? "(null)\n" : inspect_output);
+        fprintf(stderr, "runtime association matching failed\n");
         failures++;
     }
     free(list_output);
-    free(inspect_output);
     input_proxy_runtime_snapshot_destroy(&snapshot);
     return failures;
 }
@@ -169,22 +140,6 @@ static int test_empty_unavailable_and_no_match_output(void)
             "Runtime information unavailable: system "
             "D-Bus could not be queried.\n\n") != 0) {
         fprintf(stderr, "unavailable runtime list output failed\n");
-        failures++;
-    }
-    free(output);
-    output = render_inspect(
-        &empty, "/dev/input/event0", "/dev/input/by-id/device");
-    if (output == NULL || output[0] != '\0') {
-        fprintf(stderr, "no-match inspection was not silent\n");
-        failures++;
-    }
-    free(output);
-    output = render_inspect(
-        &unavailable, "/dev/input/event0", "/dev/input/by-id/device");
-    if (output == NULL || strcmp(output,
-            "Runtime instance information unavailable: system D-Bus could "
-            "not be queried.\n\n") != 0) {
-        fprintf(stderr, "unavailable runtime inspection output failed\n");
         failures++;
     }
     free(output);
