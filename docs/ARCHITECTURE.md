@@ -1060,8 +1060,17 @@ continues without D-Bus integration.
 If an established D-Bus connection is lost, the runtime MUST immediately mark
 D-Bus integration unavailable, cancel activity timers, discard activity state,
 stop exposing runtime control, report the loss without repeated log flooding,
-and continue normal input forwarding. Automatic retry cadence is not an
-architectural requirement.
+and continue normal input forwarding. It then retries the complete
+initialization sequence. Recovery rebuilds and exports the complete object
+before requesting the same well-known name without queueing. It exposes the
+session's current pause and source-availability state, while both activity
+properties restart at false. Failed recovery attempts do not flood standard
+logging and leave normal proxy operation unaffected. Automatic retry cadence is
+not an architectural requirement.
+
+An initial startup failure remains distinct: it warns and continues without
+entering the recovery loop. Recovery is enabled only after an endpoint has been
+successfully established during the current process lifetime.
 
 The core proxy runtime MUST remain usable without D-Bus.
 
