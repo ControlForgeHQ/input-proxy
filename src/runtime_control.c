@@ -1,6 +1,7 @@
 #define _POSIX_C_SOURCE 200809L
 
 #include "runtime_control_internal.h"
+#include "runtime_dbus_internal.h"
 
 #include <input_proxy/version.h>
 
@@ -12,9 +13,6 @@
 #include <time.h>
 #include <unistd.h>
 
-#define SERVICE_PREFIX "net.controlforge.InputProxy1.Instance."
-#define OBJECT_PATH "/net/controlforge/InputProxy1/Instance"
-#define INTERFACE_NAME "net.controlforge.InputProxy1.Instance"
 #define STATE_CORRECTION_FAILED_ERROR \
     "net.controlforge.InputProxy1.Error.StateCorrectionFailed"
 
@@ -26,7 +24,7 @@ struct input_proxy_runtime_control {
     void *pause_handler_userdata;
     bool dispatch_active;
     bool disable_pending;
-    char service_name[sizeof(SERVICE_PREFIX) + 79];
+    char service_name[sizeof(INPUT_PROXY_DBUS_SERVICE_PREFIX) + 79];
 };
 
 static int property_string(sd_bus *bus, const char *path,
@@ -131,7 +129,7 @@ int input_proxy_runtime_control_derive_service_name(char *service_name,
         return -EINVAL;
     }
     length = snprintf(service_name, service_name_size, "%s%s",
-        SERVICE_PREFIX, instance_name);
+        INPUT_PROXY_DBUS_SERVICE_PREFIX, instance_name);
     if (length < 0 || (size_t)length >= service_name_size) {
         return -ENOBUFS;
     }
@@ -233,7 +231,8 @@ struct input_proxy_runtime_control *input_proxy_runtime_control_create(
     }
     stage = "runtime-object export";
     result = sd_bus_add_object_vtable(control->bus, &control->object_slot,
-        OBJECT_PATH, INTERFACE_NAME, runtime_vtable, control);
+        INPUT_PROXY_DBUS_OBJECT_PATH, INPUT_PROXY_DBUS_INTERFACE_NAME,
+        runtime_vtable, control);
     if (result < 0) {
         failure = INPUT_PROXY_RUNTIME_CONTROL_INITIALIZATION_FAILED;
         goto initialization_error;
@@ -293,8 +292,8 @@ size_t input_proxy_runtime_control_apply_changes(
     changed_properties[changed_count] = NULL;
     result = sd_bus_emit_properties_changed_strv(
         (*control)->bus,
-        OBJECT_PATH,
-        INTERFACE_NAME,
+        INPUT_PROXY_DBUS_OBJECT_PATH,
+        INPUT_PROXY_DBUS_INTERFACE_NAME,
         changed_properties
     );
     if (result < 0) {
