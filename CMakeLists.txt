@@ -28,6 +28,7 @@ add_executable(
     src/main.c
     src/proxy_session.c
     src/runtime_control.c
+    src/runtime_discovery.c
     src/result.c
     src/source_device.c
     src/virtual_device.c
@@ -75,12 +76,14 @@ if(BUILD_TESTING)
         tests/device_inspection_test.c
         src/device_inspection.c
         src/device_discovery.c
+        src/runtime_discovery.c
     )
     target_include_directories(
         device-inspection-test
         PRIVATE ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/src
     )
-    target_link_libraries(device-inspection-test PRIVATE PkgConfig::LIBEVDEV)
+    target_link_libraries(device-inspection-test PRIVATE
+        PkgConfig::LIBEVDEV PkgConfig::LIBSYSTEMD)
     add_test(NAME device-inspection-test COMMAND device-inspection-test)
 
     add_executable(
@@ -199,6 +202,18 @@ if(BUILD_TESTING)
             "-Wl,--wrap=sd_bus_slot_unref"
     )
     add_test(NAME runtime-control-test COMMAND runtime-control-test)
+
+    add_executable(
+        runtime-discovery-test
+        tests/runtime_discovery_test.c
+        src/runtime_discovery.c
+    )
+    target_include_directories(
+        runtime-discovery-test
+        PRIVATE ${PROJECT_SOURCE_DIR}/src
+    )
+    target_link_libraries(runtime-discovery-test PRIVATE PkgConfig::LIBSYSTEMD)
+    add_test(NAME runtime-discovery-test COMMAND runtime-discovery-test)
 
     add_test(
         NAME cli-test

@@ -3,6 +3,7 @@
 
 #include "device_inspection_internal.h"
 #include "device_discovery_internal.h"
+#include "runtime_discovery_internal.h"
 
 #include <libevdev/libevdev.h>
 
@@ -408,6 +409,50 @@ void input_proxy_print_access_remediation(
     fputc('\n', stream);
 }
 
+bool input_proxy_should_suggest_run(
+    bool source_accessible,
+    bool uinput_accessible,
+    size_t associated_instance_count)
+{
+    return source_accessible && uinput_accessible &&
+        associated_instance_count == 0;
+}
+
+void input_proxy_print_runtime_associations(
+    FILE *stream,
+    const struct input_proxy_runtime_snapshot *snapshot,
+    const char *event_node,
+    const char *preferred_source)
+{
+    size_t index;
+    bool heading_printed = false;
+
+    if (stream == NULL || snapshot == NULL || event_node == NULL) {
+        return;
+    }
+    if (!snapshot->available) {
+        fputs("Runtime instance information unavailable: system D-Bus could "
+            "not be queried.\n\n", stream);
+        return;
+    }
+    for (index = 0; index < snapshot->record_count; ++index) {
+        if (!input_proxy_runtime_record_matches_device(
+                &snapshot->records[index], event_node, preferred_source)) {
+            continue;
+        }
+        if (!heading_printed) {
+            print_heading(stream, "Associated proxy instances");
+            heading_printed = true;
+        }
+        fprintf(stream, "  %s [%s]\n",
+            snapshot->records[index].instance_name,
+            snapshot->records[index].source_path);
+    }
+    if (heading_printed) {
+        fputc('\n', stream);
+    }
+}
+
 static bool read_udev_properties(const char *root, const struct stat *status,
                                  FILE *stream, char *vendor, size_t vendor_size,
                                  char *model, size_t model_size,
@@ -453,7 +498,8 @@ enum input_proxy_result input_proxy_inspect_device(
     FILE *stream, FILE *error_stream, const char *device_path,
     const char *sysfs_input_path, const char *device_input_path,
     const char *uinput_path,
-    const char *udev_data_path)
+    const char *udev_data_path,
+    const struct input_proxy_runtime_snapshot *runtime_snapshot)
 {
     char event_node[PATH_MAX];
     char sysfs_path[PATH_MAX];
@@ -476,6 +522,7 @@ enum input_proxy_result input_proxy_inspect_device(
     char rule_vendor[32] = "";
     char rule_model[32] = "";
     char rule_path[512] = "";
+    size_t associated_instance_count;
 
     if (stream == NULL || error_stream == NULL || device_path == NULL ||
         sysfs_input_path == NULL || uinput_path == NULL || udev_data_path == NULL)
@@ -508,6 +555,8 @@ enum input_proxy_result input_proxy_inspect_device(
     uinput_status_available = uinput_exists;
     (void)find_persistent_path(device_input_path, &status,
                                persistent_path, sizeof(persistent_path));
+    associated_instance_count = input_proxy_runtime_association_count(
+        runtime_snapshot, event_node, persistent_path);
 
     print_heading(stream, "Device identity");
     print_value(stream, "Path:", device_path);
@@ -652,13 +701,17 @@ enum input_proxy_result input_proxy_inspect_device(
         }
     }
 
-    if (source_ok && uinput_ok) {
+    if (input_proxy_should_suggest_run(
+            source_ok, uinput_ok, associated_instance_count)) {
         fputc('\n', stream);
         print_heading(stream, "Suggested input-proxy run command");
         fprintf(stream, "  input-proxy run --source %s --name \"YOUR DEVICE NAME\"\n",
                 persistent_path[0] != '\0' ? persistent_path : device_path);
     }
     fputc('\n', stream);
+
+    input_proxy_print_runtime_associations(stream, runtime_snapshot,
+        event_node, persistent_path);
 
     if (device != NULL) libevdev_free(device);
     if (source_fd >= 0) close(source_fd);

@@ -6,6 +6,7 @@
 
 #include "device_discovery_internal.h"
 #include "device_inspection_internal.h"
+#include "runtime_discovery_internal.h"
 
 #include <stdbool.h>
 #include <ctype.h>
@@ -199,7 +200,8 @@ static void print_list_help(FILE *stream)
         "\n"
         "The listing is intended to identify likely proxy sources without an\n"
         "exhaustive capability dump. Virtual uinput devices are excluded when\n"
-        "they can be identified reliably.\n"
+        "they can be identified reliably. When system D-Bus is available,\n"
+        "currently running input-proxy instances are also listed.\n"
         "\n"
         "Options:\n"
         "  --help  Show this help and exit.\n\n",
@@ -220,6 +222,8 @@ static void print_inspect_help(FILE *stream)
         "\n"
         "Inspection reports device identity, capabilities, accessibility, and\n"
         "proxy readiness without modifying the device or system configuration.\n"
+        "Associated runtime instances are also reported when system D-Bus is\n"
+        "available.\n"
         "\n"
         "Options:\n"
         "  --help  Show this help and exit.\n\n",
@@ -415,6 +419,7 @@ static int run_proxy(int argc, char *argv[])
 
 static int list_devices(int argc)
 {
+    struct input_proxy_runtime_snapshot snapshot;
     enum input_proxy_result result;
 
     if (argc != 2) {
@@ -435,11 +440,16 @@ static int list_devices(int argc)
         return EXIT_FAILURE;
     }
 
+    input_proxy_runtime_discover(&snapshot);
+    input_proxy_runtime_print_list(stdout, &snapshot);
+    input_proxy_runtime_snapshot_destroy(&snapshot);
+
     return EXIT_SUCCESS;
 }
 
 static int inspect_device(int argc, char *argv[])
 {
+    struct input_proxy_runtime_snapshot snapshot;
     enum input_proxy_result result;
 
     if (argc != 3) {
@@ -447,8 +457,11 @@ static int inspect_device(int argc, char *argv[])
         print_inspect_help(stderr);
         return EXIT_FAILURE;
     }
+    input_proxy_runtime_discover(&snapshot);
     result = input_proxy_inspect_device(stdout, stderr, argv[2],
-        "/sys/class/input", "/dev/input", "/dev/uinput", "/run/udev/data");
+        "/sys/class/input", "/dev/input", "/dev/uinput", "/run/udev/data",
+        &snapshot);
+    input_proxy_runtime_snapshot_destroy(&snapshot);
     if (result != INPUT_PROXY_SUCCESS) {
         fputc('\n', stderr);
     }

@@ -7,6 +7,8 @@
 #include <stddef.h>
 #include <stdbool.h>
 
+struct input_proxy_runtime_snapshot;
+
 struct input_proxy_access_remediation {
     bool source_ok;
     const char *source_path;
@@ -35,6 +37,19 @@ void input_proxy_print_access_remediation(
     const struct input_proxy_access_remediation *access
 );
 
+bool input_proxy_should_suggest_run(
+    bool source_accessible,
+    bool uinput_accessible,
+    size_t associated_instance_count
+);
+
+void input_proxy_print_runtime_associations(
+    FILE *stream,
+    const struct input_proxy_runtime_snapshot *snapshot,
+    const char *event_node,
+    const char *preferred_source
+);
+
 enum input_proxy_result input_proxy_inspect_device(
     FILE *stream,
     FILE *error_stream,
@@ -42,7 +57,8 @@ enum input_proxy_result input_proxy_inspect_device(
     const char *sysfs_input_path,
     const char *device_input_path,
     const char *uinput_path,
-    const char *udev_data_path
+    const char *udev_data_path,
+    const struct input_proxy_runtime_snapshot *runtime_snapshot
 );
 
 #endif
