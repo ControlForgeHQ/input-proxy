@@ -538,7 +538,7 @@ The runtime applies the following policy:
 | Normal read or synchronization-recovery read | Generic read failure | Treat as fatal. A read failure that is not classified as source disconnection must not be converted into an indefinite reconnect loop. | Do not retry. | Destroy the virtual device and close the source during cleanup. | Report the failed read on standard error and terminate with failure. |
 | Normal event forwarding | Virtual-device event-write failure | Treat as fatal because the kernel-visible virtual state may no longer match the forwarded source stream. | Do not retry the write or replace the virtual device in place. | Destroy the virtual device and close the source during cleanup. | Report the failed write on standard error and terminate with failure. |
 | Initial virtual-device creation | Creation failure | Close the source and terminate. | Do not retry within the session. | Release any partially initialized virtual-device resources. | Report the creation failure on standard error and terminate with failure. |
-| Reconnect compatibility comparison | Compatible source | Retain the existing virtual device and continue according to pause state. | Not applicable. | Retain the existing virtual device. | Report normal reconnection; no process exit. |
+| Reconnect compatibility comparison | Compatible source | Retain the existing virtual device and continue according to the current event-forwarding policy. | Not applicable. | Retain the existing virtual device. | Report normal reconnection; no process exit. |
 | Reconnect compatibility comparison | Incompatible source | Perform the replacement transition defined below. | Make one replacement attempt for that reconnect transition. | Destroy the old virtual device before creating its replacement. | Successful replacement continues the session; replacement failure is reported on standard error and terminates with failure. |
 | Neutralization or required state synchronization | State-correction failure | Apply the fail-closed policy defined in `State-correction failure`. | Do not retry or replace in place. | Destroy the virtual device and close the source. | Report a fatal diagnostic and terminate with failure. |
 | Session setup or runtime policy | Invalid internal state, resource exhaustion, or another internal failure | Treat as fatal unless another section explicitly defines a recoverable transition. | Do not retry automatically. | Release all resources owned by the session. | Report the failure on standard error and terminate with failure. |
@@ -592,10 +592,10 @@ of the represented virtual device:
 
 | Field | Treatment |
 |-------|-----------|
-| Current `EV_KEY` values | Ignore; synchronize as runtime state |
-| Current `EV_SW` values | Ignore; synchronize as runtime state |
-| Current absolute-axis values | Ignore; synchronize as runtime state |
-| Current multitouch contacts and slot values | Ignore; synchronize or suppress according to pause mode |
+| Current `EV_KEY` values | Ignore; synchronize as runtime state before forwarding begins |
+| Current `EV_SW` values | Ignore; synchronize as runtime state before forwarding begins |
+| Current absolute-axis values | Ignore; synchronize as runtime state before forwarding begins |
+| Current multitouch contacts and slot values | Ignore; synchronize as runtime state before forwarding begins |
 | Source display name | Ignore; the virtual name is the configured Instance Name |
 | Source physical-location string | Ignore; it is not part of the virtual representation |
 | Configured source path | Ignore for compatibility; it selects the acquisition target |
@@ -607,9 +607,14 @@ If the source is compatible:
 ```text
 initialize source
     -> retain virtual device
-    -> if paused, consume and suppress source events
-    -> if unpaused, synchronize current state
-    -> begin forwarding only after synchronization succeeds
+    -> apply current event-forwarding policy
+         |
+         +-- forwarding remains suppressed
+         |       -> consume source events without forwarding
+         |
+         +-- forwarding is to begin
+                 -> synchronize current source state
+                 -> begin forwarding only after synchronization succeeds
 ```
 
 A compatible reconnect does not produce a virtual-device removal/addition
@@ -621,9 +626,14 @@ If the source is incompatible:
 initialize source
     -> destroy old virtual device
     -> create replacement from new source
-    -> if paused, consume and suppress source events
-    -> if unpaused, synchronize current state
-    -> begin forwarding only after synchronization succeeds
+    -> apply current event-forwarding policy
+         |
+         +-- forwarding remains suppressed
+         |       -> consume source events without forwarding
+         |
+         +-- forwarding is to begin
+                 -> synchronize current source state
+                 -> begin forwarding only after synchronization succeeds
 ```
 
 Input consumers observe removal of the old virtual device and addition of the
@@ -640,7 +650,6 @@ reconnected source and terminate with failure. It MUST NOT forward through the
 incompatible old device, retain a source without a usable virtual
 representation, or retry replacement indefinitely within the same lifecycle
 transition.
-
 ## Event forwarding
 
 Normal runtime event flow is:
