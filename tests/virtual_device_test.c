@@ -22,6 +22,7 @@ static int query_create_calls;
 static int key_values[KEY_MAX + 1];
 static bool key_supported[KEY_MAX + 1];
 static int slot_values[8];
+static bool slot_supported[8];
 static int slot_count;
 static struct input_event written_events[32];
 static struct libevdev_uinput *const test_uinput =
@@ -130,7 +131,8 @@ int libevdev_fetch_slot_value(
     int *value)
 {
     (void)device;
-    if (slot >= (unsigned int)slot_count || code != ABS_MT_TRACKING_ID) {
+    if (slot >= (unsigned int)slot_count || code != ABS_MT_TRACKING_ID ||
+        !slot_supported[slot]) {
         return 0;
     }
 
@@ -167,11 +169,15 @@ static void reset_neutralization_state(void)
 
     memset(key_values, 0, sizeof(key_values));
     memset(key_supported, 0, sizeof(key_supported));
+    memset(slot_supported, 1, sizeof(slot_supported));
     memset(written_events, 0, sizeof(written_events));
     for (slot = 0; slot < 8; slot++) {
         slot_values[slot] = -1;
     }
-    slot_count = -1;
+    key_supported[KEY_A] = true;
+    key_supported[KEY_B] = true;
+    key_supported[BTN_TOUCH] = true;
+    slot_count = 4;
     write_calls = 0;
     write_result = 0;
     fail_write_call = 0;
@@ -221,6 +227,14 @@ static int initialize_source(void)
         .maximum = 1000,
         .resolution = 20
     };
+    const struct input_absinfo slot_info = {
+        .minimum = 0,
+        .maximum = 3
+    };
+    const struct input_absinfo tracking_id_info = {
+        .minimum = 0,
+        .maximum = 65535
+    };
 
     test_source = libevdev_new();
     if (test_source == NULL) {
@@ -236,12 +250,26 @@ static int initialize_source(void)
     libevdev_set_id_version(test_source, 9);
 
     if (libevdev_enable_property(test_source, INPUT_PROP_DIRECT) != 0 ||
+        libevdev_enable_event_code(test_source, EV_KEY, KEY_A, NULL) != 0 ||
+        libevdev_enable_event_code(test_source, EV_KEY, KEY_B, NULL) != 0 ||
         libevdev_enable_event_code(test_source, EV_KEY, BTN_TOUCH, NULL) != 0 ||
         libevdev_enable_event_code(
             test_source,
             EV_ABS,
             ABS_X,
             &absolute_info
+        ) != 0 ||
+        libevdev_enable_event_code(
+            test_source,
+            EV_ABS,
+            ABS_MT_SLOT,
+            &slot_info
+        ) != 0 ||
+        libevdev_enable_event_code(
+            test_source,
+            EV_ABS,
+            ABS_MT_TRACKING_ID,
+            &tracking_id_info
         ) != 0) {
         libevdev_free(test_source);
         test_source = NULL;
@@ -364,7 +392,7 @@ int main(void)
     if (libevdev_enable_event_code(
             test_source,
             EV_KEY,
-            KEY_A,
+            KEY_C,
             NULL
         ) != 0) {
         fprintf(stderr, "failed to add incompatible test capability\n");
@@ -518,6 +546,52 @@ int main(void)
     );
 
     reset_neutralization_state();
+    key_values[KEY_A] = 1;
+    key_supported[KEY_B] = false;
+    failures += expect_result(
+        "advertised key state unavailable",
+        input_proxy_virtual_device_neutralize(device),
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED
+    );
+    if (write_calls != 0) {
+        fprintf(stderr, "advertised key state unavailable: events emitted\n");
+        failures++;
+    }
+
+    reset_neutralization_state();
+    key_supported[KEY_C] = false;
+    failures += expect_result(
+        "unsupported key ignored",
+        input_proxy_virtual_device_neutralize(device),
+        INPUT_PROXY_SUCCESS
+    );
+    if (write_calls != 0) {
+        fprintf(stderr, "unsupported key ignored: events emitted\n");
+        failures++;
+    }
+
+    reset_neutralization_state();
+    key_supported[BTN_TOUCH] = false;
+    failures += expect_result(
+        "advertised touch state unavailable",
+        input_proxy_virtual_device_neutralize(device),
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED
+    );
+
+    reset_neutralization_state();
+    slot_supported[2] = false;
+    slot_values[0] = 17;
+    failures += expect_result(
+        "multitouch slot state unavailable",
+        input_proxy_virtual_device_neutralize(device),
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED
+    );
+    if (write_calls != 0) {
+        fprintf(stderr, "multitouch slot state unavailable: events emitted\n");
+        failures++;
+    }
+
+    reset_neutralization_state();
     query_create_result = -EIO;
     failures += expect_result(
         "state query failure",
@@ -535,6 +609,15 @@ int main(void)
         INPUT_PROXY_ERROR_EVENT_WRITE_FAILED
     );
 
+    reset_neutralization_state();
+    key_values[KEY_A] = 1;
+    fail_write_call = 2;
+    failures += expect_result(
+        "final synchronization write failure",
+        input_proxy_virtual_device_neutralize(device),
+        INPUT_PROXY_ERROR_EVENT_WRITE_FAILED
+    );
+
     failures += expect_result(
         "null neutralization device",
         input_proxy_virtual_device_neutralize(NULL),
@@ -545,7 +628,7 @@ int main(void)
     input_proxy_virtual_device_destroy(NULL);
 
     if (create_calls != 2 || destroy_calls != 1 ||
-        query_create_calls != 5 || template_failures != 0) {
+        query_create_calls != 10 || template_failures != 0) {
         fprintf(
             stderr,
             "unexpected calls or contents: create=%d destroy=%d queries=%d "

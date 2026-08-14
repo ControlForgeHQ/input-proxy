@@ -431,6 +431,14 @@ enum input_proxy_result input_proxy_session_run(
             );
             close_source_device(session);
             if (result != INPUT_PROXY_SUCCESS) {
+                fprintf(
+                    stderr,
+                    "input-proxy: fatal source-loss neutralization failed "
+                    "for virtual device %s after loss of source %s: %s\n",
+                    session->instance_name,
+                    session->source_path,
+                    input_proxy_result_string(result)
+                );
                 break;
             }
             log_verbose(

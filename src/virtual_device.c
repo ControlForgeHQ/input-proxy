@@ -306,8 +306,11 @@ enum input_proxy_result input_proxy_virtual_device_neutralize(
 {
     const char *device_node;
     struct libevdev *state = NULL;
+    int *slot_tracking_ids = NULL;
     enum input_proxy_result result = INPUT_PROXY_SUCCESS;
+    int key_values[KEY_MAX + 1] = {0};
     bool changed = false;
+    bool has_type_b_multitouch;
     int file_descriptor;
     unsigned int code;
     int slot_count;
@@ -333,10 +336,71 @@ enum input_proxy_result input_proxy_virtual_device_neutralize(
     }
 
     for (code = 0; code <= KEY_MAX; code++) {
-        int value;
+        if (!libevdev_has_event_code(
+                device->capabilities,
+                EV_KEY,
+                code
+            )) {
+            continue;
+        }
 
-        if (!libevdev_fetch_event_value(state, EV_KEY, code, &value) ||
-            value == 0) {
+        if (!libevdev_fetch_event_value(
+                state,
+                EV_KEY,
+                code,
+                &key_values[code]
+            )) {
+            result = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+            goto cleanup;
+        }
+    }
+
+    has_type_b_multitouch = libevdev_has_event_code(
+        device->capabilities,
+        EV_ABS,
+        ABS_MT_SLOT
+    ) && libevdev_has_event_code(
+        device->capabilities,
+        EV_ABS,
+        ABS_MT_TRACKING_ID
+    );
+
+    slot_count = 0;
+    if (has_type_b_multitouch) {
+        slot_count = libevdev_get_num_slots(state);
+        if (slot_count <= 0) {
+            result = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+            goto cleanup;
+        }
+
+        slot_tracking_ids = calloc(
+            (size_t)slot_count,
+            sizeof(*slot_tracking_ids)
+        );
+        if (slot_tracking_ids == NULL) {
+            result = INPUT_PROXY_ERROR_OUT_OF_MEMORY;
+            goto cleanup;
+        }
+
+        for (slot = 0; slot < slot_count; slot++) {
+            if (!libevdev_fetch_slot_value(
+                    state,
+                    (unsigned int)slot,
+                    ABS_MT_TRACKING_ID,
+                    &slot_tracking_ids[slot]
+                )) {
+                result = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+                goto cleanup;
+            }
+        }
+    }
+
+    for (code = 0; code <= KEY_MAX; code++) {
+        if (!libevdev_has_event_code(
+                device->capabilities,
+                EV_KEY,
+                code
+            ) || key_values[code] == 0) {
             continue;
         }
 
@@ -347,16 +411,8 @@ enum input_proxy_result input_proxy_virtual_device_neutralize(
         changed = true;
     }
 
-    slot_count = libevdev_get_num_slots(state);
     for (slot = 0; slot < slot_count; slot++) {
-        int tracking_id;
-
-        if (!libevdev_fetch_slot_value(
-                state,
-                (unsigned int)slot,
-                ABS_MT_TRACKING_ID,
-                &tracking_id
-            ) || tracking_id < 0) {
+        if (slot_tracking_ids[slot] < 0) {
             continue;
         }
 
@@ -387,6 +443,7 @@ enum input_proxy_result input_proxy_virtual_device_neutralize(
     }
 
 cleanup:
+    free(slot_tracking_ids);
     libevdev_free(state);
     close(file_descriptor);
     return result;
