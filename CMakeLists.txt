@@ -149,6 +149,8 @@ if(BUILD_TESTING)
         proxy-session-test
         PRIVATE
             "-Wl,--wrap=input_proxy_runtime_control_apply_changes"
+            "-Wl,--wrap=input_proxy_runtime_control_create"
+            "-Wl,--wrap=input_proxy_runtime_control_process"
     )
 
     add_test(NAME proxy-session-test COMMAND proxy-session-test)
@@ -173,11 +175,13 @@ if(BUILD_TESTING)
         runtime-control-test
         tests/runtime_control_test.c
         src/runtime_control.c
+        src/result.c
     )
     target_include_directories(
         runtime-control-test
         PRIVATE
             ${PROJECT_BINARY_DIR}/generated/include
+            ${PROJECT_SOURCE_DIR}/include
             ${PROJECT_SOURCE_DIR}/src
     )
     target_link_libraries(runtime-control-test PRIVATE PkgConfig::LIBSYSTEMD)

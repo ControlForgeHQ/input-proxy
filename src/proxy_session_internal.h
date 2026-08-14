@@ -3,6 +3,8 @@
 
 #include <input_proxy/result.h>
 
+#include <stdbool.h>
+
 struct input_proxy_session;
 struct input_proxy_source_device;
 struct input_proxy_virtual_device;
@@ -11,6 +13,11 @@ enum input_proxy_result input_proxy_session_synchronize_state(
     struct input_proxy_session *session,
     const struct input_proxy_source_device *source_device,
     struct input_proxy_virtual_device *virtual_device
+);
+
+enum input_proxy_result input_proxy_session_request_paused(
+    struct input_proxy_session *session,
+    bool paused
 );
 
 /*

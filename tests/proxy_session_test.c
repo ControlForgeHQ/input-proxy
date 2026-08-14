@@ -66,6 +66,14 @@ static bool shutdown_during_event_sleep;
 static bool shutdown_during_source_sleep;
 static int shutdown_after_source_sleep_calls;
 static long long monotonic_time_ns;
+static int runtime_process_calls;
+static int pause_request_process_calls[8];
+static bool pause_request_values[8];
+static int pause_request_count;
+static int pause_request_index;
+static enum input_proxy_result pause_request_results[8];
+static char pause_operations[32];
+static int pause_operation_count;
 
 static struct input_proxy_source_device *const test_source_device =
     (struct input_proxy_source_device *)1;
@@ -92,8 +100,45 @@ size_t __wrap_input_proxy_runtime_control_apply_changes(
         availability_operations[availability_operation_count++] =
             state->source_available ? 'T' : 'F';
     }
+    if (changed_count > 0 &&
+        (changes->properties & INPUT_PROXY_RUNTIME_CONTROL_PAUSED) != 0U) {
+        pause_operations[pause_operation_count++] =
+            state->paused ? 'P' : 'U';
+        barrier_operations[barrier_operation_count++] =
+            state->paused ? 'P' : 'U';
+    }
 
     return changed_count;
+}
+
+struct input_proxy_runtime_control *__wrap_input_proxy_runtime_control_create(
+    const struct input_proxy_runtime_control_state *state,
+    input_proxy_runtime_control_pause_handler pause_handler,
+    void *pause_handler_userdata)
+{
+    (void)state;
+    (void)pause_handler;
+    (void)pause_handler_userdata;
+    return NULL;
+}
+
+void __real_input_proxy_runtime_control_process(
+    struct input_proxy_runtime_control **control);
+
+void __wrap_input_proxy_runtime_control_process(
+    struct input_proxy_runtime_control **control)
+{
+    __real_input_proxy_runtime_control_process(control);
+    runtime_process_calls++;
+    if (pause_request_index < pause_request_count &&
+        runtime_process_calls ==
+            pause_request_process_calls[pause_request_index]) {
+        pause_request_results[pause_request_index] =
+            input_proxy_session_request_paused(
+                running_session,
+                pause_request_values[pause_request_index]);
+        pause_request_index++;
+    }
 }
 
 int clock_gettime(clockid_t clock_id, struct timespec *time)
@@ -235,6 +280,7 @@ enum input_proxy_result input_proxy_virtual_device_neutralize(
     neutralize_calls++;
     operations[operation_count++] = 'N';
     availability_operations[availability_operation_count++] = 'N';
+    barrier_operations[barrier_operation_count++] = 'N';
     return neutralize_result;
 }
 
@@ -386,10 +432,19 @@ static void reset_runtime(void)
     shutdown_during_source_sleep = false;
     shutdown_after_source_sleep_calls = 0;
     monotonic_time_ns = 0;
+    runtime_process_calls = 0;
+    pause_request_count = 0;
+    pause_request_index = 0;
+    pause_operation_count = 0;
     memset(operations, 0, sizeof(operations));
     memset(state_written_events, 0, sizeof(state_written_events));
     memset(barrier_operations, 0, sizeof(barrier_operations));
     memset(availability_operations, 0, sizeof(availability_operations));
+    memset(pause_request_process_calls, 0,
+        sizeof(pause_request_process_calls));
+    memset(pause_request_values, 0, sizeof(pause_request_values));
+    memset(pause_request_results, 0, sizeof(pause_request_results));
+    memset(pause_operations, 0, sizeof(pause_operations));
     memset(compatibility_results, 0, sizeof(compatibility_results));
 }
 
@@ -1370,6 +1425,142 @@ int main(void)
         &config,
         INPUT_PROXY_ERROR_EVENT_WRITE_FAILED
     );
+
+    reset_runtime();
+    failures += expect_result(
+        "unavailable pause session creation",
+        input_proxy_session_create(&session, &config),
+        INPUT_PROXY_SUCCESS
+    );
+    if (session != NULL) {
+        failures += expect_result(
+            "pause while source unavailable",
+            input_proxy_session_request_paused(session, true),
+            INPUT_PROXY_SUCCESS
+        );
+        failures += expect_result(
+            "idempotent unavailable pause",
+            input_proxy_session_request_paused(session, true),
+            INPUT_PROXY_SUCCESS
+        );
+        failures += expect_result(
+            "resume while source unavailable",
+            input_proxy_session_request_paused(session, false),
+            INPUT_PROXY_SUCCESS
+        );
+        failures += expect_result(
+            "idempotent unavailable resume",
+            input_proxy_session_request_paused(session, false),
+            INPUT_PROXY_SUCCESS
+        );
+        input_proxy_session_destroy(session);
+    }
+    if (neutralize_calls != 0 || capture_state_calls != 0 ||
+        strcmp(pause_operations, "PU") != 0) {
+        fprintf(stderr, "source-unavailable pause transitions were incorrect\n");
+        failures++;
+    }
+
+    reset_runtime();
+    pause_request_process_calls[0] = 2;
+    pause_request_values[0] = true;
+    pause_request_process_calls[1] = 3;
+    pause_request_values[1] = true;
+    pause_request_process_calls[2] = 4;
+    pause_request_values[2] = false;
+    pause_request_process_calls[3] = 5;
+    pause_request_values[3] = false;
+    pause_request_count = 4;
+    read_results[0] = INPUT_PROXY_SUCCESS;
+    read_results[1] = INPUT_PROXY_SUCCESS;
+    read_results[2] = INPUT_PROXY_SUCCESS;
+    read_results[3] = INPUT_PROXY_SUCCESS;
+    read_results[4] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+    read_result_count = 5;
+    failures += run_runtime_test(
+        "pause suppresses and resume forwards",
+        &config,
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED
+    );
+    if (pause_request_index != 4 ||
+        pause_request_results[0] != INPUT_PROXY_SUCCESS ||
+        pause_request_results[1] != INPUT_PROXY_SUCCESS ||
+        pause_request_results[2] != INPUT_PROXY_SUCCESS ||
+        pause_request_results[3] != INPUT_PROXY_SUCCESS ||
+        neutralize_calls != 1 || capture_state_calls != 2 ||
+        read_calls != 5 || write_calls != 2 ||
+        strcmp(pause_operations, "PU") != 0 ||
+        strstr(barrier_operations, "NP") == NULL ||
+        strstr(barrier_operations, "QBAU") == NULL) {
+        fprintf(stderr, "pause/resume suppression or idempotence failed\n");
+        failures++;
+    }
+
+    reset_runtime();
+    pause_request_process_calls[0] = 2;
+    pause_request_values[0] = true;
+    pause_request_process_calls[1] = 5;
+    pause_request_values[1] = false;
+    pause_request_count = 2;
+    open_results[0] = INPUT_PROXY_SUCCESS;
+    open_results[1] = INPUT_PROXY_SUCCESS;
+    open_result_count = 2;
+    compatibility_results[0] = true;
+    read_results[0] = INPUT_PROXY_ERROR_SOURCE_DISCONNECTED;
+    read_results[1] = INPUT_PROXY_SUCCESS;
+    read_results[2] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+    read_result_count = 3;
+    failures += run_runtime_test(
+        "paused disconnect reconnect and resume",
+        &config,
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED
+    );
+    if (pause_request_index != 2 || neutralize_calls != 2 ||
+        capture_state_calls != 2 || compatibility_calls != 1 ||
+        read_calls != 3 || write_calls != 0 ||
+        strcmp(pause_operations, "PU") != 0) {
+        fprintf(stderr, "paused reconnect policy failed\n");
+        failures++;
+    }
+
+    reset_runtime();
+    pause_request_process_calls[0] = 2;
+    pause_request_values[0] = true;
+    pause_request_count = 1;
+    neutralize_result = INPUT_PROXY_ERROR_EVENT_WRITE_FAILED;
+    failures += run_runtime_test(
+        "pause neutralization failure",
+        &config,
+        INPUT_PROXY_ERROR_EVENT_WRITE_FAILED
+    );
+    if (pause_request_results[0] != INPUT_PROXY_ERROR_EVENT_WRITE_FAILED ||
+        read_calls != 0 || destroy_calls != 1 || close_calls != 1 ||
+        pause_operation_count != 0) {
+        fprintf(stderr, "pause correction failure was not fatal\n");
+        failures++;
+    }
+
+    reset_runtime();
+    pause_request_process_calls[0] = 2;
+    pause_request_values[0] = true;
+    pause_request_process_calls[1] = 3;
+    pause_request_values[1] = false;
+    pause_request_count = 2;
+    read_results[0] = INPUT_PROXY_SUCCESS;
+    read_result_count = 1;
+    capture_state_result = INPUT_PROXY_SUCCESS;
+    fail_state_write_call = 2;
+    failures += run_runtime_test(
+        "resume synchronization failure",
+        &config,
+        INPUT_PROXY_ERROR_EVENT_WRITE_FAILED
+    );
+    if (pause_request_results[1] != INPUT_PROXY_ERROR_EVENT_WRITE_FAILED ||
+        read_calls != 1 || destroy_calls != 1 || close_calls != 1 ||
+        strcmp(pause_operations, "P") != 0) {
+        fprintf(stderr, "resume correction failure was not fatal\n");
+        failures++;
+    }
 
     return failures == 0 ? 0 : 1;
 }

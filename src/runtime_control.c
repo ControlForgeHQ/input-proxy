@@ -15,11 +15,15 @@
 #define SERVICE_PREFIX "net.controlforge.InputProxy1.Instance."
 #define OBJECT_PATH "/net/controlforge/InputProxy1/Instance"
 #define INTERFACE_NAME "net.controlforge.InputProxy1.Instance"
+#define STATE_CORRECTION_FAILED_ERROR \
+    "net.controlforge.InputProxy1.Error.StateCorrectionFailed"
 
 struct input_proxy_runtime_control {
     sd_bus *bus;
     sd_bus_slot *object_slot;
     const struct input_proxy_runtime_control_state *state;
+    input_proxy_runtime_control_pause_handler pause_handler;
+    void *pause_handler_userdata;
     char service_name[sizeof(SERVICE_PREFIX) + 79];
 };
 
@@ -27,7 +31,8 @@ static int property_string(sd_bus *bus, const char *path,
     const char *interface, const char *property, sd_bus_message *reply,
     void *userdata, sd_bus_error *error)
 {
-    const struct input_proxy_runtime_control_state *state = userdata;
+    const struct input_proxy_runtime_control *control = userdata;
+    const struct input_proxy_runtime_control_state *state = control->state;
     const char *value;
 
     (void)bus; (void)path; (void)interface; (void)error;
@@ -50,7 +55,8 @@ static int property_boolean(sd_bus *bus, const char *path,
     const char *interface, const char *property, sd_bus_message *reply,
     void *userdata, sd_bus_error *error)
 {
-    const struct input_proxy_runtime_control_state *state = userdata;
+    const struct input_proxy_runtime_control *control = userdata;
+    const struct input_proxy_runtime_control_state *state = control->state;
     bool value;
 
     (void)bus; (void)path; (void)interface; (void)error;
@@ -66,12 +72,27 @@ static int property_boolean(sd_bus *bus, const char *path,
     return sd_bus_message_append(reply, "b", value);
 }
 
-static int unsupported_method(sd_bus_message *message, void *userdata,
+static int request_paused_method(sd_bus_message *message, void *userdata,
     sd_bus_error *error)
 {
-    (void)message; (void)userdata;
-    return sd_bus_error_set_const(error, SD_BUS_ERROR_NOT_SUPPORTED,
-        "Runtime pause and resume control is not implemented");
+    struct input_proxy_runtime_control *control = userdata;
+    const char *member = sd_bus_message_get_member(message);
+    const bool paused = member != NULL && strcmp(member, "Pause") == 0;
+    enum input_proxy_result result;
+
+    if (control->pause_handler == NULL) {
+        return sd_bus_error_set_const(error, SD_BUS_ERROR_FAILED,
+            "Runtime pause-state handler is unavailable");
+    }
+
+    result = control->pause_handler(control->pause_handler_userdata, paused);
+    if (result != INPUT_PROXY_SUCCESS) {
+        return sd_bus_error_setf(error, STATE_CORRECTION_FAILED_ERROR,
+            "Required %s state correction failed: %s",
+            paused ? "pause" : "resume", input_proxy_result_string(result));
+    }
+
+    return sd_bus_reply_method_return(message, "");
 }
 
 static const sd_bus_vtable runtime_vtable[] = {
@@ -92,9 +113,9 @@ static const sd_bus_vtable runtime_vtable[] = {
         SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
     SD_BUS_PROPERTY("ActivityWhilePaused", "b", property_boolean, 0,
         SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
-    SD_BUS_METHOD("Pause", "", "", unsupported_method,
+    SD_BUS_METHOD("Pause", "", "", request_paused_method,
         SD_BUS_VTABLE_UNPRIVILEGED),
-    SD_BUS_METHOD("Resume", "", "", unsupported_method,
+    SD_BUS_METHOD("Resume", "", "", request_paused_method,
         SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_VTABLE_END
 };
@@ -174,7 +195,9 @@ void input_proxy_runtime_control_destroy(struct input_proxy_runtime_control *con
 }
 
 struct input_proxy_runtime_control *input_proxy_runtime_control_create(
-    const struct input_proxy_runtime_control_state *state)
+    const struct input_proxy_runtime_control_state *state,
+    input_proxy_runtime_control_pause_handler pause_handler,
+    void *pause_handler_userdata)
 {
     struct input_proxy_runtime_control *control;
     enum input_proxy_runtime_control_failure failure;
@@ -191,6 +214,8 @@ struct input_proxy_runtime_control *input_proxy_runtime_control_create(
         return NULL;
     }
     control->state = state;
+    control->pause_handler = pause_handler;
+    control->pause_handler_userdata = pause_handler_userdata;
     result = input_proxy_runtime_control_derive_service_name(
         control->service_name, sizeof(control->service_name), state->instance_name);
     if (result < 0) {
@@ -206,7 +231,7 @@ struct input_proxy_runtime_control *input_proxy_runtime_control_create(
     }
     stage = "runtime-object export";
     result = sd_bus_add_object_vtable(control->bus, &control->object_slot,
-        OBJECT_PATH, INTERFACE_NAME, runtime_vtable, (void *)state);
+        OBJECT_PATH, INTERFACE_NAME, runtime_vtable, control);
     if (result < 0) {
         failure = INPUT_PROXY_RUNTIME_CONTROL_INITIALIZATION_FAILED;
         goto initialization_error;
