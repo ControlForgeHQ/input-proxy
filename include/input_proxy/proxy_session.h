@@ -14,6 +14,8 @@ struct input_proxy_session_config {
     const char *instance_name;
     uint64_t activity_timeout_ms;
     uint64_t detection_throttle_ms;
+    bool running_motion_activity;
+    bool paused_motion_activity;
     bool verbose;
 };
 

@@ -29,6 +29,9 @@ static enum input_proxy_result read_results[8];
 static enum input_proxy_result sync_read_results[8];
 static struct input_event sync_events[8];
 static struct input_event source_event;
+static struct input_event source_events[8];
+static int source_event_count;
+static long long read_time_advance_ns[8];
 static struct input_event written_events[8];
 static struct input_event state_written_events[16];
 static struct input_event captured_state_events[8];
@@ -368,7 +371,12 @@ enum input_proxy_result input_proxy_source_device_read_event(
     barrier_operations[barrier_operation_count++] = 'R';
 
     if (read_result == INPUT_PROXY_SUCCESS) {
-        *event = source_event;
+        *event = source_event_count > 0
+            ? source_events[read_calls - 1]
+            : source_event;
+        if (read_calls <= 8) {
+            monotonic_time_ns += read_time_advance_ns[read_calls - 1];
+        }
     }
 
     return read_result;
@@ -506,6 +514,7 @@ static void reset_runtime(void)
     activity_operation_count = 0;
     runtime_control_drop_process_call = 0;
     sync_read_time_advance_ns = 0;
+    source_event_count = 0;
     memset(operations, 0, sizeof(operations));
     memset(state_written_events, 0, sizeof(state_written_events));
     memset(barrier_operations, 0, sizeof(barrier_operations));
@@ -518,6 +527,8 @@ static void reset_runtime(void)
     memset(property_change_masks, 0, sizeof(property_change_masks));
     memset(runtime_wait_usec, 0, sizeof(runtime_wait_usec));
     memset(activity_operations, 0, sizeof(activity_operations));
+    memset(source_events, 0, sizeof(source_events));
+    memset(read_time_advance_ns, 0, sizeof(read_time_advance_ns));
     memset(compatibility_results, 0, sizeof(compatibility_results));
 }
 
@@ -1679,11 +1690,57 @@ int main(void)
     }
 
     {
+        const struct input_event relative_motion = {
+            .type = EV_REL, .code = REL_X, .value = 1
+        };
+        const struct input_event absolute_motion = {
+            .type = EV_ABS, .code = ABS_X, .value = 10
+        };
+        const struct input_event key_press = {
+            .type = EV_KEY, .code = KEY_A, .value = 1
+        };
+        const struct input_event key_release = {
+            .type = EV_KEY, .code = KEY_A, .value = 0
+        };
+        const struct input_event switch_change = {
+            .type = EV_SW, .code = SW_LID, .value = 1
+        };
+        const struct input_event contact_begin = {
+            .type = EV_ABS, .code = ABS_MT_TRACKING_ID, .value = 4
+        };
+        const struct input_event contact_end = {
+            .type = EV_ABS, .code = ABS_MT_TRACKING_ID, .value = -1
+        };
+        const struct input_event slot_change = {
+            .type = EV_ABS, .code = ABS_MT_SLOT, .value = 1
+        };
+        const struct input_event synchronization = {
+            .type = EV_SYN, .code = SYN_REPORT, .value = 0
+        };
+
+        if (!input_proxy_session_event_is_activity(&relative_motion, true) ||
+            input_proxy_session_event_is_activity(&relative_motion, false) ||
+            input_proxy_session_event_is_activity(&absolute_motion, false) ||
+            !input_proxy_session_event_is_activity(&key_press, false) ||
+            !input_proxy_session_event_is_activity(&key_release, false) ||
+            !input_proxy_session_event_is_activity(&switch_change, false) ||
+            !input_proxy_session_event_is_activity(&contact_begin, false) ||
+            !input_proxy_session_event_is_activity(&contact_end, false) ||
+            input_proxy_session_event_is_activity(&slot_change, true) ||
+            input_proxy_session_event_is_activity(&synchronization, true)) {
+            fprintf(stderr, "activity event classification was incorrect\n");
+            failures++;
+        }
+    }
+
+    {
         const struct input_proxy_session_config activity_config = {
             .source_path = "/dev/input/event-test",
             .instance_name = "proxy_test_device",
             .activity_timeout_ms = 5,
             .detection_throttle_ms = 3,
+            .running_motion_activity = true,
+            .paused_motion_activity = true,
             .verbose = false
         };
 
@@ -1693,6 +1750,12 @@ int main(void)
         read_results[1] = INPUT_PROXY_SUCCESS;
         read_results[2] = INPUT_PROXY_EVENT_UNAVAILABLE;
         read_result_count = 3;
+        source_events[0] = (struct input_event) {
+            .type = EV_REL, .code = REL_X, .value = 1
+        };
+        source_events[1] = source_events[0];
+        source_event_count = 2;
+        read_time_advance_ns[1] = 2000000LL;
         shutdown_during_event_sleep = true;
         failures += run_runtime_test(
             "running activity retrigger and expiry",
@@ -1764,6 +1827,11 @@ int main(void)
         read_results[1] = INPUT_PROXY_SUCCESS;
         read_results[2] = INPUT_PROXY_EVENT_UNAVAILABLE;
         read_result_count = 3;
+        source_events[0] = (struct input_event) {
+            .type = EV_REL, .code = REL_X, .value = 1
+        };
+        source_events[1] = source_events[0];
+        source_event_count = 2;
         shutdown_during_event_sleep = true;
         failures += run_runtime_test(
             "paused activity non-retriggerable throttle",
@@ -1886,6 +1954,129 @@ int main(void)
             fprintf(stderr,
                 "ordinary event after recovery did not assert activity\n");
             failures++;
+        }
+
+        {
+            struct input_proxy_session_config policy_config = activity_config;
+
+            reset_runtime();
+            policy_config.running_motion_activity = false;
+            policy_config.paused_motion_activity = true;
+            runtime_control_available = true;
+            pause_request_process_calls[0] = 3;
+            pause_request_values[0] = true;
+            pause_request_count = 1;
+            read_results[0] = INPUT_PROXY_SUCCESS;
+            read_results[1] = INPUT_PROXY_SUCCESS;
+            read_results[2] = INPUT_PROXY_EVENT_UNAVAILABLE;
+            read_result_count = 3;
+            source_events[0] = (struct input_event) {
+                .type = EV_REL, .code = REL_X, .value = 1
+            };
+            source_events[1] = source_events[0];
+            source_event_count = 2;
+            shutdown_during_event_sleep = true;
+            failures += run_runtime_test(
+                "running motion off and paused motion on",
+                &policy_config,
+                INPUT_PROXY_SUCCESS
+            );
+            if (strcmp(activity_operations, "Pp") != 0 || write_calls != 1 ||
+                runtime_wait_count != 1 || runtime_wait_usec[0] != 3000) {
+                fprintf(stderr,
+                    "running-off paused-on motion policy was not independent\n");
+                failures++;
+            }
+
+            reset_runtime();
+            policy_config.running_motion_activity = false;
+            policy_config.paused_motion_activity = false;
+            runtime_control_available = true;
+            read_results[0] = INPUT_PROXY_SUCCESS;
+            read_results[1] = INPUT_PROXY_SUCCESS;
+            read_results[2] = INPUT_PROXY_EVENT_UNAVAILABLE;
+            read_result_count = 3;
+            source_events[0] = (struct input_event) {
+                .type = EV_KEY, .code = KEY_A, .value = 1
+            };
+            source_events[1] = (struct input_event) {
+                .type = EV_KEY, .code = KEY_A, .value = 0
+            };
+            source_event_count = 2;
+            read_time_advance_ns[1] = 2000000LL;
+            shutdown_during_event_sleep = true;
+            failures += run_runtime_test(
+                "interaction retriggers while running motion is off",
+                &policy_config,
+                INPUT_PROXY_SUCCESS
+            );
+            if (strcmp(activity_operations, "Rr") != 0 || write_calls != 2 ||
+                runtime_wait_count != 1 || runtime_wait_usec[0] != 5000) {
+                fprintf(stderr,
+                    "interaction was filtered with running motion off\n");
+                failures++;
+            }
+
+            reset_runtime();
+            policy_config.running_motion_activity = true;
+            policy_config.paused_motion_activity = false;
+            runtime_control_available = true;
+            pause_request_process_calls[0] = 3;
+            pause_request_values[0] = true;
+            pause_request_count = 1;
+            read_results[0] = INPUT_PROXY_SUCCESS;
+            read_results[1] = INPUT_PROXY_SUCCESS;
+            read_results[2] = INPUT_PROXY_EVENT_UNAVAILABLE;
+            read_result_count = 3;
+            source_events[0] = (struct input_event) {
+                .type = EV_REL, .code = REL_X, .value = 1
+            };
+            source_events[1] = source_events[0];
+            source_event_count = 2;
+            shutdown_during_event_sleep = true;
+            failures += run_runtime_test(
+                "running motion on and paused motion off",
+                &policy_config,
+                INPUT_PROXY_SUCCESS
+            );
+            if (strcmp(activity_operations, "Rr") != 0 || write_calls != 1 ||
+                runtime_wait_count != 1 || runtime_wait_usec[0] != 10000) {
+                fprintf(stderr,
+                    "running-on paused-off motion policy was not independent\n");
+                failures++;
+            }
+
+            reset_runtime();
+            policy_config.running_motion_activity = true;
+            policy_config.paused_motion_activity = false;
+            runtime_control_available = true;
+            pause_request_process_calls[0] = 2;
+            pause_request_values[0] = true;
+            pause_request_count = 1;
+            read_results[0] = INPUT_PROXY_SUCCESS;
+            read_results[1] = INPUT_PROXY_SUCCESS;
+            read_results[2] = INPUT_PROXY_EVENT_UNAVAILABLE;
+            read_result_count = 3;
+            source_events[0] = (struct input_event) {
+                .type = EV_KEY, .code = KEY_A, .value = 1
+            };
+            source_events[1] = (struct input_event) {
+                .type = EV_REL, .code = REL_X, .value = 1
+            };
+            source_event_count = 2;
+            read_time_advance_ns[1] = 2000000LL;
+            shutdown_during_event_sleep = true;
+            failures += run_runtime_test(
+                "ignored paused motion preserves throttle deadline",
+                &policy_config,
+                INPUT_PROXY_SUCCESS
+            );
+            if (strcmp(activity_operations, "Pp") != 0 ||
+                runtime_wait_count != 1 || runtime_wait_usec[0] != 1000) {
+                fprintf(stderr,
+                    "ignored paused motion changed the throttle deadline\n");
+                failures++;
+            }
         }
     }
 

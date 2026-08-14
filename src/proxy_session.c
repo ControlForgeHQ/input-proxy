@@ -36,6 +36,8 @@ struct input_proxy_session {
     struct timespec paused_activity_deadline;
     uint64_t activity_timeout_ms;
     uint64_t detection_throttle_ms;
+    bool running_motion_activity;
+    bool paused_motion_activity;
     bool activity_tracking_available;
     bool running_activity_timer_active;
     bool paused_activity_timer_active;
@@ -44,6 +46,28 @@ struct input_proxy_session {
     bool verbose;
     volatile sig_atomic_t shutdown_requested;
 };
+
+bool input_proxy_session_event_is_activity(
+    const struct input_event *event,
+    bool motion_activity_enabled)
+{
+    if (event == NULL || event->type == EV_SYN) {
+        return false;
+    }
+    if (event->type == EV_REL) {
+        return motion_activity_enabled;
+    }
+    if (event->type == EV_ABS) {
+        if (event->code == ABS_MT_TRACKING_ID) {
+            return true;
+        }
+        if (event->code == ABS_MT_SLOT) {
+            return false;
+        }
+        return motion_activity_enabled;
+    }
+    return true;
+}
 
 static bool monotonic_now(struct timespec *now)
 {
@@ -743,6 +767,8 @@ enum input_proxy_result input_proxy_session_create(
     new_session->verbose = config->verbose;
     new_session->activity_timeout_ms = config->activity_timeout_ms;
     new_session->detection_throttle_ms = config->detection_throttle_ms;
+    new_session->running_motion_activity = config->running_motion_activity;
+    new_session->paused_motion_activity = config->paused_motion_activity;
     new_session->runtime_state = (struct input_proxy_runtime_control_state) {
         .instance_name = new_session->instance_name,
         .source_path = new_session->source_path,
@@ -899,7 +925,13 @@ enum input_proxy_result input_proxy_session_process_event(
         return result;
     }
 
-    process_physical_activity(session);
+    if (input_proxy_session_event_is_activity(
+            &event,
+            session->runtime_state.paused
+                ? session->paused_motion_activity
+                : session->running_motion_activity)) {
+        process_physical_activity(session);
+    }
 
     return process_read_event(session, virtual_device, &event);
 }

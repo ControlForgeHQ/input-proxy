@@ -106,10 +106,30 @@ static void print_run_help(FILE *stream)
         "  --detection-throttle-ms MS\n"
         "                 Paused activity throttle, 0-4294967295 "
         "(default: 250).\n"
+        "  --running-motion-activity on|off\n"
+        "                 Count motion while running (default: on).\n"
+        "  --paused-motion-activity on|off\n"
+        "                 Count motion while paused (default: on).\n"
         "  --verbose      Show additional lifecycle diagnostics.\n"
         "  --help         Show this help and exit.\n\n",
         stream
     );
+}
+
+static bool parse_on_off(const char *text, bool *enabled)
+{
+    if (text == NULL || enabled == NULL) {
+        return false;
+    }
+    if (strcmp(text, "on") == 0) {
+        *enabled = true;
+        return true;
+    }
+    if (strcmp(text, "off") == 0) {
+        *enabled = false;
+        return true;
+    }
+    return false;
 }
 
 static bool parse_duration_ms(const char *text, uint64_t *duration_ms)
@@ -199,6 +219,8 @@ static enum input_proxy_result parse_run_config(
     int index;
     bool activity_timeout_seen = false;
     bool detection_throttle_seen = false;
+    bool running_motion_seen = false;
+    bool paused_motion_seen = false;
 
     if (config == NULL) {
         return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
@@ -206,7 +228,9 @@ static enum input_proxy_result parse_run_config(
 
     *config = (struct input_proxy_session_config) {
         .activity_timeout_ms = INPUT_PROXY_DEFAULT_ACTIVITY_TIMEOUT_MS,
-        .detection_throttle_ms = INPUT_PROXY_DEFAULT_DETECTION_THROTTLE_MS
+        .detection_throttle_ms = INPUT_PROXY_DEFAULT_DETECTION_THROTTLE_MS,
+        .running_motion_activity = true,
+        .paused_motion_activity = true
     };
 
     for (index = 2; index < argc; ++index) {
@@ -259,6 +283,30 @@ static enum input_proxy_result parse_run_config(
                 return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
             }
             detection_throttle_seen = true;
+            index++;
+            continue;
+        }
+
+        if (strcmp(argv[index], "--running-motion-activity") == 0) {
+            if (running_motion_seen || index + 1 >= argc || !parse_on_off(
+                    argv[index + 1], &config->running_motion_activity)) {
+                fprintf(stderr, "input-proxy: invalid value for "
+                    "--running-motion-activity: expected 'on' or 'off'\n");
+                return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
+            }
+            running_motion_seen = true;
+            index++;
+            continue;
+        }
+
+        if (strcmp(argv[index], "--paused-motion-activity") == 0) {
+            if (paused_motion_seen || index + 1 >= argc || !parse_on_off(
+                    argv[index + 1], &config->paused_motion_activity)) {
+                fprintf(stderr, "input-proxy: invalid value for "
+                    "--paused-motion-activity: expected 'on' or 'off'\n");
+                return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
+            }
+            paused_motion_seen = true;
             index++;
             continue;
         }
