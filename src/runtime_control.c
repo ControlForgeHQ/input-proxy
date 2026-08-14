@@ -98,25 +98,10 @@ static const sd_bus_vtable runtime_vtable[] = {
 int input_proxy_runtime_control_derive_service_name(char *service_name,
     size_t service_name_size, const char *instance_name)
 {
-    size_t index;
     int length;
 
     if (service_name == NULL || instance_name == NULL) {
         return -EINVAL;
-    }
-    if (!((instance_name[0] >= 'A' && instance_name[0] <= 'Z') ||
-          (instance_name[0] >= 'a' && instance_name[0] <= 'z') ||
-          instance_name[0] == '_')) {
-        return -EINVAL;
-    }
-    for (index = 1; instance_name[index] != '\0'; ++index) {
-        const char byte = instance_name[index];
-
-        if (!((byte >= 'A' && byte <= 'Z') ||
-              (byte >= 'a' && byte <= 'z') ||
-              (byte >= '0' && byte <= '9') || byte == '_' || byte == '-')) {
-            return -EINVAL;
-        }
     }
     length = snprintf(service_name, service_name_size, "%s%s",
         SERVICE_PREFIX, instance_name);

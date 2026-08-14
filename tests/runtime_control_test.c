@@ -28,7 +28,7 @@ int main(void)
         failures++;
     }
     if (input_proxy_runtime_control_derive_service_name(
-            service_name, sizeof(service_name), "invalid.name") != -EINVAL) {
+            service_name, sizeof(service_name), "invalid/name") != -EINVAL) {
         fprintf(stderr, "invalid derived identifier was accepted\n");
         failures++;
     }
