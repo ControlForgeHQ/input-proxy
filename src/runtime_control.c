@@ -194,10 +194,12 @@ void input_proxy_runtime_control_destroy(struct input_proxy_runtime_control *con
     free(control);
 }
 
-struct input_proxy_runtime_control *input_proxy_runtime_control_create(
+static struct input_proxy_runtime_control *create_runtime_control(
     const struct input_proxy_runtime_control_state *state,
     input_proxy_runtime_control_pause_handler pause_handler,
-    void *pause_handler_userdata)
+    void *pause_handler_userdata,
+    bool report_failure,
+    enum input_proxy_runtime_control_failure *reported_failure)
 {
     struct input_proxy_runtime_control *control;
     enum input_proxy_runtime_control_failure failure;
@@ -205,12 +207,20 @@ struct input_proxy_runtime_control *input_proxy_runtime_control_create(
     int result;
 
     if (state == NULL) {
+        if (reported_failure != NULL) {
+            *reported_failure = INPUT_PROXY_RUNTIME_CONTROL_INITIALIZATION_FAILED;
+        }
         return NULL;
     }
     control = calloc(1, sizeof(*control));
     if (control == NULL) {
-        warn_failure("allocation", NULL,
-            INPUT_PROXY_RUNTIME_CONTROL_INITIALIZATION_FAILED, ENOMEM);
+        failure = INPUT_PROXY_RUNTIME_CONTROL_INITIALIZATION_FAILED;
+        if (report_failure) {
+            warn_failure("allocation", NULL, failure, ENOMEM);
+        }
+        if (reported_failure != NULL) {
+            *reported_failure = failure;
+        }
         return NULL;
     }
     control->state = state;
@@ -219,8 +229,10 @@ struct input_proxy_runtime_control *input_proxy_runtime_control_create(
     result = input_proxy_runtime_control_derive_service_name(
         control->service_name, sizeof(control->service_name), state->instance_name);
     if (result < 0) {
-        warn_failure("service-name derivation", NULL,
-            INPUT_PROXY_RUNTIME_CONTROL_INVALID_IDENTIFIER, -result);
+        failure = INPUT_PROXY_RUNTIME_CONTROL_INVALID_IDENTIFIER;
+        if (report_failure) {
+            warn_failure("service-name derivation", NULL, failure, -result);
+        }
         goto error;
     }
     stage = "system-bus connection";
@@ -243,13 +255,40 @@ struct input_proxy_runtime_control *input_proxy_runtime_control_create(
         failure = input_proxy_runtime_control_classify_name_failure(-result);
         goto initialization_error;
     }
+    if (reported_failure != NULL) {
+        *reported_failure = INPUT_PROXY_RUNTIME_CONTROL_INITIALIZATION_FAILED;
+    }
     return control;
 
 initialization_error:
-    warn_failure(stage, control->service_name, failure, -result);
+    if (report_failure) {
+        warn_failure(stage, control->service_name, failure, -result);
+    }
 error:
+    if (reported_failure != NULL) {
+        *reported_failure = failure;
+    }
     input_proxy_runtime_control_destroy(control);
     return NULL;
+}
+
+struct input_proxy_runtime_control *input_proxy_runtime_control_create(
+    const struct input_proxy_runtime_control_state *state,
+    input_proxy_runtime_control_pause_handler pause_handler,
+    void *pause_handler_userdata)
+{
+    return create_runtime_control(
+        state, pause_handler, pause_handler_userdata, true, NULL);
+}
+
+struct input_proxy_runtime_control *input_proxy_runtime_control_recreate(
+    const struct input_proxy_runtime_control_state *state,
+    input_proxy_runtime_control_pause_handler pause_handler,
+    void *pause_handler_userdata,
+    enum input_proxy_runtime_control_failure *failure)
+{
+    return create_runtime_control(
+        state, pause_handler, pause_handler_userdata, false, failure);
 }
 
 size_t input_proxy_runtime_control_apply_changes(

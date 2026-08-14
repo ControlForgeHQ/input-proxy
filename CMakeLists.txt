@@ -153,6 +153,7 @@ if(BUILD_TESTING)
         PRIVATE
             "-Wl,--wrap=input_proxy_runtime_control_apply_changes"
             "-Wl,--wrap=input_proxy_runtime_control_create"
+            "-Wl,--wrap=input_proxy_runtime_control_recreate"
             "-Wl,--wrap=input_proxy_runtime_control_process"
             "-Wl,--wrap=input_proxy_runtime_control_wait"
             "-Wl,--wrap=input_proxy_runtime_control_destroy"

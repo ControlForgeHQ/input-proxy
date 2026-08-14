@@ -78,6 +78,13 @@ static enum input_proxy_result pause_request_results[8];
 static char pause_operations[32];
 static int pause_operation_count;
 static bool runtime_control_available;
+static bool runtime_control_recovery_available;
+static int runtime_control_recreate_calls;
+static int runtime_control_recovery_success_call;
+static bool recreated_paused;
+static bool recreated_source_available;
+static bool recreated_running_activity;
+static bool recreated_paused_activity;
 static unsigned int property_change_masks[32];
 static int property_change_count;
 static uint64_t runtime_wait_usec[32];
@@ -85,6 +92,7 @@ static int runtime_wait_count;
 static char activity_operations[64];
 static int activity_operation_count;
 static int runtime_control_drop_process_call;
+static int runtime_control_second_drop_process_call;
 static long long sync_read_time_advance_ns;
 
 static struct input_proxy_source_device *const test_source_device =
@@ -151,6 +159,29 @@ struct input_proxy_runtime_control *__wrap_input_proxy_runtime_control_create(
         : NULL;
 }
 
+struct input_proxy_runtime_control *__wrap_input_proxy_runtime_control_recreate(
+    const struct input_proxy_runtime_control_state *state,
+    input_proxy_runtime_control_pause_handler pause_handler,
+    void *pause_handler_userdata,
+    enum input_proxy_runtime_control_failure *failure)
+{
+    (void)state;
+    (void)pause_handler;
+    (void)pause_handler_userdata;
+    runtime_control_recreate_calls++;
+    recreated_paused = state->paused;
+    recreated_source_available = state->source_available;
+    recreated_running_activity = state->activity_while_running;
+    recreated_paused_activity = state->activity_while_paused;
+    if (runtime_control_recovery_available &&
+        runtime_control_recreate_calls >= runtime_control_recovery_success_call) {
+        runtime_control_available = true;
+        return (struct input_proxy_runtime_control *)1;
+    }
+    *failure = INPUT_PROXY_RUNTIME_CONTROL_SYSTEM_BUS_UNAVAILABLE;
+    return NULL;
+}
+
 void __real_input_proxy_runtime_control_process(
     struct input_proxy_runtime_control **control);
 
@@ -161,8 +192,11 @@ void __wrap_input_proxy_runtime_control_process(
         __real_input_proxy_runtime_control_process(control);
     }
     runtime_process_calls++;
-    if (runtime_control_available && runtime_control_drop_process_call > 0 &&
-        runtime_process_calls == runtime_control_drop_process_call) {
+    if (runtime_control_available &&
+        ((runtime_control_drop_process_call > 0 &&
+          runtime_process_calls == runtime_control_drop_process_call) ||
+         (runtime_control_second_drop_process_call > 0 &&
+          runtime_process_calls == runtime_control_second_drop_process_call))) {
         *control = NULL;
         runtime_control_available = false;
     }
@@ -509,10 +543,18 @@ static void reset_runtime(void)
     pause_request_index = 0;
     pause_operation_count = 0;
     runtime_control_available = false;
+    runtime_control_recovery_available = false;
+    runtime_control_recreate_calls = 0;
+    runtime_control_recovery_success_call = 1;
+    recreated_paused = false;
+    recreated_source_available = false;
+    recreated_running_activity = false;
+    recreated_paused_activity = false;
     property_change_count = 0;
     runtime_wait_count = 0;
     activity_operation_count = 0;
     runtime_control_drop_process_call = 0;
+    runtime_control_second_drop_process_call = 0;
     sync_read_time_advance_ns = 0;
     source_event_count = 0;
     memset(operations, 0, sizeof(operations));
@@ -1863,6 +1905,91 @@ int main(void)
             fprintf(stderr, "control loss did not discard activity while "
                 "preserving forwarding: activity=%s writes=%d\n",
                 activity_operations, write_calls);
+            failures++;
+        }
+
+        reset_runtime();
+        runtime_control_available = true;
+        runtime_control_recovery_available = true;
+        runtime_control_drop_process_call = 3;
+        read_results[0] = INPUT_PROXY_SUCCESS;
+        read_results[1] = INPUT_PROXY_SUCCESS;
+        read_results[2] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+        read_result_count = 3;
+        read_time_advance_ns[1] = 5000000000LL;
+        failures += run_runtime_test(
+            "runtime control recovers after established loss",
+            &activity_config,
+            INPUT_PROXY_ERROR_EVENT_READ_FAILED
+        );
+        if (runtime_control_recreate_calls != 1 ||
+            recreated_paused || !recreated_source_available ||
+            recreated_running_activity || recreated_paused_activity ||
+            write_calls != 2) {
+            fprintf(stderr, "runtime control recovery did not restore current "
+                "session state with reset activity\n");
+            failures++;
+        }
+
+        reset_runtime();
+        read_results[0] = INPUT_PROXY_SUCCESS;
+        read_results[1] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+        read_result_count = 2;
+        read_time_advance_ns[0] = 6000000000LL;
+        failures += run_runtime_test(
+            "initial runtime control failure is not retried",
+            &activity_config,
+            INPUT_PROXY_ERROR_EVENT_READ_FAILED
+        );
+        if (runtime_control_recreate_calls != 0) {
+            fprintf(stderr, "initial runtime control failure entered the "
+                "recovery loop\n");
+            failures++;
+        }
+
+        reset_runtime();
+        runtime_control_available = true;
+        runtime_control_recovery_available = true;
+        runtime_control_recovery_success_call = 2;
+        runtime_control_drop_process_call = 3;
+        read_results[0] = INPUT_PROXY_SUCCESS;
+        read_results[1] = INPUT_PROXY_SUCCESS;
+        read_results[2] = INPUT_PROXY_SUCCESS;
+        read_results[3] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+        read_result_count = 4;
+        read_time_advance_ns[1] = 5000000000LL;
+        read_time_advance_ns[2] = 5000000000LL;
+        failures += run_runtime_test(
+            "failed runtime control recovery is rescheduled",
+            &activity_config,
+            INPUT_PROXY_ERROR_EVENT_READ_FAILED
+        );
+        if (runtime_control_recreate_calls != 2 || write_calls != 3) {
+            fprintf(stderr, "failed runtime control recovery was not retried "
+                "at the next deadline\n");
+            failures++;
+        }
+
+        reset_runtime();
+        runtime_control_available = true;
+        runtime_control_recovery_available = true;
+        runtime_control_drop_process_call = 3;
+        runtime_control_second_drop_process_call = 5;
+        read_results[0] = INPUT_PROXY_SUCCESS;
+        read_results[1] = INPUT_PROXY_SUCCESS;
+        read_results[2] = INPUT_PROXY_SUCCESS;
+        read_results[3] = INPUT_PROXY_SUCCESS;
+        read_results[4] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+        read_result_count = 5;
+        read_time_advance_ns[1] = 5000000000LL;
+        read_time_advance_ns[3] = 5000000000LL;
+        failures += run_runtime_test(
+            "runtime control supports repeated loss and recovery",
+            &activity_config,
+            INPUT_PROXY_ERROR_EVENT_READ_FAILED
+        );
+        if (runtime_control_recreate_calls != 2 || write_calls != 4) {
+            fprintf(stderr, "runtime control recovery was one-shot\n");
             failures++;
         }
 

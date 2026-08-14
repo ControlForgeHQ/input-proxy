@@ -21,6 +21,7 @@
 #define EVENT_UNAVAILABLE_DELAY_NS 10000000L
 #define SOURCE_RETRY_DELAY_NS 100000000L
 #define RECONNECT_SETTLING_WINDOW_SECONDS 2
+#define RUNTIME_CONTROL_RETRY_MS UINT64_C(5000)
 #define NANOSECONDS_PER_MILLISECOND UINT64_C(1000000)
 #define MICROSECONDS_PER_SECOND UINT64_C(1000000)
 
@@ -34,11 +35,14 @@ struct input_proxy_session {
     struct input_proxy_runtime_control_state runtime_state;
     struct timespec running_activity_deadline;
     struct timespec paused_activity_deadline;
+    struct timespec runtime_control_retry_deadline;
     uint64_t activity_timeout_ms;
     uint64_t detection_throttle_ms;
     bool running_motion_activity;
     bool paused_motion_activity;
     bool activity_tracking_available;
+    bool runtime_control_ever_established;
+    bool runtime_control_retry_active;
     bool running_activity_timer_active;
     bool paused_activity_timer_active;
     enum input_proxy_result fatal_result;
@@ -46,6 +50,8 @@ struct input_proxy_session {
     bool verbose;
     volatile sig_atomic_t shutdown_requested;
 };
+
+static enum input_proxy_result handle_pause_request(void *userdata, bool paused);
 
 bool input_proxy_session_event_is_activity(
     const struct input_event *event,
@@ -112,15 +118,74 @@ static void discard_activity_tracking(struct input_proxy_session *session)
         NULL, &session->runtime_state, &changes);
 }
 
+static void schedule_runtime_control_retry(struct input_proxy_session *session)
+{
+    struct timespec now;
+
+    if (!monotonic_now(&now)) {
+        session->runtime_control_retry_active = false;
+        return;
+    }
+    set_deadline(&session->runtime_control_retry_deadline, &now,
+        RUNTIME_CONTROL_RETRY_MS);
+    session->runtime_control_retry_active = true;
+}
+
 static void update_control_availability(struct input_proxy_session *session)
 {
     if (session->runtime_control == NULL) {
         if (session->activity_tracking_available) {
             discard_activity_tracking(session);
+            if (session->runtime_control_ever_established) {
+                schedule_runtime_control_retry(session);
+            }
         }
     } else if (!session->activity_tracking_available) {
         session->activity_tracking_available = true;
     }
+}
+
+static void process_runtime_control_recovery(
+    struct input_proxy_session *session)
+{
+    enum input_proxy_runtime_control_failure failure;
+    struct timespec now;
+    char service_name[256];
+
+    update_control_availability(session);
+    if (!session->runtime_control_retry_active ||
+        !monotonic_now(&now) ||
+        !deadline_expired(&session->runtime_control_retry_deadline, &now)) {
+        return;
+    }
+
+    if (input_proxy_runtime_control_derive_service_name(service_name,
+            sizeof(service_name), session->instance_name) != 0) {
+        fprintf(stderr, "input-proxy: warning: D-Bus runtime control "
+            "recovery disabled: invalid derived D-Bus identifier "
+            "(internal invariant failure)\n");
+        session->runtime_control_retry_active = false;
+        return;
+    }
+
+    session->runtime_control = input_proxy_runtime_control_recreate(
+        &session->runtime_state, handle_pause_request, session, &failure);
+    if (session->runtime_control == NULL) {
+        if (failure == INPUT_PROXY_RUNTIME_CONTROL_INVALID_IDENTIFIER) {
+            fprintf(stderr, "input-proxy: warning: D-Bus runtime control "
+                "recovery disabled: invalid derived D-Bus identifier "
+                "(internal invariant failure)\n");
+            session->runtime_control_retry_active = false;
+            return;
+        }
+        schedule_runtime_control_retry(session);
+        return;
+    }
+
+    session->runtime_control_retry_active = false;
+    session->activity_tracking_available = true;
+    printf("input-proxy: D-Bus runtime control restored: %s\n", service_name);
+    fflush(stdout);
 }
 
 static void process_physical_activity(struct input_proxy_session *session)
@@ -248,21 +313,14 @@ static void close_source_device(struct input_proxy_session *session)
     set_source_available(session, false);
 }
 
-static uint64_t activity_wait_timeout_usec(
-    struct input_proxy_session *session, uint64_t maximum_usec)
+static uint64_t deadline_wait_timeout_usec(const struct timespec *deadline,
+    uint64_t maximum_usec)
 {
-    const struct timespec *deadline = NULL;
     struct timespec now;
     uint64_t remaining_usec;
     time_t seconds;
     long nanoseconds;
 
-    input_proxy_session_process_activity_timers(session);
-    if (session->running_activity_timer_active) {
-        deadline = &session->running_activity_deadline;
-    } else if (session->paused_activity_timer_active) {
-        deadline = &session->paused_activity_deadline;
-    }
     if (deadline == NULL || !monotonic_now(&now)) {
         return maximum_usec;
     }
@@ -280,14 +338,35 @@ static uint64_t activity_wait_timeout_usec(
     return remaining_usec < maximum_usec ? remaining_usec : maximum_usec;
 }
 
+static uint64_t runtime_wait_timeout_usec(
+    struct input_proxy_session *session, uint64_t maximum_usec)
+{
+    const struct timespec *deadline = NULL;
+    uint64_t timeout_usec;
+
+    input_proxy_session_process_activity_timers(session);
+    if (session->running_activity_timer_active) {
+        deadline = &session->running_activity_deadline;
+    } else if (session->paused_activity_timer_active) {
+        deadline = &session->paused_activity_deadline;
+    }
+    timeout_usec = deadline_wait_timeout_usec(deadline, maximum_usec);
+    if (session->runtime_control_retry_active) {
+        timeout_usec = deadline_wait_timeout_usec(
+            &session->runtime_control_retry_deadline, timeout_usec);
+    }
+    return timeout_usec;
+}
+
 static void wait_with_activity_timer(
     struct input_proxy_session *session, uint64_t maximum_usec)
 {
     input_proxy_runtime_control_wait(
         &session->runtime_control,
-        activity_wait_timeout_usec(session, maximum_usec));
+        runtime_wait_timeout_usec(session, maximum_usec));
     update_control_availability(session);
     input_proxy_session_process_activity_timers(session);
+    process_runtime_control_recovery(session);
 }
 
 static void wait_for_event(struct input_proxy_session *session)
@@ -334,6 +413,7 @@ static enum input_proxy_result create_active_devices(
     while (!session->shutdown_requested) {
         input_proxy_runtime_control_process(&session->runtime_control);
         update_control_availability(session);
+        process_runtime_control_recovery(session);
         input_proxy_session_process_activity_timers(session);
         if (session->fatal_result != INPUT_PROXY_SUCCESS) {
             return session->fatal_result;
@@ -801,6 +881,7 @@ enum input_proxy_result input_proxy_session_run(
         handle_pause_request,
         session
     );
+    session->runtime_control_ever_established = session->runtime_control != NULL;
     session->activity_tracking_available = session->runtime_control != NULL;
     result = INPUT_PROXY_SUCCESS;
     while (!session->shutdown_requested) {
@@ -812,6 +893,7 @@ enum input_proxy_result input_proxy_session_run(
         while (!session->shutdown_requested) {
             input_proxy_runtime_control_process(&session->runtime_control);
             update_control_availability(session);
+            process_runtime_control_recovery(session);
             input_proxy_session_process_activity_timers(session);
             if (session->fatal_result != INPUT_PROXY_SUCCESS) {
                 result = session->fatal_result;
