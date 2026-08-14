@@ -7,6 +7,7 @@
 
 #include "proxy_session_internal.h"
 #include "instance_name_internal.h"
+#include "source_device_internal.h"
 #include "virtual_device_internal.h"
 
 #include <signal.h>
@@ -172,6 +173,14 @@ static enum input_proxy_result create_active_devices(
                 session->source_path,
                 session->instance_name
             );
+            result = input_proxy_session_synchronize_state(
+                session,
+                session->source_device,
+                session->virtual_device
+            );
+            if (result != INPUT_PROXY_SUCCESS) {
+                return result;
+            }
             printf(
                 "input-proxy: source reconnected: %s\n",
                 session->source_path
@@ -208,6 +217,15 @@ static enum input_proxy_result create_active_devices(
         );
         if (result != INPUT_PROXY_SUCCESS) {
             close_source_device(session);
+            return result;
+        }
+
+        result = input_proxy_session_synchronize_state(
+            session,
+            session->source_device,
+            session->virtual_device
+        );
+        if (result != INPUT_PROXY_SUCCESS) {
             return result;
         }
 
@@ -268,6 +286,78 @@ static enum input_proxy_result process_read_event(
     (void)session;
 
     return input_proxy_virtual_device_write_event(virtual_device, event);
+}
+
+enum input_proxy_result input_proxy_session_synchronize_state(
+    struct input_proxy_session *session,
+    const struct input_proxy_source_device *source_device,
+    struct input_proxy_virtual_device *virtual_device)
+{
+    const struct input_event synchronization_boundary = {
+        .type = EV_SYN,
+        .code = SYN_REPORT,
+        .value = 0
+    };
+    struct input_proxy_source_state state = {0};
+    enum input_proxy_result result;
+    size_t index;
+
+    if (session == NULL || source_device == NULL || virtual_device == NULL) {
+        return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
+    }
+
+    log_verbose(
+        session,
+        "synchronizing virtual device %s to current state of source %s",
+        session->instance_name,
+        session->source_path
+    );
+
+    result = input_proxy_source_device_capture_state(source_device, &state);
+    if (result != INPUT_PROXY_SUCCESS) {
+        goto cleanup;
+    }
+
+    for (index = 0; index < state.event_count; index++) {
+        result = input_proxy_virtual_device_write_event(
+            virtual_device,
+            &state.events[index]
+        );
+        if (result != INPUT_PROXY_SUCCESS) {
+            goto cleanup;
+        }
+    }
+
+    result = input_proxy_virtual_device_write_event(
+        virtual_device,
+        &synchronization_boundary
+    );
+    if (result == INPUT_PROXY_SUCCESS) {
+        result = input_proxy_source_device_check_available(source_device);
+    }
+    if (result == INPUT_PROXY_SUCCESS) {
+        log_verbose(
+            session,
+            "current-state synchronization completed for source %s and "
+            "virtual device %s",
+            session->source_path,
+            session->instance_name
+        );
+    }
+
+cleanup:
+    input_proxy_source_state_destroy(&state);
+    if (result != INPUT_PROXY_SUCCESS) {
+        fprintf(
+            stderr,
+            "input-proxy: fatal current-state synchronization failed for "
+            "virtual device %s and source %s: %s\n",
+            session->instance_name,
+            session->source_path,
+            input_proxy_result_string(result)
+        );
+    }
+    return result;
 }
 
 static enum input_proxy_result recover_synchronization(

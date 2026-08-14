@@ -91,6 +91,7 @@ if(BUILD_TESTING)
         source-device-test
         PRIVATE
             ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src
     )
 
     target_link_libraries(
