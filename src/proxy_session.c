@@ -7,6 +7,7 @@
 
 #include "proxy_session_internal.h"
 #include "instance_name_internal.h"
+#include "runtime_control_internal.h"
 #include "source_device_internal.h"
 #include "virtual_device_internal.h"
 
@@ -27,6 +28,8 @@ struct input_proxy_session {
     struct input_proxy_instance_name *name_ownership;
     struct input_proxy_source_device *source_device;
     struct input_proxy_virtual_device *virtual_device;
+    struct input_proxy_runtime_control *runtime_control;
+    struct input_proxy_runtime_control_state runtime_state;
     bool source_opened_successfully;
     bool verbose;
     volatile sig_atomic_t shutdown_requested;
@@ -56,32 +59,40 @@ static void cleanup_active_devices(struct input_proxy_session *session)
 
     input_proxy_source_device_close(session->source_device);
     session->source_device = NULL;
+    session->runtime_state.source_available = false;
 }
 
 static void close_source_device(struct input_proxy_session *session)
 {
     input_proxy_source_device_close(session->source_device);
     session->source_device = NULL;
+    session->runtime_state.source_available = false;
 }
 
-static void wait_for_event(void)
+static void wait_for_event(struct input_proxy_session *session)
 {
     const struct timespec delay = {
         .tv_sec = 0,
         .tv_nsec = EVENT_UNAVAILABLE_DELAY_NS
     };
 
-    (void)nanosleep(&delay, NULL);
+    input_proxy_runtime_control_wait(
+        &session->runtime_control,
+        (uint64_t)delay.tv_nsec / 1000U
+    );
 }
 
-static void wait_for_source(void)
+static void wait_for_source(struct input_proxy_session *session)
 {
     const struct timespec delay = {
         .tv_sec = 0,
         .tv_nsec = SOURCE_RETRY_DELAY_NS
     };
 
-    (void)nanosleep(&delay, NULL);
+    input_proxy_runtime_control_wait(
+        &session->runtime_control,
+        (uint64_t)delay.tv_nsec / 1000U
+    );
 }
 
 static bool reconnect_settling_expired(const struct timespec *deadline)
@@ -106,6 +117,7 @@ static enum input_proxy_result create_active_devices(
     struct timespec permission_deadline;
 
     while (!session->shutdown_requested) {
+        input_proxy_runtime_control_process(&session->runtime_control);
         result = input_proxy_source_device_open(
             &session->source_device,
             session->source_path
@@ -119,7 +131,7 @@ static enum input_proxy_result create_active_devices(
                 fflush(stdout);
                 waiting_logged = true;
             }
-            wait_for_source();
+            wait_for_source(session);
             continue;
         }
         if (result == INPUT_PROXY_ERROR_SOURCE_PERMISSION_DENIED &&
@@ -147,7 +159,7 @@ static enum input_proxy_result create_active_devices(
                 return result;
             }
 
-            wait_for_source();
+            wait_for_source(session);
             continue;
         }
         if (result != INPUT_PROXY_SUCCESS) {
@@ -155,6 +167,7 @@ static enum input_proxy_result create_active_devices(
         }
 
         session->source_opened_successfully = true;
+        session->runtime_state.source_available = true;
         log_verbose(
             session,
             "source opened successfully: %s",
@@ -453,6 +466,14 @@ enum input_proxy_result input_proxy_session_create(
     }
 
     new_session->verbose = config->verbose;
+    new_session->runtime_state = (struct input_proxy_runtime_control_state) {
+        .instance_name = new_session->instance_name,
+        .source_path = new_session->source_path,
+        .paused = false,
+        .source_available = false,
+        .activity_while_running = false,
+        .activity_while_paused = false
+    };
 
     *session = new_session;
 
@@ -472,6 +493,9 @@ enum input_proxy_result input_proxy_session_run(
         return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
     }
 
+    session->runtime_control = input_proxy_runtime_control_create(
+        &session->runtime_state
+    );
     result = INPUT_PROXY_SUCCESS;
     while (!session->shutdown_requested) {
         result = create_active_devices(session);
@@ -480,13 +504,14 @@ enum input_proxy_result input_proxy_session_run(
         }
 
         while (!session->shutdown_requested) {
+            input_proxy_runtime_control_process(&session->runtime_control);
             result = input_proxy_session_process_event(
                 session,
                 session->source_device,
                 session->virtual_device
             );
             if (result == INPUT_PROXY_EVENT_UNAVAILABLE) {
-                wait_for_event();
+                wait_for_event(session);
                 continue;
             }
 
@@ -545,6 +570,8 @@ enum input_proxy_result input_proxy_session_run(
     }
 
     cleanup_active_devices(session);
+    input_proxy_runtime_control_destroy(session->runtime_control);
+    session->runtime_control = NULL;
 
     if (session->shutdown_requested) {
         log_verbose(
@@ -606,6 +633,7 @@ void input_proxy_session_destroy(
     }
 
     cleanup_active_devices(session);
+    input_proxy_runtime_control_destroy(session->runtime_control);
     input_proxy_instance_name_release(session->name_ownership);
     free(session->instance_name);
     free(session->source_path);

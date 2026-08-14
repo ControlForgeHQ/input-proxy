@@ -18,6 +18,7 @@ configure_file(
 
 find_package(PkgConfig REQUIRED)
 pkg_check_modules(LIBEVDEV REQUIRED IMPORTED_TARGET libevdev)
+pkg_check_modules(LIBSYSTEMD REQUIRED IMPORTED_TARGET libsystemd)
 
 add_executable(
     input-proxy
@@ -26,6 +27,7 @@ add_executable(
     src/instance_name.c
     src/main.c
     src/proxy_session.c
+    src/runtime_control.c
     src/result.c
     src/source_device.c
     src/virtual_device.c
@@ -47,6 +49,7 @@ target_link_libraries(
     input-proxy
     PRIVATE
         PkgConfig::LIBEVDEV
+        PkgConfig::LIBSYSTEMD
 )
 
 include(CTest)
@@ -128,6 +131,7 @@ if(BUILD_TESTING)
         proxy-session-test
         tests/proxy_session_test.c
         src/proxy_session.c
+        src/runtime_control.c
         src/instance_name.c
         src/result.c
     )
@@ -137,7 +141,10 @@ if(BUILD_TESTING)
         PRIVATE
             ${PROJECT_SOURCE_DIR}/include
             ${PROJECT_SOURCE_DIR}/src
+            ${PROJECT_BINARY_DIR}/generated/include
     )
+
+    target_link_libraries(proxy-session-test PRIVATE PkgConfig::LIBSYSTEMD)
 
     add_test(NAME proxy-session-test COMMAND proxy-session-test)
 
@@ -156,6 +163,20 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME instance-name-test COMMAND instance-name-test)
+
+    add_executable(
+        runtime-control-test
+        tests/runtime_control_test.c
+        src/runtime_control.c
+    )
+    target_include_directories(
+        runtime-control-test
+        PRIVATE
+            ${PROJECT_BINARY_DIR}/generated/include
+            ${PROJECT_SOURCE_DIR}/src
+    )
+    target_link_libraries(runtime-control-test PRIVATE PkgConfig::LIBSYSTEMD)
+    add_test(NAME runtime-control-test COMMAND runtime-control-test)
 
     add_test(
         NAME cli-test
