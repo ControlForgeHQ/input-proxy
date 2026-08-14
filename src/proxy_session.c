@@ -333,6 +333,9 @@ enum input_proxy_result input_proxy_session_synchronize_state(
         &synchronization_boundary
     );
     if (result == INPUT_PROXY_SUCCESS) {
+        result = input_proxy_source_device_check_available(source_device);
+    }
+    if (result == INPUT_PROXY_SUCCESS) {
         log_verbose(
             session,
             "current-state synchronization completed for source %s and "

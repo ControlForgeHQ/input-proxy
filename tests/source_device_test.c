@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <libevdev/libevdev.h>
 #include <stdbool.h>
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -25,6 +26,8 @@ static bool unavailable_codes[EV_MAX + 1][KEY_MAX + 1];
 static int current_slot_values[4][ABS_MAX + 1];
 static bool unavailable_slot_values[4][ABS_MAX + 1];
 static int current_slot_count;
+static int availability_ioctl_result;
+static int availability_ioctl_errno;
 static struct libevdev *const test_evdev = (struct libevdev *)1;
 
 int libevdev_new_from_fd(int file_descriptor, struct libevdev **device)
@@ -101,6 +104,28 @@ int libevdev_fetch_slot_value(
     }
     *value = current_slot_values[slot][code];
     return 1;
+}
+
+int ioctl(int file_descriptor, unsigned long request, ...)
+{
+    va_list arguments;
+    int *version;
+
+    (void)file_descriptor;
+    va_start(arguments, request);
+    version = va_arg(arguments, int *);
+    va_end(arguments);
+
+    if (request != EVIOCGVERSION) {
+        errno = EINVAL;
+        return -1;
+    }
+    if (availability_ioctl_result == 0) {
+        *version = 1;
+    } else {
+        errno = availability_ioctl_errno;
+    }
+    return availability_ioctl_result;
 }
 
 static int expect_state_event(
@@ -363,6 +388,31 @@ int main(void)
         INPUT_PROXY_ERROR_EVENT_READ_FAILED
     );
     unavailable_slot_values[1][ABS_MT_TRACKING_ID] = false;
+
+    availability_ioctl_result = 0;
+    failures += expect_result(
+        "source remains available",
+        input_proxy_source_device_check_available(device),
+        INPUT_PROXY_SUCCESS
+    );
+    availability_ioctl_result = -1;
+    availability_ioctl_errno = ENODEV;
+    failures += expect_result(
+        "source disconnected during synchronization",
+        input_proxy_source_device_check_available(device),
+        INPUT_PROXY_ERROR_SOURCE_DISCONNECTED
+    );
+    availability_ioctl_errno = EIO;
+    failures += expect_result(
+        "source availability check failed",
+        input_proxy_source_device_check_available(device),
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED
+    );
+    failures += expect_result(
+        "null source availability check",
+        input_proxy_source_device_check_available(NULL),
+        INPUT_PROXY_ERROR_INVALID_ARGUMENT
+    );
 
     failures += expect_result(
         "null read device",

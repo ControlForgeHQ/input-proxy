@@ -20,6 +20,7 @@ static enum input_proxy_result create_result;
 static enum input_proxy_result neutralize_result;
 static enum input_proxy_result capture_state_result;
 static enum input_proxy_result state_write_result;
+static enum input_proxy_result source_available_result;
 static int fail_create_call;
 static bool compatibility_results[8];
 static enum input_proxy_result open_results[32];
@@ -41,6 +42,7 @@ static int close_calls;
 static int destroy_calls;
 static int neutralize_calls;
 static int capture_state_calls;
+static int source_available_calls;
 static int read_calls;
 static int write_calls;
 static int state_write_calls;
@@ -150,6 +152,18 @@ void input_proxy_source_state_destroy(struct input_proxy_source_state *state)
         state->events = NULL;
         state->event_count = 0;
     }
+}
+
+enum input_proxy_result input_proxy_source_device_check_available(
+    const struct input_proxy_source_device *device)
+{
+    if (device != test_source_device) {
+        return INPUT_PROXY_ERROR_INTERNAL;
+    }
+
+    source_available_calls++;
+    barrier_operations[barrier_operation_count++] = 'A';
+    return source_available_result;
 }
 
 enum input_proxy_result input_proxy_virtual_device_create(
@@ -308,6 +322,7 @@ static void reset_runtime(void)
     neutralize_result = INPUT_PROXY_SUCCESS;
     capture_state_result = INPUT_PROXY_SUCCESS;
     state_write_result = INPUT_PROXY_SUCCESS;
+    source_available_result = INPUT_PROXY_SUCCESS;
     fail_create_call = 0;
     read_result = INPUT_PROXY_SUCCESS;
     write_result = INPUT_PROXY_SUCCESS;
@@ -320,6 +335,7 @@ static void reset_runtime(void)
     destroy_calls = 0;
     neutralize_calls = 0;
     capture_state_calls = 0;
+    source_available_calls = 0;
     captured_state_event_count = 0;
     read_calls = 0;
     write_calls = 0;
@@ -502,7 +518,8 @@ int main(void)
         ),
         INPUT_PROXY_SUCCESS
     );
-    if (capture_state_calls != 1 || state_write_calls != 4 ||
+    if (capture_state_calls != 1 || source_available_calls != 1 ||
+        state_write_calls != 4 ||
         memcmp(&state_written_events[0], &captured_state_events[0],
                sizeof(state_written_events[0])) != 0 ||
         memcmp(&state_written_events[1], &captured_state_events[1],
@@ -549,6 +566,7 @@ int main(void)
     state_writes_remaining = 0;
     barrier_operation_count = 0;
     capture_state_calls = 0;
+    source_available_calls = 0;
     operation_count = 0;
     memset(written_events, 0, sizeof(written_events));
     memset(operations, 0, sizeof(operations));
@@ -768,7 +786,7 @@ int main(void)
     );
     if (read_calls != 1 || write_calls != 1 || close_calls != 1 ||
         destroy_calls != 1 || capture_state_calls != 1 ||
-        strcmp(barrier_operations, "QBRF") != 0 ||
+        strcmp(barrier_operations, "QBARF") != 0 ||
         strcmp(operations, "DC") != 0) {
         fprintf(stderr, "shutdown while actively forwarding: bad cleanup\n");
         failures++;
@@ -1278,6 +1296,26 @@ int main(void)
         strcmp(barrier_operations, "QTB") != 0 ||
         strcmp(operations, "DC") != 0) {
         fprintf(stderr, "startup synchronization boundary failure: bad lifecycle\n");
+        failures++;
+    }
+
+    reset_runtime();
+    captured_state_events[0] = (struct input_event) {
+        .type = EV_KEY, .code = KEY_A, .value = 1
+    };
+    captured_state_event_count = 1;
+    source_available_result = INPUT_PROXY_ERROR_SOURCE_DISCONNECTED;
+    failures += run_runtime_test(
+        "source loss during synchronization",
+        &config,
+        INPUT_PROXY_ERROR_SOURCE_DISCONNECTED
+    );
+    if (capture_state_calls != 1 || state_write_calls != 2 ||
+        source_available_calls != 1 || read_calls != 0 || open_calls != 1 ||
+        neutralize_calls != 0 || close_calls != 1 || destroy_calls != 1 ||
+        strcmp(barrier_operations, "QTBA") != 0 ||
+        strcmp(operations, "DC") != 0) {
+        fprintf(stderr, "source loss during synchronization: bad lifecycle\n");
         failures++;
     }
 

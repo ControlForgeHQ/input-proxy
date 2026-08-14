@@ -21,6 +21,10 @@ enum input_proxy_result input_proxy_source_device_capture_state(
     struct input_proxy_source_state *state
 );
 
+enum input_proxy_result input_proxy_source_device_check_available(
+    const struct input_proxy_source_device *device
+);
+
 void input_proxy_source_state_destroy(struct input_proxy_source_state *state);
 
 #endif

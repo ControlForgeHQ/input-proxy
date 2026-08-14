@@ -10,6 +10,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/ioctl.h>
 #include <unistd.h>
 
 struct input_proxy_source_device {
@@ -378,4 +379,23 @@ void input_proxy_source_state_destroy(struct input_proxy_source_state *state)
 
     free(state->events);
     memset(state, 0, sizeof(*state));
+}
+
+enum input_proxy_result input_proxy_source_device_check_available(
+    const struct input_proxy_source_device *device)
+{
+    int evdev_version;
+
+    if (device == NULL) {
+        return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
+    }
+
+    if (ioctl(device->file_descriptor, EVIOCGVERSION, &evdev_version) == 0) {
+        return INPUT_PROXY_SUCCESS;
+    }
+    if (errno == ENODEV || errno == ENXIO) {
+        return INPUT_PROXY_ERROR_SOURCE_DISCONNECTED;
+    }
+
+    return INPUT_PROXY_ERROR_EVENT_READ_FAILED;
 }
