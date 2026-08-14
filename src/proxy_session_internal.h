@@ -5,6 +5,8 @@
 
 #include <stdbool.h>
 
+struct input_event;
+
 struct input_proxy_session;
 struct input_proxy_source_device;
 struct input_proxy_virtual_device;
@@ -19,6 +21,13 @@ enum input_proxy_result input_proxy_session_request_paused(
     struct input_proxy_session *session,
     bool paused
 );
+
+void input_proxy_session_process_activity_timers(
+    struct input_proxy_session *session);
+
+bool input_proxy_session_event_is_activity(
+    const struct input_event *event,
+    bool motion_activity_enabled);
 
 /*
  * Read and process one event from an active source/virtual device pair.
