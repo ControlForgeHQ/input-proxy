@@ -15,10 +15,69 @@ static int expect_failure(const char *name,
     return 1;
 }
 
+static int test_property_changes(void)
+{
+    struct input_proxy_runtime_control_state state = {0};
+    struct input_proxy_runtime_control_changes changes = {
+        .properties = INPUT_PROXY_RUNTIME_CONTROL_SOURCE_AVAILABLE,
+        .source_available = true
+    };
+    size_t changed_count;
+    int failures = 0;
+
+    changed_count = input_proxy_runtime_control_apply_changes(
+        NULL, &state, &changes);
+    if (changed_count != 1 || !state.source_available) {
+        fprintf(stderr, "false-to-true property transition failed\n");
+        failures++;
+    }
+
+    changed_count = input_proxy_runtime_control_apply_changes(
+        NULL, &state, &changes);
+    if (changed_count != 0 || !state.source_available) {
+        fprintf(stderr, "redundant property transition was not ignored\n");
+        failures++;
+    }
+
+    changes.source_available = false;
+    changed_count = input_proxy_runtime_control_apply_changes(
+        NULL, &state, &changes);
+    if (changed_count != 1 || state.source_available) {
+        fprintf(stderr, "true-to-false property transition failed\n");
+        failures++;
+    }
+
+    changes.source_available = true;
+    changed_count = input_proxy_runtime_control_apply_changes(
+        NULL, &state, &changes);
+    if (changed_count != 1 || !state.source_available) {
+        fprintf(stderr, "reconnect property transition failed\n");
+        failures++;
+    }
+
+    changes = (struct input_proxy_runtime_control_changes) {
+        .properties = INPUT_PROXY_RUNTIME_CONTROL_PAUSED |
+            INPUT_PROXY_RUNTIME_CONTROL_ACTIVITY_WHILE_RUNNING,
+        .paused = true,
+        .activity_while_running = true
+    };
+    changed_count = input_proxy_runtime_control_apply_changes(
+        NULL, &state, &changes);
+    if (changed_count != 2 || !state.paused ||
+        !state.activity_while_running) {
+        fprintf(stderr, "multi-property transition failed\n");
+        failures++;
+    }
+
+    return failures;
+}
+
 int main(void)
 {
     char service_name[128];
     int failures = 0;
+
+    failures += test_property_changes();
 
     if (input_proxy_runtime_control_derive_service_name(
             service_name, sizeof(service_name), "Touchscreen_1") != 0 ||
