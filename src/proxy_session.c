@@ -682,8 +682,6 @@ static enum input_proxy_result recover_synchronization(
             return result;
         }
 
-        process_physical_activity(session);
-
         result = process_read_event(
             session,
             virtual_device,
@@ -891,7 +889,6 @@ enum input_proxy_result input_proxy_session_process_event(
 
     result = input_proxy_source_device_read_event(source_device, &event);
     if (result == INPUT_PROXY_EVENT_SYNC_REQUIRED) {
-        process_physical_activity(session);
         return recover_synchronization(
             session,
             source_device,

@@ -82,6 +82,7 @@ static int runtime_wait_count;
 static char activity_operations[64];
 static int activity_operation_count;
 static int runtime_control_drop_process_call;
+static long long sync_read_time_advance_ns;
 
 static struct input_proxy_source_device *const test_source_device =
     (struct input_proxy_source_device *)1;
@@ -386,6 +387,7 @@ enum input_proxy_result input_proxy_source_device_read_sync_event(
     }
     if (result == INPUT_PROXY_SUCCESS) {
         *event = sync_events[sync_read_calls - 1];
+        monotonic_time_ns += sync_read_time_advance_ns;
     }
 
     return result;
@@ -503,6 +505,7 @@ static void reset_runtime(void)
     runtime_wait_count = 0;
     activity_operation_count = 0;
     runtime_control_drop_process_call = 0;
+    sync_read_time_advance_ns = 0;
     memset(operations, 0, sizeof(operations));
     memset(state_written_events, 0, sizeof(state_written_events));
     memset(barrier_operations, 0, sizeof(barrier_operations));
@@ -1792,6 +1795,96 @@ int main(void)
             fprintf(stderr, "control loss did not discard activity while "
                 "preserving forwarding: activity=%s writes=%d\n",
                 activity_operations, write_calls);
+            failures++;
+        }
+
+        reset_runtime();
+        runtime_control_available = true;
+        read_results[0] = INPUT_PROXY_EVENT_SYNC_REQUIRED;
+        read_results[1] = INPUT_PROXY_EVENT_UNAVAILABLE;
+        read_result_count = 2;
+        sync_read_results[0] = INPUT_PROXY_SUCCESS;
+        sync_read_results[1] = INPUT_PROXY_EVENT_UNAVAILABLE;
+        sync_read_result_count = 2;
+        shutdown_during_event_sleep = true;
+        failures += run_runtime_test(
+            "synchronization recovery does not assert running activity",
+            &activity_config,
+            INPUT_PROXY_SUCCESS
+        );
+        if (activity_operation_count != 0 || runtime_wait_count != 1 ||
+            runtime_wait_usec[0] != 10000) {
+            fprintf(stderr,
+                "synchronization recovery asserted running activity\n");
+            failures++;
+        }
+
+        reset_runtime();
+        runtime_control_available = true;
+        pause_request_process_calls[0] = 2;
+        pause_request_values[0] = true;
+        pause_request_count = 1;
+        read_results[0] = INPUT_PROXY_EVENT_SYNC_REQUIRED;
+        read_results[1] = INPUT_PROXY_EVENT_UNAVAILABLE;
+        read_result_count = 2;
+        sync_read_results[0] = INPUT_PROXY_SUCCESS;
+        sync_read_results[1] = INPUT_PROXY_EVENT_UNAVAILABLE;
+        sync_read_result_count = 2;
+        shutdown_during_event_sleep = true;
+        failures += run_runtime_test(
+            "synchronization recovery does not assert paused activity",
+            &activity_config,
+            INPUT_PROXY_SUCCESS
+        );
+        if (activity_operation_count != 0 || runtime_wait_count != 1 ||
+            runtime_wait_usec[0] != 10000) {
+            fprintf(stderr,
+                "synchronization recovery asserted paused activity\n");
+            failures++;
+        }
+
+        reset_runtime();
+        runtime_control_available = true;
+        read_results[0] = INPUT_PROXY_SUCCESS;
+        read_results[1] = INPUT_PROXY_EVENT_SYNC_REQUIRED;
+        read_results[2] = INPUT_PROXY_EVENT_UNAVAILABLE;
+        read_result_count = 3;
+        sync_read_results[0] = INPUT_PROXY_SUCCESS;
+        sync_read_results[1] = INPUT_PROXY_EVENT_UNAVAILABLE;
+        sync_read_result_count = 2;
+        sync_read_time_advance_ns = 2000000LL;
+        shutdown_during_event_sleep = true;
+        failures += run_runtime_test(
+            "synchronization recovery does not retrigger running activity",
+            &activity_config,
+            INPUT_PROXY_SUCCESS
+        );
+        if (strcmp(activity_operations, "Rr") != 0 ||
+            runtime_wait_count != 1 || runtime_wait_usec[0] != 3000) {
+            fprintf(stderr,
+                "synchronization recovery retriggered running activity\n");
+            failures++;
+        }
+
+        reset_runtime();
+        runtime_control_available = true;
+        read_results[0] = INPUT_PROXY_EVENT_SYNC_REQUIRED;
+        read_results[1] = INPUT_PROXY_SUCCESS;
+        read_results[2] = INPUT_PROXY_EVENT_UNAVAILABLE;
+        read_result_count = 3;
+        sync_read_results[0] = INPUT_PROXY_SUCCESS;
+        sync_read_results[1] = INPUT_PROXY_EVENT_UNAVAILABLE;
+        sync_read_result_count = 2;
+        shutdown_during_event_sleep = true;
+        failures += run_runtime_test(
+            "ordinary activity after synchronization recovery",
+            &activity_config,
+            INPUT_PROXY_SUCCESS
+        );
+        if (strcmp(activity_operations, "Rr") != 0 ||
+            runtime_wait_count != 1 || runtime_wait_usec[0] != 5000) {
+            fprintf(stderr,
+                "ordinary event after recovery did not assert activity\n");
             failures++;
         }
     }
