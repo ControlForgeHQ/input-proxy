@@ -174,7 +174,7 @@ void input_proxy_runtime_print_list(
     if (stream == NULL || snapshot == NULL) {
         return;
     }
-    fputs("RUNNING INSTANCES\n\n", stream);
+    fprintf(stream, "%-30s %s\n", "RUNNING PROXY INSTANCES", "SOURCE");
     if (!snapshot->available) {
         fputs("Runtime information unavailable: system D-Bus could not be "
             "queried.\n\n", stream);
@@ -184,7 +184,6 @@ void input_proxy_runtime_print_list(
         fputs("None\n\n", stream);
         return;
     }
-    fprintf(stream, "%-30s %s\n", "INSTANCE", "SOURCE");
     for (index = 0; index < snapshot->record_count; ++index) {
         fprintf(stream, "%-30s %s\n",
             snapshot->records[index].instance_name,
@@ -193,14 +192,44 @@ void input_proxy_runtime_print_list(
     fputc('\n', stream);
 }
 
+static bool record_matches_device(
+    const struct input_proxy_runtime_record *record,
+    const char *event_node,
+    const char *preferred_source)
+{
+    return strcmp(record->source_path, event_node) == 0 ||
+        (preferred_source != NULL && preferred_source[0] != '\0' &&
+         strcmp(record->source_path, preferred_source) == 0);
+}
+
+size_t input_proxy_runtime_association_count(
+    const struct input_proxy_runtime_snapshot *snapshot,
+    const char *event_node,
+    const char *preferred_source)
+{
+    size_t index;
+    size_t count = 0;
+
+    if (snapshot == NULL || !snapshot->available || event_node == NULL) {
+        return 0;
+    }
+    for (index = 0; index < snapshot->record_count; ++index) {
+        if (record_matches_device(
+                &snapshot->records[index], event_node, preferred_source)) {
+            count++;
+        }
+    }
+    return count;
+}
+
 void input_proxy_runtime_print_inspect(
     FILE *stream, const struct input_proxy_runtime_snapshot *snapshot,
-    const char *source_path)
+    const char *event_node, const char *preferred_source)
 {
     size_t index;
     bool heading_printed = false;
 
-    if (stream == NULL || snapshot == NULL || source_path == NULL) {
+    if (stream == NULL || snapshot == NULL || event_node == NULL) {
         return;
     }
     if (!snapshot->available) {
@@ -209,14 +238,17 @@ void input_proxy_runtime_print_inspect(
         return;
     }
     for (index = 0; index < snapshot->record_count; ++index) {
-        if (strcmp(snapshot->records[index].source_path, source_path) != 0) {
+        if (!record_matches_device(
+                &snapshot->records[index], event_node, preferred_source)) {
             continue;
         }
         if (!heading_printed) {
             fputs("Running input-proxy instances:\n", stream);
             heading_printed = true;
         }
-        fprintf(stream, "  %s\n", snapshot->records[index].instance_name);
+        fprintf(stream, "  %s [%s]\n",
+            snapshot->records[index].instance_name,
+            snapshot->records[index].source_path);
     }
     if (heading_printed) {
         fputc('\n', stream);

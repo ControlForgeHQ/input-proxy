@@ -457,13 +457,11 @@ static int inspect_device(int argc, char *argv[])
         print_inspect_help(stderr);
         return EXIT_FAILURE;
     }
+    input_proxy_runtime_discover(&snapshot);
     result = input_proxy_inspect_device(stdout, stderr, argv[2],
-        "/sys/class/input", "/dev/input", "/dev/uinput", "/run/udev/data");
-    if (result == INPUT_PROXY_SUCCESS) {
-        input_proxy_runtime_discover(&snapshot);
-        input_proxy_runtime_print_inspect(stdout, &snapshot, argv[2]);
-        input_proxy_runtime_snapshot_destroy(&snapshot);
-    }
+        "/sys/class/input", "/dev/input", "/dev/uinput", "/run/udev/data",
+        &snapshot);
+    input_proxy_runtime_snapshot_destroy(&snapshot);
     if (result != INPUT_PROXY_SUCCESS) {
         fputc('\n', stderr);
     }

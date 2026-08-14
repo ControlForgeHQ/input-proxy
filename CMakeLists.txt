@@ -76,12 +76,14 @@ if(BUILD_TESTING)
         tests/device_inspection_test.c
         src/device_inspection.c
         src/device_discovery.c
+        src/runtime_discovery.c
     )
     target_include_directories(
         device-inspection-test
         PRIVATE ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/src
     )
-    target_link_libraries(device-inspection-test PRIVATE PkgConfig::LIBEVDEV)
+    target_link_libraries(device-inspection-test PRIVATE
+        PkgConfig::LIBEVDEV PkgConfig::LIBSYSTEMD)
     add_test(NAME device-inspection-test COMMAND device-inspection-test)
 
     add_executable(

@@ -1,6 +1,7 @@
 #define _XOPEN_SOURCE 700
 
 #include "device_inspection_internal.h"
+#include "runtime_discovery_internal.h"
 
 #include <ftw.h>
 #include <stdio.h>
@@ -35,7 +36,23 @@ int main(void)
     size_t output_size = 0, error_size = 0;
     FILE *stream, *error_stream;
     enum input_proxy_result result;
+    struct input_proxy_runtime_record runtime_records[3];
+    struct input_proxy_runtime_snapshot runtime_snapshot = {
+        .available = true,
+        .records = runtime_records,
+        .record_count = 3
+    };
+    const struct input_proxy_runtime_snapshot unavailable_snapshot = {0};
     int failures = 0;
+
+    if (!input_proxy_should_suggest_run(true, true, 0) ||
+        input_proxy_should_suggest_run(true, true, 1) ||
+        input_proxy_should_suggest_run(true, true, 2) ||
+        input_proxy_should_suggest_run(false, true, 0) ||
+        input_proxy_should_suggest_run(true, false, 0)) {
+        fprintf(stderr, "runtime-association run suggestion policy failed\n");
+        failures++;
+    }
 
     {
         struct input_proxy_access_remediation access = {
@@ -157,12 +174,24 @@ int main(void)
         snprintf(by_path_path, sizeof(by_path_path), "%s/by-path/test-port", root);
         if (symlink("../event7", by_path_path) != 0) failures++;
     }
+    runtime_records[0] = (struct input_proxy_runtime_record) {
+        .instance_name = "EventSource",
+        .source_path = path
+    };
+    runtime_records[1] = (struct input_proxy_runtime_record) {
+        .instance_name = "PersistentSource",
+        .source_path = by_id_path
+    };
+    runtime_records[2] = (struct input_proxy_runtime_record) {
+        .instance_name = "Unrelated",
+        .source_path = "/dev/input/unrelated"
+    };
 
     stream = open_memstream(&output, &output_size);
     error_stream = open_memstream(&error, &error_size);
     if (failures || stream == NULL || error_stream == NULL) return 1;
     result = input_proxy_inspect_device(stream, error_stream, path, sysfs, root,
-                                        "/dev/null", udev);
+                                        "/dev/null", udev, &runtime_snapshot);
     fclose(stream); fclose(error_stream);
     if (result != INPUT_PROXY_SUCCESS ||
         strstr(output, "Device identity") == NULL ||
@@ -181,6 +210,12 @@ int main(void)
         strstr(output, "NOT READY: runtime access issues must be resolved.") == NULL ||
         strstr(output, "Runtime accessibility remediation") == NULL ||
         strstr(output, "Libinput remediation") == NULL ||
+        strstr(output, "Running input-proxy instances:\n") == NULL ||
+        strstr(output, "  EventSource [") == NULL ||
+        strstr(output, path) == NULL ||
+        strstr(output, "  PersistentSource [") == NULL ||
+        strstr(output, by_id_path) == NULL ||
+        strstr(output, "Unrelated") != NULL ||
         strstr(output, "Proxy readiness") >
             strstr(output, "Runtime accessibility remediation") ||
         strstr(output, "Runtime accessibility remediation") >
@@ -201,13 +236,16 @@ int main(void)
     error_stream = open_memstream(&error, &error_size);
     if (stream == NULL || error_stream == NULL) return 1;
     result = input_proxy_inspect_device(stream, error_stream, path, sysfs, root,
-                                        "/definitely/missing/uinput", udev);
+                                        "/definitely/missing/uinput", udev,
+                                        &unavailable_snapshot);
     fclose(stream); fclose(error_stream);
     if (result != INPUT_PROXY_SUCCESS ||
         strstr(output, "/dev/uinput exists:    No") == NULL ||
         strstr(output, "/dev/uinput writable:  Unavailable") == NULL ||
         strstr(output, "/dev/uinput writable:  No") != NULL ||
         strstr(output, "Suggested input-proxy run command") != NULL ||
+        strstr(output, "Runtime instance information unavailable: system "
+            "D-Bus could not be queried.") == NULL ||
         error[0] != '\0') {
         fprintf(stderr, "unexpected missing-uinput inspection result:\n%s%s",
                 output, error);
@@ -223,12 +261,16 @@ int main(void)
             error_stream = open_memstream(&error, &error_size);
             if (stream == NULL || error_stream == NULL) return 1;
             result = input_proxy_inspect_device(stream, error_stream,
-                aliases[alias_index], sysfs, root, "/dev/null", udev);
+                aliases[alias_index], sysfs, root, "/dev/null", udev,
+                &runtime_snapshot);
             fclose(stream); fclose(error_stream);
             if (result != INPUT_PROXY_SUCCESS ||
                 strstr(output, aliases[alias_index]) == NULL ||
                 strstr(output, "Event node:") == NULL ||
-                strstr(output, path) == NULL || error[0] != '\0') {
+                strstr(output, path) == NULL ||
+                strstr(output, "  EventSource [") == NULL ||
+                strstr(output, "  PersistentSource [") == NULL ||
+                strstr(output, "Unrelated") != NULL || error[0] != '\0') {
                 fprintf(stderr, "unexpected alias inspection result:\n%s%s",
                         output, error);
                 failures++;

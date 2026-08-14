@@ -30,8 +30,12 @@ void input_proxy_runtime_snapshot_destroy(
     struct input_proxy_runtime_snapshot *snapshot);
 void input_proxy_runtime_print_list(
     FILE *stream, const struct input_proxy_runtime_snapshot *snapshot);
+size_t input_proxy_runtime_association_count(
+    const struct input_proxy_runtime_snapshot *snapshot,
+    const char *event_node,
+    const char *preferred_source);
 void input_proxy_runtime_print_inspect(
     FILE *stream, const struct input_proxy_runtime_snapshot *snapshot,
-    const char *source_path);
+    const char *event_node, const char *preferred_source);
 
 #endif

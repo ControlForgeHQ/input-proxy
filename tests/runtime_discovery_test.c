@@ -55,7 +55,8 @@ static char *render_list(const struct input_proxy_runtime_snapshot *snapshot)
 
 static char *render_inspect(
     const struct input_proxy_runtime_snapshot *snapshot,
-    const char *source_path)
+    const char *event_node,
+    const char *preferred_source)
 {
     char *output = NULL;
     size_t output_size = 0;
@@ -64,7 +65,8 @@ static char *render_inspect(
     if (stream == NULL) {
         return NULL;
     }
-    input_proxy_runtime_print_inspect(stream, snapshot, source_path);
+    input_proxy_runtime_print_inspect(
+        stream, snapshot, event_node, preferred_source);
     fclose(stream);
     return output;
 }
@@ -111,12 +113,14 @@ static int test_discovery_filtering_race_and_sorting(void)
     }
 
     list_output = render_list(&snapshot);
-    inspect_output = render_inspect(&snapshot, "/dev/input/event3");
+    inspect_output = render_inspect(
+        &snapshot, "/dev/input/event3", "/dev/input/event9");
     alpha_position = list_output == NULL ? NULL : strstr(list_output, "Alpha");
     zulu_position = list_output == NULL ? NULL : strstr(list_output, "Zulu");
     if (list_output == NULL ||
-        strstr(list_output, "RUNNING INSTANCES\n\n") == NULL ||
-        strstr(list_output, "INSTANCE                       SOURCE\n") == NULL ||
+        strstr(list_output,
+            "RUNNING PROXY INSTANCES        SOURCE\n") == NULL ||
+        strstr(list_output, "RUNNING INSTANCES\n\n") != NULL ||
         alpha_position == NULL || zulu_position == NULL ||
         alpha_position > zulu_position ||
         strstr(list_output, ":1.42") != NULL ||
@@ -127,7 +131,14 @@ static int test_discovery_filtering_race_and_sorting(void)
     }
     if (inspect_output == NULL ||
         strcmp(inspect_output,
-            "Running input-proxy instances:\n  Alpha\n  Zulu\n\n") != 0) {
+            "Running input-proxy instances:\n"
+            "  Alpha [/dev/input/event3]\n"
+            "  FinalComponent [/dev/input/event9]\n"
+            "  Zulu [/dev/input/event3]\n\n") != 0 ||
+        input_proxy_runtime_association_count(&snapshot,
+            "/dev/input/event3", "/dev/input/event9") != 3 ||
+        input_proxy_runtime_association_count(&snapshot,
+            "/dev/input/event0", "/dev/input/by-id/missing") != 0) {
         fprintf(stderr, "runtime inspect formatting failed:\n%s",
             inspect_output == NULL ? "(null)\n" : inspect_output);
         failures++;
@@ -146,26 +157,30 @@ static int test_empty_unavailable_and_no_match_output(void)
     int failures = 0;
 
     output = render_list(&empty);
-    if (output == NULL || strcmp(output, "RUNNING INSTANCES\n\nNone\n\n") != 0) {
+    if (output == NULL || strcmp(output,
+            "RUNNING PROXY INSTANCES        SOURCE\nNone\n\n") != 0) {
         fprintf(stderr, "empty runtime list output failed\n");
         failures++;
     }
     free(output);
     output = render_list(&unavailable);
     if (output == NULL || strcmp(output,
-            "RUNNING INSTANCES\n\nRuntime information unavailable: system "
+            "RUNNING PROXY INSTANCES        SOURCE\n"
+            "Runtime information unavailable: system "
             "D-Bus could not be queried.\n\n") != 0) {
         fprintf(stderr, "unavailable runtime list output failed\n");
         failures++;
     }
     free(output);
-    output = render_inspect(&empty, "/dev/input/event0");
+    output = render_inspect(
+        &empty, "/dev/input/event0", "/dev/input/by-id/device");
     if (output == NULL || output[0] != '\0') {
         fprintf(stderr, "no-match inspection was not silent\n");
         failures++;
     }
     free(output);
-    output = render_inspect(&unavailable, "/dev/input/event0");
+    output = render_inspect(
+        &unavailable, "/dev/input/event0", "/dev/input/by-id/device");
     if (output == NULL || strcmp(output,
             "Runtime instance information unavailable: system D-Bus could "
             "not be queried.\n\n") != 0) {
