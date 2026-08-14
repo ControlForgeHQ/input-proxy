@@ -149,6 +149,8 @@ if(BUILD_TESTING)
         proxy-session-test
         PRIVATE
             "-Wl,--wrap=input_proxy_runtime_control_apply_changes"
+            "-Wl,--wrap=input_proxy_runtime_control_create"
+            "-Wl,--wrap=input_proxy_runtime_control_process"
     )
 
     add_test(NAME proxy-session-test COMMAND proxy-session-test)
@@ -173,14 +175,27 @@ if(BUILD_TESTING)
         runtime-control-test
         tests/runtime_control_test.c
         src/runtime_control.c
+        src/result.c
     )
     target_include_directories(
         runtime-control-test
         PRIVATE
             ${PROJECT_BINARY_DIR}/generated/include
+            ${PROJECT_SOURCE_DIR}/include
             ${PROJECT_SOURCE_DIR}/src
     )
     target_link_libraries(runtime-control-test PRIVATE PkgConfig::LIBSYSTEMD)
+    target_link_options(
+        runtime-control-test
+        PRIVATE
+            "-Wl,--wrap=sd_bus_add_object_vtable"
+            "-Wl,--wrap=sd_bus_emit_properties_changed_strv"
+            "-Wl,--wrap=sd_bus_flush_close_unref"
+            "-Wl,--wrap=sd_bus_open_system"
+            "-Wl,--wrap=sd_bus_process"
+            "-Wl,--wrap=sd_bus_request_name"
+            "-Wl,--wrap=sd_bus_slot_unref"
+    )
     add_test(NAME runtime-control-test COMMAND runtime-control-test)
 
     add_test(

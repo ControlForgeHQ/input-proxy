@@ -30,6 +30,7 @@ struct input_proxy_session {
     struct input_proxy_virtual_device *virtual_device;
     struct input_proxy_runtime_control *runtime_control;
     struct input_proxy_runtime_control_state runtime_state;
+    enum input_proxy_result fatal_result;
     bool source_opened_successfully;
     bool verbose;
     volatile sig_atomic_t shutdown_requested;
@@ -49,6 +50,11 @@ static void set_source_available(
         &session->runtime_state,
         &changes
     );
+}
+
+static enum input_proxy_result handle_pause_request(void *userdata, bool paused)
+{
+    return input_proxy_session_request_paused(userdata, paused);
 }
 
 static void log_verbose(
@@ -134,6 +140,9 @@ static enum input_proxy_result create_active_devices(
 
     while (!session->shutdown_requested) {
         input_proxy_runtime_control_process(&session->runtime_control);
+        if (session->fatal_result != INPUT_PROXY_SUCCESS) {
+            return session->fatal_result;
+        }
         result = input_proxy_source_device_open(
             &session->source_device,
             session->source_path
@@ -202,13 +211,15 @@ static enum input_proxy_result create_active_devices(
                 session->source_path,
                 session->instance_name
             );
-            result = input_proxy_session_synchronize_state(
-                session,
-                session->source_device,
-                session->virtual_device
-            );
-            if (result != INPUT_PROXY_SUCCESS) {
-                return result;
+            if (!session->runtime_state.paused) {
+                result = input_proxy_session_synchronize_state(
+                    session,
+                    session->source_device,
+                    session->virtual_device
+                );
+                if (result != INPUT_PROXY_SUCCESS) {
+                    return result;
+                }
             }
             printf(
                 "input-proxy: source reconnected: %s\n",
@@ -249,13 +260,15 @@ static enum input_proxy_result create_active_devices(
             return result;
         }
 
-        result = input_proxy_session_synchronize_state(
-            session,
-            session->source_device,
-            session->virtual_device
-        );
-        if (result != INPUT_PROXY_SUCCESS) {
-            return result;
+        if (!session->runtime_state.paused) {
+            result = input_proxy_session_synchronize_state(
+                session,
+                session->source_device,
+                session->virtual_device
+            );
+            if (result != INPUT_PROXY_SUCCESS) {
+                return result;
+            }
         }
 
         if (replacing_virtual_device) {
@@ -312,7 +325,9 @@ static enum input_proxy_result process_read_event(
     struct input_proxy_virtual_device *virtual_device,
     const struct input_event *event)
 {
-    (void)session;
+    if (session->runtime_state.paused) {
+        return INPUT_PROXY_SUCCESS;
+    }
 
     return input_proxy_virtual_device_write_event(virtual_device, event);
 }
@@ -387,6 +402,68 @@ cleanup:
         );
     }
     return result;
+}
+
+enum input_proxy_result input_proxy_session_request_paused(
+    struct input_proxy_session *session,
+    bool paused)
+{
+    struct input_proxy_runtime_control_changes changes;
+    enum input_proxy_result result = INPUT_PROXY_SUCCESS;
+
+    if (session == NULL) {
+        return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
+    }
+    if (session->runtime_state.paused == paused) {
+        return INPUT_PROXY_SUCCESS;
+    }
+
+    printf("input-proxy: %s requested\n", paused ? "pause" : "resume");
+    fflush(stdout);
+
+    if (session->runtime_state.source_available) {
+        if (paused) {
+            log_verbose(
+                session,
+                "neutralizing virtual device %s before paused operation",
+                session->instance_name
+            );
+            result = input_proxy_virtual_device_neutralize(
+                session->virtual_device);
+        } else {
+            result = input_proxy_session_synchronize_state(
+                session, session->source_device, session->virtual_device);
+        }
+    }
+    if (result != INPUT_PROXY_SUCCESS) {
+        session->fatal_result = result;
+        return result;
+    }
+
+    changes = (struct input_proxy_runtime_control_changes) {
+        .properties = INPUT_PROXY_RUNTIME_CONTROL_PAUSED,
+        .paused = paused
+    };
+    input_proxy_runtime_control_apply_changes(
+        &session->runtime_control, &session->runtime_state, &changes);
+    if (session->runtime_state.source_available) {
+        log_verbose(
+            session,
+            paused
+                ? "forwarding suppressed; continuing to consume source %s"
+                : "ordinary forwarding enabled for source %s",
+            session->source_path
+        );
+    } else {
+        log_verbose(
+            session,
+            "%s state committed without immediate correction because source "
+            "%s is unavailable",
+            paused ? "paused" : "unpaused",
+            session->source_path
+        );
+    }
+    return INPUT_PROXY_SUCCESS;
 }
 
 static enum input_proxy_result recover_synchronization(
@@ -510,7 +587,9 @@ enum input_proxy_result input_proxy_session_run(
     }
 
     session->runtime_control = input_proxy_runtime_control_create(
-        &session->runtime_state
+        &session->runtime_state,
+        handle_pause_request,
+        session
     );
     result = INPUT_PROXY_SUCCESS;
     while (!session->shutdown_requested) {
@@ -521,6 +600,10 @@ enum input_proxy_result input_proxy_session_run(
 
         while (!session->shutdown_requested) {
             input_proxy_runtime_control_process(&session->runtime_control);
+            if (session->fatal_result != INPUT_PROXY_SUCCESS) {
+                result = session->fatal_result;
+                break;
+            }
             result = input_proxy_session_process_event(
                 session,
                 session->source_device,

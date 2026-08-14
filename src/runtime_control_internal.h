@@ -1,6 +1,8 @@
 #ifndef INPUT_PROXY_RUNTIME_CONTROL_INTERNAL_H
 #define INPUT_PROXY_RUNTIME_CONTROL_INTERNAL_H
 
+#include <input_proxy/result.h>
+
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -40,6 +42,10 @@ struct input_proxy_runtime_control_changes {
     bool activity_while_paused;
 };
 
+typedef enum input_proxy_result (*input_proxy_runtime_control_pause_handler)(
+    void *userdata,
+    bool paused);
+
 int input_proxy_runtime_control_derive_service_name(
     char *service_name, size_t service_name_size, const char *instance_name);
 enum input_proxy_runtime_control_failure
@@ -47,7 +53,9 @@ input_proxy_runtime_control_classify_connection_failure(int error_number);
 enum input_proxy_runtime_control_failure
 input_proxy_runtime_control_classify_name_failure(int error_number);
 struct input_proxy_runtime_control *input_proxy_runtime_control_create(
-    const struct input_proxy_runtime_control_state *state);
+    const struct input_proxy_runtime_control_state *state,
+    input_proxy_runtime_control_pause_handler pause_handler,
+    void *pause_handler_userdata);
 size_t input_proxy_runtime_control_apply_changes(
     struct input_proxy_runtime_control **control,
     struct input_proxy_runtime_control_state *state,
