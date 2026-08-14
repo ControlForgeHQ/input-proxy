@@ -22,7 +22,7 @@
 
 struct input_proxy_session {
     char *source_path;
-    char *device_name;
+    char *instance_name;
     struct input_proxy_instance_name *name_ownership;
     struct input_proxy_source_device *source_device;
     struct input_proxy_virtual_device *virtual_device;
@@ -170,7 +170,7 @@ static enum input_proxy_result create_active_devices(
                 "reconnected source %s is compatible; retaining virtual "
                 "device %s",
                 session->source_path,
-                session->device_name
+                session->instance_name
             );
             printf(
                 "input-proxy: source reconnected: %s\n",
@@ -187,13 +187,13 @@ static enum input_proxy_result create_active_devices(
                 "reconnected source %s is incompatible; replacing virtual "
                 "device %s",
                 session->source_path,
-                session->device_name
+                session->instance_name
             );
         } else {
             log_verbose(
                 session,
                 "creating virtual device %s from source %s",
-                session->device_name,
+                session->instance_name,
                 session->source_path
             );
         }
@@ -204,7 +204,7 @@ static enum input_proxy_result create_active_devices(
         result = input_proxy_virtual_device_create(
             &session->virtual_device,
             session->source_device,
-            session->device_name
+            session->instance_name
         );
         if (result != INPUT_PROXY_SUCCESS) {
             close_source_device(session);
@@ -214,7 +214,7 @@ static enum input_proxy_result create_active_devices(
         if (replacing_virtual_device) {
             printf(
                 "input-proxy: virtual device replaced: %s\n",
-                session->device_name
+                session->instance_name
             );
             printf(
                 "input-proxy: source reconnected: %s\n",
@@ -224,7 +224,7 @@ static enum input_proxy_result create_active_devices(
         } else {
             printf(
                 "input-proxy: virtual device created: %s\n",
-                session->device_name
+                session->instance_name
             );
             printf(
                 "input-proxy: source connected: %s\n",
@@ -282,7 +282,7 @@ static enum input_proxy_result recover_synchronization(
         session,
         "synchronization recovery started for source %s and virtual device %s",
         session->source_path,
-        session->device_name
+        session->instance_name
     );
 
     for (;;) {
@@ -296,7 +296,7 @@ static enum input_proxy_result recover_synchronization(
                 "synchronization recovery completed for source %s and "
                 "virtual device %s",
                 session->source_path,
-                session->device_name
+                session->instance_name
             );
             return INPUT_PROXY_SUCCESS;
         }
@@ -326,11 +326,16 @@ enum input_proxy_result input_proxy_session_create(
         return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
     }
 
-    if (config->source_path == NULL || config->device_name == NULL) {
+    if (config->source_path == NULL || config->instance_name == NULL) {
         return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
     }
 
     *session = NULL;
+
+    result = input_proxy_instance_name_validate(config->instance_name);
+    if (result != INPUT_PROXY_SUCCESS) {
+        return result;
+    }
 
     new_session = calloc(1, sizeof(*new_session));
     if (new_session == NULL) {
@@ -343,15 +348,15 @@ enum input_proxy_result input_proxy_session_create(
         goto error;
     }
 
-    new_session->device_name = duplicate_string(config->device_name);
-    if (new_session->device_name == NULL) {
+    new_session->instance_name = duplicate_string(config->instance_name);
+    if (new_session->instance_name == NULL) {
         result = INPUT_PROXY_ERROR_OUT_OF_MEMORY;
         goto error;
     }
 
     result = input_proxy_instance_name_acquire(
         &new_session->name_ownership,
-        new_session->device_name
+        new_session->instance_name
     );
     if (result != INPUT_PROXY_SUCCESS) {
         goto error;
@@ -418,7 +423,7 @@ enum input_proxy_result input_proxy_session_run(
             log_verbose(
                 session,
                 "neutralizing virtual device %s after loss of source %s",
-                session->device_name,
+                session->instance_name,
                 session->source_path
             );
             result = input_proxy_virtual_device_neutralize(
@@ -432,7 +437,7 @@ enum input_proxy_result input_proxy_session_run(
                 session,
                 "source-loss neutralization completed; retaining virtual "
                 "device %s while waiting for source %s",
-                session->device_name,
+                session->instance_name,
                 session->source_path
             );
             continue;
@@ -449,7 +454,7 @@ enum input_proxy_result input_proxy_session_run(
             "shutdown request handled; cleanup completed for source %s and "
             "virtual device %s",
             session->source_path,
-            session->device_name
+            session->instance_name
         );
         printf("input-proxy: shutdown complete\n");
         fflush(stdout);
@@ -504,7 +509,7 @@ void input_proxy_session_destroy(
 
     cleanup_active_devices(session);
     input_proxy_instance_name_release(session->name_ownership);
-    free(session->device_name);
+    free(session->instance_name);
     free(session->source_path);
     free(session);
 }

@@ -16,6 +16,43 @@ struct input_proxy_instance_name {
     int socket_fd;
 };
 
+static int is_ascii_letter(unsigned char byte)
+{
+    return (byte >= 'A' && byte <= 'Z') ||
+        (byte >= 'a' && byte <= 'z');
+}
+
+enum input_proxy_result input_proxy_instance_name_validate(const char *name)
+{
+    size_t index;
+    size_t length;
+
+    if (name == NULL) {
+        return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
+    }
+
+    length = strlen(name);
+    if (length == 0 || length > 79) {
+        return INPUT_PROXY_ERROR_INVALID_INSTANCE_NAME;
+    }
+
+    if (!is_ascii_letter((unsigned char)name[0]) && name[0] != '_') {
+        return INPUT_PROXY_ERROR_INVALID_INSTANCE_NAME;
+    }
+
+    for (index = 1; index < length; ++index) {
+        const unsigned char byte = (unsigned char)name[index];
+
+        if (!is_ascii_letter(byte) &&
+            !(byte >= '0' && byte <= '9') &&
+            byte != '_' && byte != '-') {
+            return INPUT_PROXY_ERROR_INVALID_INSTANCE_NAME;
+        }
+    }
+
+    return INPUT_PROXY_SUCCESS;
+}
+
 enum input_proxy_result input_proxy_instance_name_acquire(
     struct input_proxy_instance_name **ownership,
     const char *name)
@@ -26,11 +63,20 @@ enum input_proxy_result input_proxy_instance_name_acquire(
     size_t name_length;
     socklen_t address_length;
 
-    if (ownership == NULL || name == NULL) {
+    if (ownership == NULL) {
         return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
     }
 
     *ownership = NULL;
+    {
+        enum input_proxy_result result =
+            input_proxy_instance_name_validate(name);
+
+        if (result != INPUT_PROXY_SUCCESS) {
+            return result;
+        }
+    }
+
     name_length = strlen(name);
     if (prefix_length + name_length > sizeof(address.sun_path) - 1) {
         return INPUT_PROXY_ERROR_INVALID_ARGUMENT;

@@ -121,7 +121,7 @@ enum input_proxy_result input_proxy_virtual_device_create(
 {
     create_calls++;
     if (source_device != test_source_device ||
-        strcmp(device_name, "proxy test device") != 0) {
+        strcmp(device_name, "proxy_test_device") != 0) {
         return INPUT_PROXY_ERROR_INTERNAL;
     }
     if (create_calls == fail_create_call) {
@@ -368,12 +368,12 @@ int main(void)
 {
     const struct input_proxy_session_config config = {
         .source_path = "/dev/input/event-test",
-        .device_name = "proxy test device",
+        .instance_name = "proxy_test_device",
         .verbose = false
     };
     const struct input_proxy_session_config verbose_config = {
         .source_path = "/dev/input/event-test",
-        .device_name = "proxy test device",
+        .instance_name = "proxy_test_device",
         .verbose = true
     };
     struct input_proxy_source_device *const source_device =
@@ -384,6 +384,29 @@ int main(void)
     char output[4096];
     int previous_write_calls;
     int failures = 0;
+
+    {
+        const struct input_proxy_session_config invalid_config = {
+            .source_path = "/dev/input/event-test",
+            .instance_name = "invalid name",
+            .verbose = false
+        };
+
+        reset_runtime();
+        session = (struct input_proxy_session *)1;
+        failures += expect_result(
+            "invalid Instance Name",
+            input_proxy_session_create(&session, &invalid_config),
+            INPUT_PROXY_ERROR_INVALID_INSTANCE_NAME
+        );
+        if (session != NULL || open_calls != 0 || create_calls != 0) {
+            fprintf(
+                stderr,
+                "invalid Instance Name: runtime activity occurred\n"
+            );
+            failures++;
+        }
+    }
 
     reset_runtime();
 
@@ -876,7 +899,7 @@ int main(void)
         count_occurrences(output, "source disconnected") != 1 ||
         count_occurrences(output, "source reconnected") != 1 ||
         count_occurrences(output, "/dev/input/event-test") != 3 ||
-        count_occurrences(output, "proxy test device") != 1 ||
+        count_occurrences(output, "proxy_test_device") != 1 ||
         strstr(output, "source opened successfully") != NULL ||
         strstr(output, "compatible") != NULL ||
         strstr(output, "neutraliz") != NULL ||
@@ -942,11 +965,11 @@ int main(void)
     if (strstr(output,
             "source opened successfully: /dev/input/event-test") == NULL ||
         strstr(output,
-            "creating virtual device proxy test device from source "
+            "creating virtual device proxy_test_device from source "
             "/dev/input/event-test") == NULL ||
         strstr(output,
             "shutdown request handled; cleanup completed for source "
-            "/dev/input/event-test and virtual device proxy test device") == NULL ||
+            "/dev/input/event-test and virtual device proxy_test_device") == NULL ||
         strstr(output, "shutdown complete") == NULL ||
         strstr(output, "type=") != NULL || strstr(output, "code=") != NULL) {
         fprintf(stderr, "verbose lifecycle logging: unexpected output: %s\n", output);
@@ -973,16 +996,16 @@ int main(void)
     );
     if (strstr(output,
             "synchronization recovery started for source "
-            "/dev/input/event-test and virtual device proxy test device") == NULL ||
+            "/dev/input/event-test and virtual device proxy_test_device") == NULL ||
         strstr(output,
             "synchronization recovery completed for source "
-            "/dev/input/event-test and virtual device proxy test device") == NULL ||
+            "/dev/input/event-test and virtual device proxy_test_device") == NULL ||
         strstr(output,
-            "neutralizing virtual device proxy test device after loss of "
+            "neutralizing virtual device proxy_test_device after loss of "
             "source /dev/input/event-test") == NULL ||
         strstr(output,
             "reconnected source /dev/input/event-test is compatible; "
-            "retaining virtual device proxy test device") == NULL ||
+            "retaining virtual device proxy_test_device") == NULL ||
         strstr(output, "type=") != NULL || strstr(output, "code=") != NULL) {
         fprintf(stderr, "verbose recovery logging: unexpected output: %s\n", output);
         failures++;

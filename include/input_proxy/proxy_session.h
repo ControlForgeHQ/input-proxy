@@ -7,7 +7,7 @@
 
 struct input_proxy_session_config {
     const char *source_path;
-    const char *device_name;
+    const char *instance_name;
     bool verbose;
 };
 

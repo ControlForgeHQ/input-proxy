@@ -5,6 +5,8 @@
 
 struct input_proxy_instance_name;
 
+enum input_proxy_result input_proxy_instance_name_validate(const char *name);
+
 enum input_proxy_result input_proxy_instance_name_acquire(
     struct input_proxy_instance_name **ownership,
     const char *name
