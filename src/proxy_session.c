@@ -418,8 +418,16 @@ enum input_proxy_result input_proxy_session_request_paused(
         return INPUT_PROXY_SUCCESS;
     }
 
+    printf("input-proxy: %s requested\n", paused ? "pause" : "resume");
+    fflush(stdout);
+
     if (session->runtime_state.source_available) {
         if (paused) {
+            log_verbose(
+                session,
+                "neutralizing virtual device %s before paused operation",
+                session->instance_name
+            );
             result = input_proxy_virtual_device_neutralize(
                 session->virtual_device);
         } else {
@@ -438,6 +446,23 @@ enum input_proxy_result input_proxy_session_request_paused(
     };
     input_proxy_runtime_control_apply_changes(
         &session->runtime_control, &session->runtime_state, &changes);
+    if (session->runtime_state.source_available) {
+        log_verbose(
+            session,
+            paused
+                ? "forwarding suppressed; continuing to consume source %s"
+                : "ordinary forwarding enabled for source %s",
+            session->source_path
+        );
+    } else {
+        log_verbose(
+            session,
+            "%s state committed without immediate correction because source "
+            "%s is unavailable",
+            paused ? "paused" : "unpaused",
+            session->source_path
+        );
+    }
     return INPUT_PROXY_SUCCESS;
 }
 

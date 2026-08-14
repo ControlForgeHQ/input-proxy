@@ -1477,10 +1477,12 @@ int main(void)
     read_results[3] = INPUT_PROXY_SUCCESS;
     read_results[4] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
     read_result_count = 5;
-    failures += run_runtime_test(
+    failures += run_runtime_test_with_output(
         "pause suppresses and resume forwards",
         &config,
-        INPUT_PROXY_ERROR_EVENT_READ_FAILED
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED,
+        output,
+        sizeof(output)
     );
     if (pause_request_index != 4 ||
         pause_request_results[0] != INPUT_PROXY_SUCCESS ||
@@ -1491,7 +1493,9 @@ int main(void)
         read_calls != 5 || write_calls != 2 ||
         strcmp(pause_operations, "PU") != 0 ||
         strstr(barrier_operations, "NP") == NULL ||
-        strstr(barrier_operations, "QBAU") == NULL) {
+        strstr(barrier_operations, "QBAU") == NULL ||
+        count_occurrences(output, "input-proxy: pause requested") != 1 ||
+        count_occurrences(output, "input-proxy: resume requested") != 1) {
         fprintf(stderr, "pause/resume suppression or idempotence failed\n");
         failures++;
     }
@@ -1526,16 +1530,51 @@ int main(void)
     reset_runtime();
     pause_request_process_calls[0] = 2;
     pause_request_values[0] = true;
+    pause_request_process_calls[1] = 3;
+    pause_request_values[1] = false;
+    pause_request_count = 2;
+    read_results[0] = INPUT_PROXY_SUCCESS;
+    read_results[1] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+    read_result_count = 2;
+    failures += run_runtime_test_with_output(
+        "verbose pause and resume diagnostics",
+        &verbose_config,
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED,
+        output,
+        sizeof(output)
+    );
+    if (strstr(output,
+            "neutralizing virtual device proxy_test_device before paused "
+            "operation") == NULL ||
+        strstr(output,
+            "forwarding suppressed; continuing to consume source "
+            "/dev/input/event-test") == NULL ||
+        strstr(output,
+            "current-state synchronization completed for source "
+            "/dev/input/event-test") == NULL ||
+        strstr(output,
+            "ordinary forwarding enabled for source "
+            "/dev/input/event-test") == NULL) {
+        fprintf(stderr, "verbose pause/resume diagnostics were incomplete\n");
+        failures++;
+    }
+
+    reset_runtime();
+    pause_request_process_calls[0] = 2;
+    pause_request_values[0] = true;
     pause_request_count = 1;
     neutralize_result = INPUT_PROXY_ERROR_EVENT_WRITE_FAILED;
-    failures += run_runtime_test(
+    failures += run_runtime_test_with_output(
         "pause neutralization failure",
         &config,
-        INPUT_PROXY_ERROR_EVENT_WRITE_FAILED
+        INPUT_PROXY_ERROR_EVENT_WRITE_FAILED,
+        output,
+        sizeof(output)
     );
     if (pause_request_results[0] != INPUT_PROXY_ERROR_EVENT_WRITE_FAILED ||
         read_calls != 0 || destroy_calls != 1 || close_calls != 1 ||
-        pause_operation_count != 0) {
+        pause_operation_count != 0 ||
+        count_occurrences(output, "input-proxy: pause requested") != 1) {
         fprintf(stderr, "pause correction failure was not fatal\n");
         failures++;
     }
@@ -1550,14 +1589,18 @@ int main(void)
     read_result_count = 1;
     capture_state_result = INPUT_PROXY_SUCCESS;
     fail_state_write_call = 2;
-    failures += run_runtime_test(
+    failures += run_runtime_test_with_output(
         "resume synchronization failure",
         &config,
-        INPUT_PROXY_ERROR_EVENT_WRITE_FAILED
+        INPUT_PROXY_ERROR_EVENT_WRITE_FAILED,
+        output,
+        sizeof(output)
     );
     if (pause_request_results[1] != INPUT_PROXY_ERROR_EVENT_WRITE_FAILED ||
         read_calls != 1 || destroy_calls != 1 || close_calls != 1 ||
-        strcmp(pause_operations, "P") != 0) {
+        strcmp(pause_operations, "P") != 0 ||
+        count_occurrences(output, "input-proxy: pause requested") != 1 ||
+        count_occurrences(output, "input-proxy: resume requested") != 1) {
         fprintf(stderr, "resume correction failure was not fatal\n");
         failures++;
     }

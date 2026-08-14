@@ -24,6 +24,8 @@ struct input_proxy_runtime_control {
     const struct input_proxy_runtime_control_state *state;
     input_proxy_runtime_control_pause_handler pause_handler;
     void *pause_handler_userdata;
+    bool dispatch_active;
+    bool disable_pending;
     char service_name[sizeof(SERVICE_PREFIX) + 79];
 };
 
@@ -298,8 +300,12 @@ size_t input_proxy_runtime_control_apply_changes(
     if (result < 0) {
         warn_failure("property notification", (*control)->service_name,
             INPUT_PROXY_RUNTIME_CONTROL_INITIALIZATION_FAILED, -result);
-        input_proxy_runtime_control_destroy(*control);
-        *control = NULL;
+        if ((*control)->dispatch_active) {
+            (*control)->disable_pending = true;
+        } else {
+            input_proxy_runtime_control_destroy(*control);
+            *control = NULL;
+        }
     }
 
     return changed_count;
@@ -313,7 +319,16 @@ void input_proxy_runtime_control_process(struct input_proxy_runtime_control **co
         return;
     }
     do {
-        result = sd_bus_process((*control)->bus, NULL);
+        struct input_proxy_runtime_control *active_control = *control;
+
+        active_control->dispatch_active = true;
+        result = sd_bus_process(active_control->bus, NULL);
+        active_control->dispatch_active = false;
+        if (active_control->disable_pending) {
+            input_proxy_runtime_control_destroy(active_control);
+            *control = NULL;
+            return;
+        }
     } while (result > 0);
     if (result < 0) {
         warn_failure("message dispatch", (*control)->service_name,

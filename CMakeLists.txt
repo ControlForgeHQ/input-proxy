@@ -185,6 +185,17 @@ if(BUILD_TESTING)
             ${PROJECT_SOURCE_DIR}/src
     )
     target_link_libraries(runtime-control-test PRIVATE PkgConfig::LIBSYSTEMD)
+    target_link_options(
+        runtime-control-test
+        PRIVATE
+            "-Wl,--wrap=sd_bus_add_object_vtable"
+            "-Wl,--wrap=sd_bus_emit_properties_changed_strv"
+            "-Wl,--wrap=sd_bus_flush_close_unref"
+            "-Wl,--wrap=sd_bus_open_system"
+            "-Wl,--wrap=sd_bus_process"
+            "-Wl,--wrap=sd_bus_request_name"
+            "-Wl,--wrap=sd_bus_slot_unref"
+    )
     add_test(NAME runtime-control-test COMMAND runtime-control-test)
 
     add_test(
