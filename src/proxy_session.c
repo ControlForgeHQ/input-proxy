@@ -35,6 +35,22 @@ struct input_proxy_session {
     volatile sig_atomic_t shutdown_requested;
 };
 
+static void set_source_available(
+    struct input_proxy_session *session,
+    bool source_available)
+{
+    const struct input_proxy_runtime_control_changes changes = {
+        .properties = INPUT_PROXY_RUNTIME_CONTROL_SOURCE_AVAILABLE,
+        .source_available = source_available
+    };
+
+    input_proxy_runtime_control_apply_changes(
+        &session->runtime_control,
+        &session->runtime_state,
+        &changes
+    );
+}
+
 static void log_verbose(
     const struct input_proxy_session *session,
     const char *format,
@@ -59,14 +75,14 @@ static void cleanup_active_devices(struct input_proxy_session *session)
 
     input_proxy_source_device_close(session->source_device);
     session->source_device = NULL;
-    session->runtime_state.source_available = false;
+    set_source_available(session, false);
 }
 
 static void close_source_device(struct input_proxy_session *session)
 {
     input_proxy_source_device_close(session->source_device);
     session->source_device = NULL;
-    session->runtime_state.source_available = false;
+    set_source_available(session, false);
 }
 
 static void wait_for_event(struct input_proxy_session *session)
@@ -167,7 +183,7 @@ static enum input_proxy_result create_active_devices(
         }
 
         session->source_opened_successfully = true;
-        session->runtime_state.source_available = true;
+        set_source_available(session, true);
         log_verbose(
             session,
             "source opened successfully: %s",
@@ -530,6 +546,7 @@ enum input_proxy_result input_proxy_session_run(
         }
 
         if (result == INPUT_PROXY_ERROR_SOURCE_DISCONNECTED) {
+            set_source_available(session, false);
             printf(
                 "input-proxy: source disconnected: %s\n",
                 session->source_path

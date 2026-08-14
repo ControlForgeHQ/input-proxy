@@ -84,10 +84,14 @@ static const sd_bus_vtable runtime_vtable[] = {
         SD_BUS_VTABLE_PROPERTY_CONST),
     SD_BUS_PROPERTY("PID", "u", property_pid, 0,
         SD_BUS_VTABLE_PROPERTY_CONST),
-    SD_BUS_PROPERTY("Paused", "b", property_boolean, 0, 0),
-    SD_BUS_PROPERTY("SourceAvailable", "b", property_boolean, 0, 0),
-    SD_BUS_PROPERTY("ActivityWhileRunning", "b", property_boolean, 0, 0),
-    SD_BUS_PROPERTY("ActivityWhilePaused", "b", property_boolean, 0, 0),
+    SD_BUS_PROPERTY("Paused", "b", property_boolean, 0,
+        SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_PROPERTY("SourceAvailable", "b", property_boolean, 0,
+        SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_PROPERTY("ActivityWhileRunning", "b", property_boolean, 0,
+        SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
+    SD_BUS_PROPERTY("ActivityWhilePaused", "b", property_boolean, 0,
+        SD_BUS_VTABLE_PROPERTY_EMITS_CHANGE),
     SD_BUS_METHOD("Pause", "", "", unsupported_method,
         SD_BUS_VTABLE_UNPRIVILEGED),
     SD_BUS_METHOD("Resume", "", "", unsupported_method,
@@ -220,6 +224,60 @@ initialization_error:
 error:
     input_proxy_runtime_control_destroy(control);
     return NULL;
+}
+
+size_t input_proxy_runtime_control_apply_changes(
+    struct input_proxy_runtime_control **control,
+    struct input_proxy_runtime_control_state *state,
+    const struct input_proxy_runtime_control_changes *changes)
+{
+    char *changed_properties[5];
+    size_t changed_count = 0;
+    int result;
+
+    if (state == NULL || changes == NULL) {
+        return 0;
+    }
+
+#define COMMIT_BOOLEAN(mask, member, property_name) \
+    do { \
+        if ((changes->properties & (mask)) != 0U && \
+            state->member != changes->member) { \
+            state->member = changes->member; \
+            changed_properties[changed_count++] = (property_name); \
+        } \
+    } while (0)
+
+    COMMIT_BOOLEAN(INPUT_PROXY_RUNTIME_CONTROL_PAUSED,
+        paused, "Paused");
+    COMMIT_BOOLEAN(INPUT_PROXY_RUNTIME_CONTROL_SOURCE_AVAILABLE,
+        source_available, "SourceAvailable");
+    COMMIT_BOOLEAN(INPUT_PROXY_RUNTIME_CONTROL_ACTIVITY_WHILE_RUNNING,
+        activity_while_running, "ActivityWhileRunning");
+    COMMIT_BOOLEAN(INPUT_PROXY_RUNTIME_CONTROL_ACTIVITY_WHILE_PAUSED,
+        activity_while_paused, "ActivityWhilePaused");
+
+#undef COMMIT_BOOLEAN
+
+    if (changed_count == 0 || control == NULL || *control == NULL) {
+        return changed_count;
+    }
+
+    changed_properties[changed_count] = NULL;
+    result = sd_bus_emit_properties_changed_strv(
+        (*control)->bus,
+        OBJECT_PATH,
+        INTERFACE_NAME,
+        changed_properties
+    );
+    if (result < 0) {
+        warn_failure("property notification", (*control)->service_name,
+            INPUT_PROXY_RUNTIME_CONTROL_INITIALIZATION_FAILED, -result);
+        input_proxy_runtime_control_destroy(*control);
+        *control = NULL;
+    }
+
+    return changed_count;
 }
 
 void input_proxy_runtime_control_process(struct input_proxy_runtime_control **control)
