@@ -423,7 +423,15 @@ State correction includes:
 
 - neutralization after source loss;
 - neutralization when entering paused operation;
-- synchronization before an unpaused session begins forwarding.
+- synchronization before event forwarding begins.
+
+Before event forwarding begins, the virtual device MUST be synchronized to the
+physical source's current state.
+
+This is a forwarding invariant rather than a condition associated with any
+particular lifecycle transition. It applies whenever forwarding is about to
+begin, including initial source acquisition, source reconnection, and resumption
+after forwarding has been suppressed.
 
 Selective neutralization requires complete kernel-visible virtual state for all
 supported `EV_KEY` controls and, for Type-B multitouch devices, the tracking
@@ -431,9 +439,9 @@ identifier of every slot. A query result is incomplete when the virtual device
 advertises a required capability but its current value cannot be obtained.
 
 Synchronization requires complete current physical-source state for the
-stateful controls defined by the Resume semantics. Querying current virtual
-state to avoid redundant synchronization events is optional. If that comparison
-state is unavailable, the session may emit a complete source-state
+stateful controls defined by the synchronization semantics. Querying current
+virtual state to avoid redundant synchronization events is optional. If that
+comparison state is unavailable, the session may emit a complete source-state
 synchronization instead.
 
 The session MUST NOT treat unavailable or incomplete state as inactive or
@@ -473,13 +481,16 @@ When the source reappears:
 2. initialize source state;
 3. compare it with the existing virtual device;
 4. retain or replace the virtual device as required;
-5. if the session is paused, continue consuming source events without
-   forwarding them;
-6. if the session is not paused, synchronize the virtual device to current
-   source state;
-7. resume forwarding only after required synchronization succeeds.
+5. continue according to the current event-forwarding policy.
 
-A reconnect is a lifecycle transition, not process reinitialization.
+If forwarding is to begin, the normal forwarding invariant applies: synchronize
+the virtual device to current physical-source state before forwarding any source
+events.
+
+If forwarding remains suppressed, source events continue to be consumed
+according to the current session policy without being forwarded.
+
+A reconnect is a lifecycle transition, not process reinitialization..
 
 ## Reconnect settling
 
