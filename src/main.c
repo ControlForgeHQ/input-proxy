@@ -95,7 +95,7 @@ static void print_run_help(FILE *stream)
         "\n"
         "Options:\n"
         "  --source PATH  Physical evdev source device.\n"
-        "  --name NAME    Name of the virtual input device.\n"
+        "  --name NAME    Instance Name (also used as the virtual device name).\n"
         "  --verbose      Show additional lifecycle diagnostics.\n"
         "  --help         Show this help and exit.\n\n",
         stream
@@ -109,10 +109,10 @@ static void print_startup_header(
         "input-proxy: Version=%s\n"
         "input-proxy: Repository=https://github.com/fasteddy516/input-proxy\n"
         "input-proxy: Source=%s\n"
-        "input-proxy: DeviceName=%s\n",
+        "input-proxy: InstanceName=%s\n",
         INPUT_PROXY_VERSION_STRING,
         config->source_path,
-        config->device_name
+        config->instance_name
     );
     fflush(stdout);
 }
@@ -179,11 +179,11 @@ static enum input_proxy_result parse_run_config(
         }
 
         if (strcmp(argv[index], "--name") == 0) {
-            if (config->device_name != NULL || index + 1 >= argc) {
+            if (config->instance_name != NULL || index + 1 >= argc) {
                 return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
             }
 
-            config->device_name = argv[++index];
+            config->instance_name = argv[++index];
             continue;
         }
 
@@ -199,7 +199,7 @@ static enum input_proxy_result parse_run_config(
         return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
     }
 
-    if (config->source_path == NULL || config->device_name == NULL) {
+    if (config->source_path == NULL || config->instance_name == NULL) {
         return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
     }
 
@@ -228,11 +228,21 @@ static int run_proxy(int argc, char *argv[])
         if (result == INPUT_PROXY_ERROR_INSTANCE_NAME_OWNED) {
             fprintf(
                 stderr,
-                "input-proxy: configured name '%s' is already owned by "
+                "input-proxy: Instance Name '%s' is already owned by "
                 "another running input-proxy instance\n",
-                config.device_name
+                config.instance_name
             );
             fputc('\n', stderr);
+            return EXIT_FAILURE;
+        }
+        if (result == INPUT_PROXY_ERROR_INVALID_INSTANCE_NAME) {
+            fprintf(
+                stderr,
+                "input-proxy: invalid Instance Name '%s': use 1-79 ASCII "
+                "bytes, beginning with a letter or underscore, followed "
+                "only by letters, digits, underscores, or hyphens\n\n",
+                config.instance_name
+            );
             return EXIT_FAILURE;
         }
         fprintf(

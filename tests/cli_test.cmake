@@ -68,6 +68,29 @@ function(assert_cli_failure_omits unexpected_pattern)
     endif()
 endfunction()
 
+function(assert_invalid_instance_name name)
+    execute_process(
+        COMMAND
+            "${INPUT_PROXY}" run
+            --source /input-proxy-test-path-that-does-not-exist
+            --name "${name}"
+        RESULT_VARIABLE actual_result
+        OUTPUT_VARIABLE standard_output
+        ERROR_VARIABLE standard_error
+    )
+
+    string(CONCAT output "${standard_output}" "${standard_error}")
+    if(actual_result EQUAL 0)
+        message(FATAL_ERROR "Invalid Instance Name succeeded: '${name}'\n${output}")
+    endif()
+    if(NOT standard_error MATCHES "invalid Instance Name.*1-79 ASCII bytes")
+        message(FATAL_ERROR "Invalid Instance Name diagnostic was not actionable: '${name}'\n${output}")
+    endif()
+    if(output MATCHES "input-proxy: Version=|input-proxy: waiting for source")
+        message(FATAL_ERROR "Invalid Instance Name reached runtime startup: '${name}'\n${output}")
+    endif()
+endfunction()
+
 function(assert_cli_blank_line expected_result)
     execute_process(
         COMMAND "${INPUT_PROXY}" ${ARGN}
@@ -100,7 +123,7 @@ function(assert_run_header)
             timeout --signal=TERM 1
             "${INPUT_PROXY}" run
             --source /input-proxy-test-path-that-does-not-exist
-            --name "Touchscreen Proxy"
+            --name "Touchscreen_Proxy"
         RESULT_VARIABLE actual_result
         OUTPUT_VARIABLE standard_output
         ERROR_VARIABLE standard_error
@@ -121,7 +144,7 @@ function(assert_run_header)
     endif()
 
     set(expected_context
-        "\ninput-proxy: Repository=https://github.com/fasteddy516/input-proxy\ninput-proxy: Source=/input-proxy-test-path-that-does-not-exist\ninput-proxy: DeviceName=Touchscreen Proxy\ninput-proxy: waiting for source"
+        "\ninput-proxy: Repository=https://github.com/fasteddy516/input-proxy\ninput-proxy: Source=/input-proxy-test-path-that-does-not-exist\ninput-proxy: InstanceName=Touchscreen_Proxy\ninput-proxy: waiting for source"
     )
     string(FIND "${standard_output}" "${expected_context}" context_position)
     if(context_position EQUAL -1)
@@ -143,7 +166,7 @@ assert_cli_omits("${INPUT_PROXY}" --help)
 assert_cli_omits("input-proxy: Repository=" --help)
 assert_cli(success "^input-proxy ${INPUT_PROXY_VERSION}" --version)
 assert_cli_omits("input-proxy: Repository=" --version)
-assert_cli(success "Usage:.*input-proxy run --source PATH --name NAME \\[--verbose\\].*--source PATH.*--name NAME.*--verbose" run --help)
+assert_cli(success "Usage:.*input-proxy run --source PATH --name NAME \\[--verbose\\].*--source PATH.*--name NAME.*Instance Name.*--verbose" run --help)
 assert_cli_omits("input-proxy: Repository=" run --help)
 assert_cli(success "List available physical input devices concisely\\..*Usage:.*input-proxy list.*Virtual uinput devices are excluded" list --help)
 assert_cli_omits("not yet implemented" list --help)
@@ -153,6 +176,15 @@ assert_cli(failure "missing command.*Usage:")
 assert_cli(failure "unknown command 'bogus'.*Usage:" bogus)
 assert_cli(failure "invalid run arguments.*Usage:" run)
 assert_cli_failure_omits("input-proxy: Repository=" run)
+assert_invalid_instance_name("")
+assert_invalid_instance_name("1touchscreen")
+assert_invalid_instance_name("-touchscreen")
+assert_invalid_instance_name("touch screen")
+assert_invalid_instance_name(" touchscreen")
+assert_invalid_instance_name("touchscreen ")
+assert_invalid_instance_name("touch.screen")
+assert_invalid_instance_name("touch/screen")
+assert_invalid_instance_name("touch:screen")
 assert_cli(success "DEVICE.*TYPE.*BUS.*NAME" list)
 assert_cli_omits("input-proxy: Repository=" list)
 assert_cli(failure "invalid list arguments.*Usage:" list unexpected)

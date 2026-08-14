@@ -21,6 +21,9 @@ const char *input_proxy_result_string(enum input_proxy_result result)
         case INPUT_PROXY_ERROR_INVALID_ARGUMENT:
             return "Invalid argument";
 
+        case INPUT_PROXY_ERROR_INVALID_INSTANCE_NAME:
+            return "Invalid Instance Name";
+
         case INPUT_PROXY_ERROR_OUT_OF_MEMORY:
             return "Out of memory";
 

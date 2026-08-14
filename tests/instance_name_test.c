@@ -6,6 +6,7 @@
 
 #include <signal.h>
 #include <stdio.h>
+#include <string.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -37,20 +38,76 @@ int main(void)
     int status;
     pid_t child;
     char ready;
+    char maximum_name[80];
+    char oversized_name[81];
+    const char *valid_names[] = {
+        "touchscreen",
+        "Touchscreen",
+        "_touchscreen",
+        "Touchscreen_1",
+        "Touch-Screen-1"
+    };
+    const char *invalid_names[] = {
+        "",
+        "1touchscreen",
+        "-touchscreen",
+        "touch screen",
+        " touchscreen",
+        "touchscreen ",
+        "touch.screen",
+        "touch/screen",
+        "touch:screen",
+        "touchscreen!",
+        "touchscreen\x80"
+    };
+    size_t index;
+
+    memset(maximum_name, 'a', sizeof(maximum_name) - 1);
+    maximum_name[sizeof(maximum_name) - 1] = '\0';
+    memset(oversized_name, 'a', sizeof(oversized_name) - 1);
+    oversized_name[sizeof(oversized_name) - 1] = '\0';
+
+    for (index = 0; index < sizeof(valid_names) / sizeof(valid_names[0]); ++index) {
+        failures += expect_result(
+            valid_names[index],
+            input_proxy_instance_name_validate(valid_names[index]),
+            INPUT_PROXY_SUCCESS
+        );
+    }
+    failures += expect_result(
+        "79-byte name",
+        input_proxy_instance_name_validate(maximum_name),
+        INPUT_PROXY_SUCCESS
+    );
+
+    for (index = 0;
+         index < sizeof(invalid_names) / sizeof(invalid_names[0]);
+         ++index) {
+        failures += expect_result(
+            invalid_names[index],
+            input_proxy_instance_name_validate(invalid_names[index]),
+            INPUT_PROXY_ERROR_INVALID_INSTANCE_NAME
+        );
+    }
+    failures += expect_result(
+        "80-byte name",
+        input_proxy_instance_name_validate(oversized_name),
+        INPUT_PROXY_ERROR_INVALID_INSTANCE_NAME
+    );
 
     failures += expect_result(
         "initial ownership",
-        input_proxy_instance_name_acquire(&first, "Touchscreen Proxy !@#$%^&*()"),
+        input_proxy_instance_name_acquire(&first, "Touchscreen_Proxy"),
         INPUT_PROXY_SUCCESS
     );
     failures += expect_result(
         "duplicate ownership",
-        input_proxy_instance_name_acquire(&second, "Touchscreen Proxy !@#$%^&*()"),
+        input_proxy_instance_name_acquire(&second, "Touchscreen_Proxy"),
         INPUT_PROXY_ERROR_INSTANCE_NAME_OWNED
     );
     failures += expect_result(
-        "different name",
-        input_proxy_instance_name_acquire(&second, "Second Touchscreen"),
+        "case-sensitive name",
+        input_proxy_instance_name_acquire(&second, "touchscreen_Proxy"),
         INPUT_PROXY_SUCCESS
     );
     input_proxy_instance_name_release(second);
@@ -60,7 +117,7 @@ int main(void)
 
     failures += expect_result(
         "reuse after release",
-        input_proxy_instance_name_acquire(&first, "Touchscreen Proxy !@#$%^&*()"),
+        input_proxy_instance_name_acquire(&first, "Touchscreen_Proxy"),
         INPUT_PROXY_SUCCESS
     );
     input_proxy_instance_name_release(first);
@@ -79,7 +136,7 @@ int main(void)
     if (child == 0) {
         enum input_proxy_result result = input_proxy_instance_name_acquire(
             &first,
-            "concurrent startup"
+            "concurrent_startup"
         );
 
         close(ready_pipe[0]);
@@ -102,7 +159,7 @@ int main(void)
     close(ready_pipe[0]);
     failures += expect_result(
         "concurrent collision",
-        input_proxy_instance_name_acquire(&second, "concurrent startup"),
+        input_proxy_instance_name_acquire(&second, "concurrent_startup"),
         INPUT_PROXY_ERROR_INSTANCE_NAME_OWNED
     );
     if (kill(child, SIGKILL) != 0 || waitpid(child, &status, 0) != child ||
@@ -112,7 +169,7 @@ int main(void)
     }
     failures += expect_result(
         "reuse after process exit",
-        input_proxy_instance_name_acquire(&second, "concurrent startup"),
+        input_proxy_instance_name_acquire(&second, "concurrent_startup"),
         INPUT_PROXY_SUCCESS
     );
     input_proxy_instance_name_release(second);
