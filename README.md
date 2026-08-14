@@ -31,6 +31,21 @@ no coordinate transformation, gesture interpretation, or per-code filtering.
 
 ---
 
+## Project status
+
+The latest released version is **0.2.0**.
+
+The repository is currently preparing the documented Version 0.3 runtime-control
+and observability contract for implementation. Features described for Version
+0.3 and later are design targets and are not available unless the README
+explicitly identifies them as implemented.
+
+- [Version 0.2 capabilities](#version-02-capabilities)
+- [Planned roadmap](docs/ROADMAP.md)
+- [Version 0.3 D-Bus interface design](docs/DBUS_INTERFACE.md)
+
+---
+
 ## Why it exists
 
 `input-proxy` was originally developed for a small Linux kiosk system driving
@@ -231,8 +246,8 @@ The following capabilities are planned for future releases:
 - configuration files; and
 - general-purpose input remapping.
 
-Runtime awareness and control are planned for Version 0.3. Persistent
-installation and service integration are planned for Version 0.4.
+Runtime awareness and control are the documented design target for Version 0.3.
+Persistent installation and service integration are planned for Version 0.4.
 
 For additional project information see:
 

@@ -417,6 +417,52 @@ Parallel shadow state should be introduced only if a concrete Linux input state
 is demonstrated to be unavailable or unreliable through the kernel-visible
 virtual device.
 
+## State-correction failure
+
+State correction includes:
+
+- neutralization after source loss;
+- neutralization when entering paused operation;
+- synchronization before an unpaused session begins forwarding.
+
+Selective neutralization requires complete kernel-visible virtual state for all
+supported `EV_KEY` controls and, for Type-B multitouch devices, the tracking
+identifier of every slot. A query result is incomplete when the virtual device
+advertises a required capability but its current value cannot be obtained.
+
+Synchronization requires complete current physical-source state for the
+stateful controls defined by the Resume semantics. Querying current virtual
+state to avoid redundant synchronization events is optional. If that comparison
+state is unavailable, the session may emit a complete source-state
+synchronization instead.
+
+The session MUST NOT treat unavailable or incomplete state as inactive or
+neutral. It MUST NOT compensate by blindly resetting supported values, ending
+unverified multitouch contacts, replaying stored events, or continuing with a
+partially completed correction sequence.
+
+The virtual device can no longer be trusted when:
+
+- a mandatory state query fails or returns incomplete state;
+- writing any required neutralization or synchronization event fails;
+- the final `EV_SYN` / `SYN_REPORT` cannot be emitted;
+- the physical source disappears during synchronization after the virtual
+  device may have been partially changed.
+
+Any such failure is fatal to the proxy session. The session MUST:
+
+1. stop or withhold normal forwarding;
+2. destroy the virtual device;
+3. close the physical source if it remains open;
+4. report a clear fatal diagnostic identifying the failed operation;
+5. terminate with a failure result.
+
+The session MUST NOT attempt in-place continuation or automatic virtual-device
+replacement after a state-correction failure. Process cleanup releases Instance
+Name ownership and any D-Bus service-name ownership normally. A process
+supervisor or operator may subsequently start a new session from a clean
+lifecycle boundary.
+
 ## Reconnect
 
 After source loss, the session waits for the configured source to return.
@@ -427,7 +473,11 @@ When the source reappears:
 2. initialize source state;
 3. compare it with the existing virtual device;
 4. retain or replace the virtual device as required;
-5. resume forwarding.
+5. if the session is paused, continue consuming source events without
+   forwarding them;
+6. if the session is not paused, synchronize the virtual device to current
+   source state;
+7. resume forwarding only after required synchronization succeeds.
 
 A reconnect is a lifecycle transition, not process reinitialization.
 
@@ -458,41 +508,127 @@ Persistent permission denial after the settling period is fatal.
 This behavior exists specifically to tolerate demonstrated hotplug/udev
 ordering and must not turn persistent permission problems into infinite retries.
 
+## Lifecycle failure policy
+
+The proxy session classifies failures according to the operation and lifecycle
+context in which they occur. A low-level error is recoverable only when the
+session has a defined transition that preserves its correctness invariants.
+Errors must not be retried merely because they might be temporary.
+
+The runtime applies the following policy:
+
+| Originating operation | Result category | Session policy | Retry policy | Virtual-device lifetime | Diagnostic and process result |
+|-----------------------|-----------------|----------------|--------------|-------------------------|-------------------------------|
+| Initial source open or reacquisition | Source unavailable | Remain in `WAITING_FOR_SOURCE`. | Retry at the normal source-wait cadence until shutdown. | Retain an existing virtual device; none exists during initial acquisition. | Report the wait state once on standard output without log flooding; no process exit. |
+| Initial source open | Permission denied | Treat as a configuration or access failure. | Do not retry. | No virtual device has been created. | Report the error on standard error and terminate with failure. |
+| Source reacquisition | Permission denied | Allow the bounded reconnect-settling behavior defined above. | Retry only until the settling deadline. | Retain the existing neutralized virtual device during settling. | Use verbose lifecycle diagnostics during settling; persistent denial is reported on standard error and terminates with failure. |
+| Initial source open or reacquisition | Generic open or source-initialization failure | Treat as fatal because the session has no defined evidence that retry is safe or useful. | Do not retry automatically. | Destroy any retained virtual device during cleanup. | Report the failed operation on standard error and terminate with failure. |
+| Normal read or synchronization-recovery read | Source disconnected | Enter the source-loss lifecycle. Neutralize the virtual device, close the source, and wait for reacquisition. | Retry source acquisition at the normal source-wait cadence after successful neutralization. | Retain the neutralized virtual device. | Report the disconnect as a lifecycle event on standard output; no process exit. |
+| Normal read or synchronization-recovery read | Generic read failure | Treat as fatal. A read failure that is not classified as source disconnection must not be converted into an indefinite reconnect loop. | Do not retry. | Destroy the virtual device and close the source during cleanup. | Report the failed read on standard error and terminate with failure. |
+| Normal event forwarding | Virtual-device event-write failure | Treat as fatal because the kernel-visible virtual state may no longer match the forwarded source stream. | Do not retry the write or replace the virtual device in place. | Destroy the virtual device and close the source during cleanup. | Report the failed write on standard error and terminate with failure. |
+| Initial virtual-device creation | Creation failure | Close the source and terminate. | Do not retry within the session. | Release any partially initialized virtual-device resources. | Report the creation failure on standard error and terminate with failure. |
+| Reconnect compatibility comparison | Compatible source | Retain the existing virtual device and continue according to pause state. | Not applicable. | Retain the existing virtual device. | Report normal reconnection; no process exit. |
+| Reconnect compatibility comparison | Incompatible source | Perform the replacement transition defined below. | Make one replacement attempt for that reconnect transition. | Destroy the old virtual device before creating its replacement. | Successful replacement continues the session; replacement failure is reported on standard error and terminates with failure. |
+| Neutralization or required state synchronization | State-correction failure | Apply the fail-closed policy defined in `State-correction failure`. | Do not retry or replace in place. | Destroy the virtual device and close the source. | Report a fatal diagnostic and terminate with failure. |
+| Session setup or runtime policy | Invalid internal state, resource exhaustion, or another internal failure | Treat as fatal unless another section explicitly defines a recoverable transition. | Do not retry automatically. | Release all resources owned by the session. | Report the failure on standard error and terminate with failure. |
+
+A fatal result always enters cleanup, releases Instance Name and D-Bus ownership,
+destroys any virtual device, closes any physical source, and returns a nonzero
+process exit status. A normal `SIGINT` or `SIGTERM` shutdown performs the same
+resource cleanup but returns success.
+
+Automatic restart after a fatal result belongs to an external supervisor or an
+operator. The runtime must not introduce an unbounded retry loop for an error
+category that this architecture classifies as fatal.
+
 ## Source compatibility after reconnect
 
 A persistent virtual device may be retained only if it can correctly represent
-the reconnected source.
+the reconnected source. Compatibility means exact equality of the externally
+relevant identity and event representation already exposed by the virtual
+device. It is not a subset relationship or an estimate that two sources are
+probably the same physical device.
 
-Compatibility must consider properties that affect event representation,
-including where relevant:
+The compatibility comparison is:
 
-- event types;
-- event codes;
-- absolute-axis definitions;
-- input properties;
-- identity/capability metadata used to construct the virtual device.
+| Field class | Required comparison |
+|-------------|---------------------|
+| Bus type | Exact equality |
+| Vendor identifier | Exact equality |
+| Product identifier | Exact equality |
+| Version identifier | Exact equality |
+| Unique identifier | Exact nullable-string equality |
+| Input properties | Exact set equality |
+| Event types | Exact set equality |
+| Event codes within every event type | Exact set equality |
+| Absolute-axis minimum | Exact equality |
+| Absolute-axis maximum | Exact equality |
+| Absolute-axis fuzz | Exact equality |
+| Absolute-axis flat | Exact equality |
+| Absolute-axis resolution | Exact equality |
+| Repeat delay and period | Exact equality |
+
+Exact set equality means that both additions and removals are incompatible. A
+virtual device with extra capabilities does not correctly represent a source
+that no longer provides them.
+
+Changes to bus type, vendor, product, version, or unique identifier require
+replacement even when event capabilities are unchanged. Retaining the old
+virtual device would expose stale source identity.
+
+Compatibility deliberately ignores runtime state and metadata that is not part
+of the represented virtual device:
+
+| Field | Treatment |
+|-------|-----------|
+| Current `EV_KEY` values | Ignore; synchronize as runtime state |
+| Current `EV_SW` values | Ignore; synchronize as runtime state |
+| Current absolute-axis values | Ignore; synchronize as runtime state |
+| Current multitouch contacts and slot values | Ignore; synchronize or suppress according to pause mode |
+| Source display name | Ignore; the virtual name is the configured Instance Name |
+| Source physical-location string | Ignore; it is not part of the virtual representation |
+| Configured source path | Ignore for compatibility; it selects the acquisition target |
+| Event timestamps | Ignore; they are transient event data |
+| Kernel-assigned event-node path | Ignore; it is a lifecycle artifact |
 
 If the source is compatible:
 
 ```text
-retain virtual device
-    -> initialize new source
-    -> resume forwarding
+initialize source
+    -> retain virtual device
+    -> if paused, consume and suppress source events
+    -> if unpaused, synchronize current state
+    -> begin forwarding only after synchronization succeeds
 ```
+
+A compatible reconnect does not produce a virtual-device removal/addition
+cycle.
 
 If the source is incompatible:
 
 ```text
-new source
+initialize source
     -> destroy old virtual device
     -> create replacement from new source
-    -> resume forwarding
+    -> if paused, consume and suppress source events
+    -> if unpaused, synchronize current state
+    -> begin forwarding only after synchronization succeeds
 ```
 
-Capability incompatibility is recoverable.
+Input consumers observe removal of the old virtual device and addition of the
+replacement. The replacement retains the configured Instance Name and virtual
+device name. The process, D-Bus endpoint, and configured source identity remain
+the same logical proxy instance. Linux input and udev already expose the device
+removal/addition cycle; the D-Bus interface does not duplicate it with a
+project-specific replacement signal.
 
-The session should terminate only if the required replacement virtual device
-cannot be created or another unrecoverable failure occurs.
+Identity or capability incompatibility is recoverable through replacement.
+
+If the required replacement cannot be created, the session MUST close the
+reconnected source and terminate with failure. It MUST NOT forward through the
+incompatible old device, retain a source without a usable virtual
+representation, or retry replacement indefinitely within the same lifecycle
+transition.
 
 ## Event forwarding
 
@@ -779,6 +915,13 @@ D-Bus owns:
 - method dispatch;
 - property-change delivery.
 
+System-bus policy controls which processes may own project service names and
+which clients may access the exported interface. It is the sole authorization
+boundary for D-Bus properties, standard interfaces, and methods. `input-proxy`
+does not inspect caller credentials or apply a second service-level
+authorization rule. A method call delivered by the bus is authorized for
+session-level dispatch.
+
 The process launcher owns process lifetime.
 
 This may be:
@@ -849,15 +992,56 @@ well-known name, so its D-Bus address is stable across process lifetimes.
 
 D-Bus runtime control is optional.
 
-Failure to connect to the system D-Bus or acquire the runtime service name MUST
-NOT prevent the proxy from operating.
+Runtime identity and D-Bus initialization occur in this order:
+
+1. validate the Instance Name;
+2. acquire authoritative abstract-socket Instance Name ownership;
+3. derive the D-Bus identifiers;
+4. connect to the system bus;
+5. export the runtime object and interfaces;
+6. request the well-known service name without queueing;
+7. mark D-Bus integration available.
+
+D-Bus integration is all-or-nothing. It MUST NOT be reported as available until
+every initialization step succeeds. Clients address only the well-known service
+name; exporting an object under the connection's unique name is not a degraded
+public control plane.
+
+Failure to connect, export the complete interface, or acquire the runtime
+service name MUST NOT prevent the proxy from operating.
 
 When D-Bus initialization fails:
 
-- `input-proxy run` MUST log a clear startup warning;
+- `input-proxy run` MUST log a clear startup warning that identifies the failed
+  stage and underlying platform reason where available;
+- partial object exports, service-name ownership, connections, activity timers,
+  and activity state MUST be cleaned up;
 - normal evdev-to-uinput proxy operation MUST continue;
 - pause/resume control through D-Bus is unavailable;
 - D-Bus activity tracking is disabled.
+
+The service-name request MUST use no-queue behavior. If the name is already
+owned, the process disables D-Bus integration rather than waiting to acquire the
+name later. Any future explicit reinitialization attempt repeats the complete
+sequence and again requests the name without queueing.
+
+Because authoritative abstract-socket ownership is acquired first, a D-Bus
+service-name collision cannot be another conforming `input-proxy` process with
+the same Instance Name. It indicates another name owner or an inconsistent
+deployment and MUST be diagnosed as a D-Bus namespace conflict. The conflict
+does not invalidate the process's authoritative Instance Name ownership and
+does not prevent forwarding.
+
+Rejection of a derived identifier after successful Instance Name validation is
+an internal invariant violation, not an operator naming error. The diagnostic
+MUST identify name derivation or validation as defective while the core proxy
+continues without D-Bus integration.
+
+If an established D-Bus connection is lost, the runtime MUST immediately mark
+D-Bus integration unavailable, cancel activity timers, discard activity state,
+stop exposing runtime control, report the loss without repeated log flooding,
+and continue normal input forwarding. Automatic retry cadence is not an
+architectural requirement.
 
 The core proxy runtime MUST remain usable without D-Bus.
 
@@ -929,24 +1113,52 @@ logically paused when the source returns.
 
 ### Resume semantics
 
-Resume MUST restore forwarding from the current physical source state rather
-than replaying activity that occurred while paused.
+Resume requests unpaused operation. It MUST restore forwarding from the current
+physical source state rather than replaying activity that occurred while
+paused.
 
-The implementation SHOULD synchronize relevant stateful virtual controls to the
-source's current state before normal forwarding resumes.
+Synchronizing the virtual device to current physical-source state is a mandatory
+precondition whenever an unpaused session transitions from not forwarding to
+forwarding. This includes:
 
-Relevant state may include:
+- resuming with an available source;
+- reacquiring a compatible source while unpaused;
+- creating a replacement virtual device for an incompatible source while
+  unpaused.
 
-- current `EV_KEY` state;
-- current `EV_SW` state;
-- current absolute-axis state;
-- current Type-B multitouch slot/contact state.
+Required synchronization includes current state for supported:
 
-Relative motion and other transient events that occurred during the pause are
-discarded.
+- `EV_KEY` controls, including buttons and `BTN_TOUCH`;
+- `EV_SW` controls;
+- absolute axes;
+- Type-B multitouch slots, tracking identifiers, and per-contact absolute
+  values.
 
-The synchronization sequence SHOULD end with an appropriate synchronization
-boundary before normal event forwarding resumes.
+The session SHOULD emit only values required to make virtual state match current
+source state. The synchronization sequence MUST form one coherent state update
+and end with `EV_SYN` / `SYN_REPORT` before normal event forwarding begins.
+
+Relative motion, miscellaneous events, synchronization events, historical
+press/release sequences, and other transient activity that occurred while
+forwarding was suppressed are discarded.
+
+When resume is requested with an available source, the session remains paused
+until required synchronization succeeds. If synchronization does not complete,
+normal forwarding MUST NOT begin and the session MUST NOT report a successful
+transition to unpaused operation.
+
+When resume is requested without an available source, the session records
+unpaused operation immediately. `Paused` becomes false while `SourceAvailable`
+remains false, and no forwarding occurs. When the source returns, required
+synchronization precedes forwarding.
+
+Calling resume while the session is already unpaused is an idempotent no-op and
+does not require another synchronization sequence.
+
+When a source returns while the session remains paused, normal source
+initialization and compatibility handling occur, but active source state MUST
+NOT be synchronized into the virtual device. The session continues consuming
+and suppressing source events until resume is requested.
 
 Resume MUST NOT require the physical device to reach an assumed all-neutral
 state.
@@ -964,9 +1176,9 @@ Running activity uses a retriggerable hold interval. Paused activity uses a
 throttled indication suitable for wake or attention handling; events arriving
 during the throttle interval do not continuously extend it.
 
-These indications are mutually exclusive in normal operation and are available
-only while D-Bus integration is active. Exact property names, timing options,
-defaults, bounds, and transition rules belong to `docs/DBUS_INTERFACE.md`.
+These indications MUST remain mutually exclusive and are available only while
+D-Bus integration is active. Exact property names, timing options, defaults,
+bounds, and transition rules belong to `docs/DBUS_INTERFACE.md`.
 
 ### Device discovery integration
 
