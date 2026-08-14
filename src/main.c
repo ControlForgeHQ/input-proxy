@@ -8,6 +8,10 @@
 #include "device_inspection_internal.h"
 
 #include <stdbool.h>
+#include <ctype.h>
+#include <errno.h>
+#include <inttypes.h>
+#include <stdint.h>
 #include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -91,15 +95,47 @@ static void print_run_help(FILE *stream)
         "Run the input proxy for one physical input device.\n"
         "\n"
         "Usage:\n"
-        "  input-proxy run --source PATH --name NAME [--verbose]\n"
+        "  input-proxy run --source PATH --name NAME [OPTIONS]\n"
         "\n"
         "Options:\n"
         "  --source PATH  Physical evdev source device.\n"
         "  --name NAME    Instance Name (also used as the virtual device name).\n"
+        "  --activity-timeout-ms MS\n"
+        "                 Running activity hold time, 0-4294967295 "
+        "(default: 5000).\n"
+        "  --detection-throttle-ms MS\n"
+        "                 Paused activity throttle, 0-4294967295 "
+        "(default: 250).\n"
         "  --verbose      Show additional lifecycle diagnostics.\n"
         "  --help         Show this help and exit.\n\n",
         stream
     );
+}
+
+static bool parse_duration_ms(const char *text, uint64_t *duration_ms)
+{
+    char *end;
+    const unsigned char *character;
+    uintmax_t value;
+
+    if (text == NULL || duration_ms == NULL || text[0] == '\0') {
+        return false;
+    }
+    for (character = (const unsigned char *)text; *character != '\0';
+         character++) {
+        if (!isdigit(*character)) {
+            return false;
+        }
+    }
+    errno = 0;
+    end = NULL;
+    value = strtoumax(text, &end, 10);
+    if (errno == ERANGE || end == text || *end != '\0' ||
+        value > UINT32_MAX) {
+        return false;
+    }
+    *duration_ms = (uint64_t)value;
+    return true;
 }
 
 static void print_startup_header(
@@ -161,12 +197,17 @@ static enum input_proxy_result parse_run_config(
     struct input_proxy_session_config *config)
 {
     int index;
+    bool activity_timeout_seen = false;
+    bool detection_throttle_seen = false;
 
     if (config == NULL) {
         return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
     }
 
-    *config = (struct input_proxy_session_config) {0};
+    *config = (struct input_proxy_session_config) {
+        .activity_timeout_ms = INPUT_PROXY_DEFAULT_ACTIVITY_TIMEOUT_MS,
+        .detection_throttle_ms = INPUT_PROXY_DEFAULT_DETECTION_THROTTLE_MS
+    };
 
     for (index = 2; index < argc; ++index) {
         if (strcmp(argv[index], "--source") == 0) {
@@ -193,6 +234,32 @@ static enum input_proxy_result parse_run_config(
             }
 
             config->verbose = true;
+            continue;
+        }
+
+        if (strcmp(argv[index], "--activity-timeout-ms") == 0) {
+            if (activity_timeout_seen || index + 1 >= argc || !parse_duration_ms(
+                    argv[index + 1], &config->activity_timeout_ms)) {
+                fprintf(stderr, "input-proxy: invalid non-negative duration "
+                    "for --activity-timeout-ms: %s\n",
+                    index + 1 < argc ? argv[index + 1] : "missing value");
+                return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
+            }
+            activity_timeout_seen = true;
+            index++;
+            continue;
+        }
+
+        if (strcmp(argv[index], "--detection-throttle-ms") == 0) {
+            if (detection_throttle_seen || index + 1 >= argc || !parse_duration_ms(
+                    argv[index + 1], &config->detection_throttle_ms)) {
+                fprintf(stderr, "input-proxy: invalid non-negative duration "
+                    "for --detection-throttle-ms: %s\n",
+                    index + 1 < argc ? argv[index + 1] : "missing value");
+                return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
+            }
+            detection_throttle_seen = true;
+            index++;
             continue;
         }
 

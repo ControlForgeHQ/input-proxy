@@ -21,6 +21,8 @@
 #define EVENT_UNAVAILABLE_DELAY_NS 10000000L
 #define SOURCE_RETRY_DELAY_NS 100000000L
 #define RECONNECT_SETTLING_WINDOW_SECONDS 2
+#define NANOSECONDS_PER_MILLISECOND UINT64_C(1000000)
+#define MICROSECONDS_PER_SECOND UINT64_C(1000000)
 
 struct input_proxy_session {
     char *source_path;
@@ -30,11 +32,141 @@ struct input_proxy_session {
     struct input_proxy_virtual_device *virtual_device;
     struct input_proxy_runtime_control *runtime_control;
     struct input_proxy_runtime_control_state runtime_state;
+    struct timespec running_activity_deadline;
+    struct timespec paused_activity_deadline;
+    uint64_t activity_timeout_ms;
+    uint64_t detection_throttle_ms;
+    bool activity_tracking_available;
+    bool running_activity_timer_active;
+    bool paused_activity_timer_active;
     enum input_proxy_result fatal_result;
     bool source_opened_successfully;
     bool verbose;
     volatile sig_atomic_t shutdown_requested;
 };
+
+static bool monotonic_now(struct timespec *now)
+{
+    return clock_gettime(CLOCK_MONOTONIC, now) == 0;
+}
+
+static bool deadline_expired(const struct timespec *deadline,
+    const struct timespec *now)
+{
+    return now->tv_sec > deadline->tv_sec ||
+        (now->tv_sec == deadline->tv_sec && now->tv_nsec >= deadline->tv_nsec);
+}
+
+static void set_deadline(struct timespec *deadline,
+    const struct timespec *now, uint64_t duration_ms)
+{
+    const uint64_t duration_ns = duration_ms * NANOSECONDS_PER_MILLISECOND;
+    const uint64_t seconds = duration_ns / UINT64_C(1000000000);
+    const uint64_t nanoseconds = duration_ns % UINT64_C(1000000000);
+
+    deadline->tv_sec = now->tv_sec + (time_t)seconds;
+    deadline->tv_nsec = now->tv_nsec + (long)nanoseconds;
+    if (deadline->tv_nsec >= 1000000000L) {
+        deadline->tv_sec++;
+        deadline->tv_nsec -= 1000000000L;
+    }
+}
+
+static void discard_activity_tracking(struct input_proxy_session *session)
+{
+    const struct input_proxy_runtime_control_changes changes = {
+        .properties = INPUT_PROXY_RUNTIME_CONTROL_ACTIVITY_WHILE_RUNNING |
+            INPUT_PROXY_RUNTIME_CONTROL_ACTIVITY_WHILE_PAUSED,
+        .activity_while_running = false,
+        .activity_while_paused = false
+    };
+
+    session->activity_tracking_available = false;
+    session->running_activity_timer_active = false;
+    session->paused_activity_timer_active = false;
+    input_proxy_runtime_control_apply_changes(
+        NULL, &session->runtime_state, &changes);
+}
+
+static void update_control_availability(struct input_proxy_session *session)
+{
+    if (session->runtime_control == NULL) {
+        if (session->activity_tracking_available) {
+            discard_activity_tracking(session);
+        }
+    } else if (!session->activity_tracking_available) {
+        session->activity_tracking_available = true;
+    }
+}
+
+static void process_physical_activity(struct input_proxy_session *session)
+{
+    struct input_proxy_runtime_control_changes changes = {0};
+    struct timespec now;
+    uint64_t duration_ms;
+
+    update_control_availability(session);
+    if (!session->activity_tracking_available || !monotonic_now(&now)) {
+        return;
+    }
+
+    if (session->runtime_state.paused) {
+        if (session->paused_activity_timer_active) {
+            return;
+        }
+        duration_ms = session->detection_throttle_ms;
+        changes.properties =
+            INPUT_PROXY_RUNTIME_CONTROL_ACTIVITY_WHILE_PAUSED;
+        changes.activity_while_paused = duration_ms != 0;
+        session->paused_activity_timer_active = duration_ms != 0;
+        if (session->paused_activity_timer_active) {
+            set_deadline(&session->paused_activity_deadline, &now, duration_ms);
+        }
+    } else {
+        duration_ms = session->activity_timeout_ms;
+        changes.properties =
+            INPUT_PROXY_RUNTIME_CONTROL_ACTIVITY_WHILE_RUNNING;
+        changes.activity_while_running = duration_ms != 0;
+        session->running_activity_timer_active = duration_ms != 0;
+        if (session->running_activity_timer_active) {
+            set_deadline(&session->running_activity_deadline, &now, duration_ms);
+        }
+    }
+    input_proxy_runtime_control_apply_changes(
+        &session->runtime_control, &session->runtime_state, &changes);
+    update_control_availability(session);
+}
+
+void input_proxy_session_process_activity_timers(
+    struct input_proxy_session *session)
+{
+    struct input_proxy_runtime_control_changes changes = {0};
+    struct timespec now;
+
+    if (session == NULL) {
+        return;
+    }
+    update_control_availability(session);
+    if (!session->activity_tracking_available || !monotonic_now(&now)) {
+        return;
+    }
+    if (session->running_activity_timer_active &&
+        deadline_expired(&session->running_activity_deadline, &now)) {
+        session->running_activity_timer_active = false;
+        changes.properties |=
+            INPUT_PROXY_RUNTIME_CONTROL_ACTIVITY_WHILE_RUNNING;
+    }
+    if (session->paused_activity_timer_active &&
+        deadline_expired(&session->paused_activity_deadline, &now)) {
+        session->paused_activity_timer_active = false;
+        changes.properties |= INPUT_PROXY_RUNTIME_CONTROL_ACTIVITY_WHILE_PAUSED;
+    }
+    if (changes.properties != 0U) {
+        input_proxy_runtime_control_apply_changes(
+            &session->runtime_control, &session->runtime_state, &changes);
+        update_control_availability(session);
+    }
+}
 
 static void set_source_available(
     struct input_proxy_session *session,
@@ -50,6 +182,7 @@ static void set_source_available(
         &session->runtime_state,
         &changes
     );
+    update_control_availability(session);
 }
 
 static enum input_proxy_result handle_pause_request(void *userdata, bool paused)
@@ -91,6 +224,48 @@ static void close_source_device(struct input_proxy_session *session)
     set_source_available(session, false);
 }
 
+static uint64_t activity_wait_timeout_usec(
+    struct input_proxy_session *session, uint64_t maximum_usec)
+{
+    const struct timespec *deadline = NULL;
+    struct timespec now;
+    uint64_t remaining_usec;
+    time_t seconds;
+    long nanoseconds;
+
+    input_proxy_session_process_activity_timers(session);
+    if (session->running_activity_timer_active) {
+        deadline = &session->running_activity_deadline;
+    } else if (session->paused_activity_timer_active) {
+        deadline = &session->paused_activity_deadline;
+    }
+    if (deadline == NULL || !monotonic_now(&now)) {
+        return maximum_usec;
+    }
+    if (deadline_expired(deadline, &now)) {
+        return 0;
+    }
+    seconds = deadline->tv_sec - now.tv_sec;
+    nanoseconds = deadline->tv_nsec - now.tv_nsec;
+    if (nanoseconds < 0) {
+        seconds--;
+        nanoseconds += 1000000000L;
+    }
+    remaining_usec = (uint64_t)seconds * MICROSECONDS_PER_SECOND +
+        ((uint64_t)nanoseconds + UINT64_C(999)) / UINT64_C(1000);
+    return remaining_usec < maximum_usec ? remaining_usec : maximum_usec;
+}
+
+static void wait_with_activity_timer(
+    struct input_proxy_session *session, uint64_t maximum_usec)
+{
+    input_proxy_runtime_control_wait(
+        &session->runtime_control,
+        activity_wait_timeout_usec(session, maximum_usec));
+    update_control_availability(session);
+    input_proxy_session_process_activity_timers(session);
+}
+
 static void wait_for_event(struct input_proxy_session *session)
 {
     const struct timespec delay = {
@@ -98,10 +273,7 @@ static void wait_for_event(struct input_proxy_session *session)
         .tv_nsec = EVENT_UNAVAILABLE_DELAY_NS
     };
 
-    input_proxy_runtime_control_wait(
-        &session->runtime_control,
-        (uint64_t)delay.tv_nsec / 1000U
-    );
+    wait_with_activity_timer(session, (uint64_t)delay.tv_nsec / 1000U);
 }
 
 static void wait_for_source(struct input_proxy_session *session)
@@ -111,10 +283,7 @@ static void wait_for_source(struct input_proxy_session *session)
         .tv_nsec = SOURCE_RETRY_DELAY_NS
     };
 
-    input_proxy_runtime_control_wait(
-        &session->runtime_control,
-        (uint64_t)delay.tv_nsec / 1000U
-    );
+    wait_with_activity_timer(session, (uint64_t)delay.tv_nsec / 1000U);
 }
 
 static bool reconnect_settling_expired(const struct timespec *deadline)
@@ -140,6 +309,8 @@ static enum input_proxy_result create_active_devices(
 
     while (!session->shutdown_requested) {
         input_proxy_runtime_control_process(&session->runtime_control);
+        update_control_availability(session);
+        input_proxy_session_process_activity_timers(session);
         if (session->fatal_result != INPUT_PROXY_SUCCESS) {
             return session->fatal_result;
         }
@@ -441,11 +612,22 @@ enum input_proxy_result input_proxy_session_request_paused(
     }
 
     changes = (struct input_proxy_runtime_control_changes) {
-        .properties = INPUT_PROXY_RUNTIME_CONTROL_PAUSED,
-        .paused = paused
+        .properties = INPUT_PROXY_RUNTIME_CONTROL_PAUSED |
+            (paused
+                ? INPUT_PROXY_RUNTIME_CONTROL_ACTIVITY_WHILE_RUNNING
+                : INPUT_PROXY_RUNTIME_CONTROL_ACTIVITY_WHILE_PAUSED),
+        .paused = paused,
+        .activity_while_running = false,
+        .activity_while_paused = false
     };
+    if (paused) {
+        session->running_activity_timer_active = false;
+    } else {
+        session->paused_activity_timer_active = false;
+    }
     input_proxy_runtime_control_apply_changes(
         &session->runtime_control, &session->runtime_state, &changes);
+    update_control_availability(session);
     if (session->runtime_state.source_available) {
         log_verbose(
             session,
@@ -499,6 +681,8 @@ static enum input_proxy_result recover_synchronization(
         if (result != INPUT_PROXY_SUCCESS) {
             return result;
         }
+
+        process_physical_activity(session);
 
         result = process_read_event(
             session,
@@ -559,6 +743,8 @@ enum input_proxy_result input_proxy_session_create(
     }
 
     new_session->verbose = config->verbose;
+    new_session->activity_timeout_ms = config->activity_timeout_ms;
+    new_session->detection_throttle_ms = config->detection_throttle_ms;
     new_session->runtime_state = (struct input_proxy_runtime_control_state) {
         .instance_name = new_session->instance_name,
         .source_path = new_session->source_path,
@@ -591,6 +777,7 @@ enum input_proxy_result input_proxy_session_run(
         handle_pause_request,
         session
     );
+    session->activity_tracking_available = session->runtime_control != NULL;
     result = INPUT_PROXY_SUCCESS;
     while (!session->shutdown_requested) {
         result = create_active_devices(session);
@@ -600,6 +787,8 @@ enum input_proxy_result input_proxy_session_run(
 
         while (!session->shutdown_requested) {
             input_proxy_runtime_control_process(&session->runtime_control);
+            update_control_availability(session);
+            input_proxy_session_process_activity_timers(session);
             if (session->fatal_result != INPUT_PROXY_SUCCESS) {
                 result = session->fatal_result;
                 break;
@@ -702,6 +891,7 @@ enum input_proxy_result input_proxy_session_process_event(
 
     result = input_proxy_source_device_read_event(source_device, &event);
     if (result == INPUT_PROXY_EVENT_SYNC_REQUIRED) {
+        process_physical_activity(session);
         return recover_synchronization(
             session,
             source_device,
@@ -711,6 +901,8 @@ enum input_proxy_result input_proxy_session_process_event(
     if (result != INPUT_PROXY_SUCCESS) {
         return result;
     }
+
+    process_physical_activity(session);
 
     return process_read_event(session, virtual_device, &event);
 }

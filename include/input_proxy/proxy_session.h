@@ -4,10 +4,16 @@
 #include <input_proxy/result.h>
 
 #include <stdbool.h>
+#include <stdint.h>
+
+#define INPUT_PROXY_DEFAULT_ACTIVITY_TIMEOUT_MS UINT64_C(5000)
+#define INPUT_PROXY_DEFAULT_DETECTION_THROTTLE_MS UINT64_C(250)
 
 struct input_proxy_session_config {
     const char *source_path;
     const char *instance_name;
+    uint64_t activity_timeout_ms;
+    uint64_t detection_throttle_ms;
     bool verbose;
 };
 

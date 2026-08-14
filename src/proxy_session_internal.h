@@ -20,6 +20,9 @@ enum input_proxy_result input_proxy_session_request_paused(
     bool paused
 );
 
+void input_proxy_session_process_activity_timers(
+    struct input_proxy_session *session);
+
 /*
  * Read and process one event from an active source/virtual device pair.
  */
