@@ -281,8 +281,61 @@ unavailable, but MUST NOT prevent normal evdev-to-uinput forwarding.
 
 ## 9. Activity semantics
 
-Runtime activity is derived only from physical-source input. Virtual events
-generated for neutralization or synchronization are not activity.
+Runtime activity is derived only from eligible physical-source input. Virtual
+events generated for neutralization or synchronization are not activity.
+`SYN_DROPPED` detection and events reconstructed during synchronization recovery
+are not activity.
+
+Activity eligibility distinguishes interaction from motion.
+
+Interaction activity includes:
+
+- `EV_KEY` events, including keyboard keys, buttons, `BTN_TOUCH`, and tool
+  state;
+- `EV_SW` state changes;
+- Type-B multitouch contact lifecycle transitions represented by
+  `ABS_MT_TRACKING_ID`.
+
+Both assertion and release/end transitions count as interaction activity. A key
+release, button release, touch release, or multitouch contact termination is
+therefore activity.
+
+Motion activity includes:
+
+- `EV_REL` events;
+- `EV_ABS` position and continuously varying axis events, including ordinary
+  absolute coordinates and multitouch position, pressure, size, orientation,
+  and similar contact-description values.
+
+`ABS_MT_SLOT` is multitouch protocol bookkeeping and is not activity by itself.
+
+`ABS_MT_TRACKING_ID` is not classified as motion because it represents contact
+lifecycle. A tracking identifier beginning or ending a contact remains eligible
+interaction activity even when motion activity is disabled.
+
+`EV_SYN` events are framing/recovery protocol events and do not count as
+activity by themselves.
+
+Other ordinary physical-source events that are neither protocol bookkeeping nor
+motion remain eligible activity. The activity mechanism does not attempt to
+infer higher-level user intent from event values.
+
+Motion eligibility is configured independently for running and paused
+operation:
+
+    --running-motion-activity on|off
+    --paused-motion-activity on|off
+
+Both options default to:
+
+    on
+
+When the corresponding option is `on`, eligible interaction and motion events
+both count as activity.
+
+When the corresponding option is `off`, motion events do not assert or
+retrigger the activity indication for that mode. Interaction events remain
+eligible.
 
 The activity properties are mode-scoped and MUST remain mutually exclusive:
 
@@ -300,34 +353,43 @@ received.
 Controlled by:
 
     --activity-timeout-ms
+    --running-motion-activity
 
-Default:
+Defaults:
 
-    5000
+    --activity-timeout-ms 5000
+    --running-motion-activity on
 
 Meaning:
 
-- Activity sets `ActivityWhileRunning=true`.
-- Each additional activity restarts the timer.
+- Eligible activity sets `ActivityWhileRunning=true`.
+- Each additional eligible activity restarts the timer.
+- Ineligible motion while `--running-motion-activity=off` does not assert or
+  restart the timer.
 - The property returns to `false` only after the timeout expires without further
-  activity.
+  eligible activity.
 
 ### Paused activity
 
 Controlled by:
 
     --detection-throttle-ms
+    --paused-motion-activity
 
-Default:
+Defaults:
 
-    250
+    --detection-throttle-ms 250
+    --paused-motion-activity on
 
 Meaning:
 
-- Activity sets `ActivityWhilePaused=true`.
-- Additional activity during the throttle interval does not extend the interval.
+- Eligible activity sets `ActivityWhilePaused=true`.
+- Additional eligible activity during the throttle interval does not extend the
+  interval.
+- Ineligible motion while `--paused-motion-activity=off` does not assert a new
+  indication.
 - The property returns to `false` when the throttle expires.
-- A later activity may assert it again.
+- A later eligible activity may assert it again.
 
 ### Pause-state transitions
 
@@ -339,7 +401,8 @@ When a successful pause transition commits `Paused=true`, the service MUST:
 4. report all changed properties in one `PropertiesChanged` notification;
 5. send the successful method reply.
 
-Subsequent physical-source events may assert only `ActivityWhilePaused`.
+Subsequent eligible physical-source events may assert only
+`ActivityWhilePaused` and use the paused-mode motion-activity setting.
 
 When a successful resume transition commits `Paused=false`, the service MUST:
 
@@ -350,7 +413,8 @@ When a successful resume transition commits `Paused=false`, the service MUST:
 5. report all changed properties in one `PropertiesChanged` notification;
 6. send the successful method reply.
 
-Subsequent physical-source events may assert only `ActivityWhileRunning`.
+Subsequent eligible physical-source events may assert only
+`ActivityWhileRunning` and use the running-mode motion-activity setting.
 Resuming while the source is unavailable still clears
 `ActivityWhilePaused`; it does not assert running activity.
 
