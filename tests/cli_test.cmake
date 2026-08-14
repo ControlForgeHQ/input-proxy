@@ -143,8 +143,15 @@ function(assert_run_header)
         )
     endif()
 
+    set(default_activity
+        "input-proxy: activity timeout=5000ms \\(default\\), motion activity while running=yes \\(default\\)\ninput-proxy: detection throttle=250ms \\(default\\), motion activity while paused=yes \\(default\\)"
+    )
+    if(NOT standard_output MATCHES "${default_activity}")
+        message(FATAL_ERROR "Default activity configuration was missing from startup header:\n${standard_output}${standard_error}")
+    endif()
+
     set(expected_context
-        "\ninput-proxy: Repository=https://github.com/fasteddy516/input-proxy\ninput-proxy: Source=/input-proxy-test-path-that-does-not-exist\ninput-proxy: InstanceName=Touchscreen_Proxy\ninput-proxy: waiting for source"
+        "\ninput-proxy: Repository=https://github.com/fasteddy516/input-proxy\ninput-proxy: Source=/input-proxy-test-path-that-does-not-exist\ninput-proxy: InstanceName=Touchscreen_Proxy\ninput-proxy: activity timeout=5000ms (default), motion activity while running=yes (default)\ninput-proxy: detection throttle=250ms (default), motion activity while paused=yes (default)\ninput-proxy: waiting for source"
     )
     string(FIND "${standard_output}" "${expected_context}" context_position)
     if(context_position EQUAL -1)
@@ -161,12 +168,36 @@ function(assert_run_header)
     endif()
 endfunction()
 
+function(assert_run_activity_header expected_running expected_paused)
+    execute_process(
+        COMMAND
+            timeout --signal=TERM 1
+            "${INPUT_PROXY}" run
+            --source /input-proxy-test-path-that-does-not-exist
+            --name "Activity_Header_Test"
+            ${ARGN}
+        RESULT_VARIABLE actual_result
+        OUTPUT_VARIABLE standard_output
+        ERROR_VARIABLE standard_error
+    )
+
+    if(NOT actual_result EQUAL 124)
+        message(FATAL_ERROR "Activity header runtime did not remain active: ${actual_result}\n${standard_output}${standard_error}")
+    endif()
+    if(NOT standard_output MATCHES "${expected_running}")
+        message(FATAL_ERROR "Running activity header did not match '${expected_running}':\n${standard_output}${standard_error}")
+    endif()
+    if(NOT standard_output MATCHES "${expected_paused}")
+        message(FATAL_ERROR "Paused activity header did not match '${expected_paused}':\n${standard_output}${standard_error}")
+    endif()
+endfunction()
+
 assert_cli(success "input-proxy ${INPUT_PROXY_VERSION}.*Transparent Linux evdev-to-uinput input proxy\\..*Usage:.*Commands:.*Global options:.*Examples:.*https://github.com/fasteddy516/input-proxy" --help)
 assert_cli_omits("${INPUT_PROXY}" --help)
 assert_cli_omits("input-proxy: Repository=" --help)
 assert_cli(success "^input-proxy ${INPUT_PROXY_VERSION}" --version)
 assert_cli_omits("input-proxy: Repository=" --version)
-assert_cli(success "Usage:.*input-proxy run --source PATH --name NAME \\[OPTIONS\\].*--source PATH.*--name NAME.*Instance Name.*--activity-timeout-ms MS.*default: 5000.*--detection-throttle-ms MS.*default: 250.*--running-motion-activity on\\|off.*default: on.*--paused-motion-activity on\\|off.*default: on.*--verbose" run --help)
+assert_cli(success "Usage:.*input-proxy run --source PATH --name NAME \\[OPTIONS\\].*--source PATH.*--name NAME.*Instance Name.*--activity-timeout-ms MS.*default: 5000.*--detection-throttle-ms MS.*default: 250.*--running-motion-activity on\\|off.*Motion counts as activity while running.*default: on.*--paused-motion-activity on\\|off.*Motion counts as activity while paused.*default: on.*--verbose" run --help)
 assert_cli_omits("input-proxy: Repository=" run --help)
 assert_cli(success "List available physical input devices concisely\\..*Usage:.*input-proxy list.*Virtual uinput devices are excluded" list --help)
 assert_cli_omits("not yet implemented" list --help)
@@ -214,3 +245,25 @@ assert_cli_blank_line(failure run)
 assert_cli_blank_line(failure list unexpected)
 assert_cli_blank_line(failure inspect)
 assert_run_header()
+assert_run_activity_header(
+    "activity timeout=5000ms \\(default\\), motion activity while running=no"
+    "detection throttle=100ms, motion activity while paused=no"
+    --activity-timeout-ms 5000
+    --detection-throttle-ms 100
+    --running-motion-activity off
+    --paused-motion-activity off
+)
+assert_run_activity_header(
+    "activity timeout=5000ms \\(default\\), motion activity while running=yes \\(default\\)"
+    "detection throttle=250ms \\(default\\), motion activity while paused=yes \\(default\\)"
+    --activity-timeout-ms 5000
+    --detection-throttle-ms 250
+    --running-motion-activity on
+    --paused-motion-activity on
+    --verbose
+)
+assert_run_activity_header(
+    "activity timeout=2000ms, motion activity while running=yes \\(default\\)"
+    "detection throttle=250ms \\(default\\), motion activity while paused=yes \\(default\\)"
+    --activity-timeout-ms 2000
+)

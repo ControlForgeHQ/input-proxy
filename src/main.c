@@ -107,9 +107,11 @@ static void print_run_help(FILE *stream)
         "                 Paused activity throttle, 0-4294967295 "
         "(default: 250).\n"
         "  --running-motion-activity on|off\n"
-        "                 Count motion while running (default: on).\n"
+        "                 Motion counts as activity while running "
+        "(default: on).\n"
         "  --paused-motion-activity on|off\n"
-        "                 Count motion while paused (default: on).\n"
+        "                 Motion counts as activity while paused "
+        "(default: on).\n"
         "  --verbose      Show additional lifecycle diagnostics.\n"
         "  --help         Show this help and exit.\n\n",
         stream
@@ -165,10 +167,24 @@ static void print_startup_header(
         "input-proxy: Version=%s\n"
         "input-proxy: Repository=https://github.com/fasteddy516/input-proxy\n"
         "input-proxy: Source=%s\n"
-        "input-proxy: InstanceName=%s\n",
+        "input-proxy: InstanceName=%s\n"
+        "input-proxy: activity timeout=%" PRIu64 "ms%s, motion activity "
+        "while running=%s%s\n"
+        "input-proxy: detection throttle=%" PRIu64 "ms%s, motion activity "
+        "while paused=%s%s\n",
         INPUT_PROXY_VERSION_STRING,
         config->source_path,
-        config->instance_name
+        config->instance_name,
+        config->activity_timeout_ms,
+        config->activity_timeout_ms ==
+            INPUT_PROXY_DEFAULT_ACTIVITY_TIMEOUT_MS ? " (default)" : "",
+        config->running_motion_activity ? "yes" : "no",
+        config->running_motion_activity ? " (default)" : "",
+        config->detection_throttle_ms,
+        config->detection_throttle_ms ==
+            INPUT_PROXY_DEFAULT_DETECTION_THROTTLE_MS ? " (default)" : "",
+        config->paused_motion_activity ? "yes" : "no",
+        config->paused_motion_activity ? " (default)" : ""
     );
     fflush(stdout);
 }
