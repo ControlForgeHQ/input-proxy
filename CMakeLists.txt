@@ -145,6 +145,11 @@ if(BUILD_TESTING)
     )
 
     target_link_libraries(proxy-session-test PRIVATE PkgConfig::LIBSYSTEMD)
+    target_link_options(
+        proxy-session-test
+        PRIVATE
+            "-Wl,--wrap=input_proxy_runtime_control_apply_changes"
+    )
 
     add_test(NAME proxy-session-test COMMAND proxy-session-test)
 

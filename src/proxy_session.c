@@ -546,6 +546,7 @@ enum input_proxy_result input_proxy_session_run(
         }
 
         if (result == INPUT_PROXY_ERROR_SOURCE_DISCONNECTED) {
+            set_source_available(session, false);
             printf(
                 "input-proxy: source disconnected: %s\n",
                 session->source_path

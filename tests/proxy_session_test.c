@@ -5,6 +5,7 @@
 #include <input_proxy/virtual_device.h>
 
 #include "proxy_session_internal.h"
+#include "runtime_control_internal.h"
 #include "source_device_internal.h"
 
 #include <linux/input.h>
@@ -50,6 +51,9 @@ static size_t state_writes_remaining;
 static int fail_state_write_call;
 static char barrier_operations[64];
 static int barrier_operation_count;
+/* T/F are availability transitions; N is neutralization; C is source close. */
+static char availability_operations[64];
+static int availability_operation_count;
 static int read_result_count;
 static int sync_read_calls;
 static int sync_read_result_count;
@@ -67,6 +71,30 @@ static struct input_proxy_source_device *const test_source_device =
     (struct input_proxy_source_device *)1;
 static struct input_proxy_virtual_device *const test_virtual_device =
     (struct input_proxy_virtual_device *)1;
+
+size_t __real_input_proxy_runtime_control_apply_changes(
+    struct input_proxy_runtime_control **control,
+    struct input_proxy_runtime_control_state *state,
+    const struct input_proxy_runtime_control_changes *changes);
+
+size_t __wrap_input_proxy_runtime_control_apply_changes(
+    struct input_proxy_runtime_control **control,
+    struct input_proxy_runtime_control_state *state,
+    const struct input_proxy_runtime_control_changes *changes)
+{
+    const size_t changed_count =
+        __real_input_proxy_runtime_control_apply_changes(
+            control, state, changes);
+
+    if (changed_count > 0 &&
+        (changes->properties &
+         INPUT_PROXY_RUNTIME_CONTROL_SOURCE_AVAILABLE) != 0U) {
+        availability_operations[availability_operation_count++] =
+            state->source_available ? 'T' : 'F';
+    }
+
+    return changed_count;
+}
 
 int clock_gettime(clockid_t clock_id, struct timespec *time)
 {
@@ -125,6 +153,7 @@ void input_proxy_source_device_close(struct input_proxy_source_device *device)
     if (device != NULL) {
         close_calls++;
         operations[operation_count++] = 'C';
+        availability_operations[availability_operation_count++] = 'C';
     }
 }
 
@@ -205,6 +234,7 @@ enum input_proxy_result input_proxy_virtual_device_neutralize(
 
     neutralize_calls++;
     operations[operation_count++] = 'N';
+    availability_operations[availability_operation_count++] = 'N';
     return neutralize_result;
 }
 
@@ -343,6 +373,7 @@ static void reset_runtime(void)
     state_writes_remaining = 0;
     fail_state_write_call = 0;
     barrier_operation_count = 0;
+    availability_operation_count = 0;
     read_result_count = 0;
     sync_read_calls = 0;
     sync_read_result_count = 0;
@@ -358,6 +389,7 @@ static void reset_runtime(void)
     memset(operations, 0, sizeof(operations));
     memset(state_written_events, 0, sizeof(state_written_events));
     memset(barrier_operations, 0, sizeof(barrier_operations));
+    memset(availability_operations, 0, sizeof(availability_operations));
     memset(compatibility_results, 0, sizeof(compatibility_results));
 }
 
@@ -1030,7 +1062,8 @@ int main(void)
         event_sleep_calls != 1 || source_sleep_calls != 2 ||
         neutralize_calls != 2 || capture_state_calls != 3 ||
         sleep_duration_failures != 0 ||
-        strcmp(operations, "NCNCDC") != 0) {
+        strcmp(operations, "NCNCDC") != 0 ||
+        strcmp(availability_operations, "TFNCTFNCTCF") != 0) {
         fprintf(stderr, "disconnect and reconnect: bad lifecycle\n");
         failures++;
     }
