@@ -33,19 +33,16 @@ no coordinate transformation, gesture interpretation, or per-code filtering.
 
 ## Project status
 
-The latest released version is **0.2.0**.
+The latest released version is **0.3.0**.
 
-The development tree implements the documented Version 0.3 runtime-control and
-observability functionality. This includes validated Instance Names; optional
-per-instance system D-Bus control; runtime Pause/Resume; observable runtime
-properties and activity; D-Bus-aware runtime information in `list` and
-`inspect`; and a normal runtime warning when the source is not ignored by
-libinput. Core evdev-to-uinput operation remains available when D-Bus is not.
+Version 0.3 provides runtime control and observability alongside the core
+evdev-to-uinput proxy and operator diagnostics. Core proxy operation remains
+available when D-Bus is not.
 
 See the [D-Bus interface specification](docs/DBUS_INTERFACE.md) for the
-authoritative runtime-control semantics. Version 0.3 has not yet been released.
+authoritative runtime-control semantics.
 
-- [Version 0.2 capabilities](#version-02-capabilities)
+- [Version 0.3 capabilities](#version-03-capabilities)
 - [Planned roadmap](docs/ROADMAP.md)
 - [Version 0.3 D-Bus interface](docs/DBUS_INTERFACE.md)
 
@@ -153,20 +150,23 @@ Command-specific help is available through:
 
 ---
 
-## Version 0.2 capabilities
+## Version 0.3 capabilities
 
-Version 0.2 provides:
+Version 0.3 provides:
 
-- concise physical-device discovery;
-- comprehensive read-only device inspection and deployment diagnostics;
-- actionable runtime-permission and libinput guidance;
-- faithful evdev-to-uinput event forwarding;
-- configurable virtual-device naming;
+- physical-device discovery and comprehensive read-only inspection;
+- deployment-readiness, runtime-permission, and libinput diagnostics;
+- stable, validated Instance Names;
+- faithful evdev-to-uinput event forwarding and synchronization recovery;
 - automatic source disconnect and reconnect handling;
 - persistent virtual-device lifetime across compatible reconnects;
-- capability-aware virtual-device replacement;
-- synchronization recovery and safe neutralization after source loss;
-- concise runtime logging with optional verbose diagnostics; and
+- correct virtual-state neutralization and source-state synchronization;
+- optional per-instance system D-Bus runtime control with Pause/Resume;
+- runtime source-availability, pause-state, and activity observability;
+- D-Bus-aware runtime information in `list` and `inspect`;
+- configurable running and paused activity behavior;
+- a runtime warning when the source remains visible to libinput;
+- a minimal Python D-Bus client example; and
 - graceful `SIGINT` and `SIGTERM` shutdown.
 
 If a configured source is temporarily unavailable, the proxy waits for it.
@@ -230,15 +230,14 @@ observed system state supports a safe recommendation. It can also detect when a
 physical device remains visible to libinput and duplicate physical and proxied
 input is likely.
 
-Version 0.2 diagnoses and advises. It does not automatically modify permissions,
-install udev rules, or change system configuration.
+`input-proxy` diagnoses and advises. It does not automatically modify
+permissions, install udev rules, or change system configuration.
 
 ---
 
 ## Not yet available
 
-Functionality beyond the implemented Version 0.3 development scope remains
-planned.
+Functionality beyond Version 0.3 remains planned.
 
 The following capabilities are planned for future releases:
 
