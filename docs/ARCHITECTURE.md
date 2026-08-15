@@ -60,6 +60,10 @@ architecturally distinct.
   optional D-Bus control plane.
 - **Runtime Activity**: a coalesced indication of recent physical-source input,
   not a transport for raw input events.
+- **Installed Instance**: a persistent deployment identified by an Instance Name
+  and represented authoritatively by its argv response artifact.
+- **Package Configuration**: host-level policy and static integration owned by
+  Debian package installation, removal, and reconfiguration.
 
 ## Command-line architecture
 
@@ -71,9 +75,15 @@ The primary command structure is:
 input-proxy run --source PATH --name INSTANCE_NAME [RUNTIME_POLICY_OPTIONS]
                 [--verbose]
 
+input-proxy run @file
+
 input-proxy list
 
 input-proxy inspect PATH
+
+input-proxy install [INSTALLATION_OPTIONS]
+
+input-proxy uninstall [INSTANCE_NAME] [REMOVAL_OPTIONS]
 
 input-proxy --help
 input-proxy --version
@@ -82,9 +92,9 @@ input-proxy --version
 Each subcommand may provide command-specific `--help`.
 
 Runtime policy options include `--activity-timeout-ms`,
-`--detection-throttle-ms`, `--running-motion-activity`, and
-`--paused-motion-activity`. The detailed public semantics of these options
-belong to `docs/DBUS_INTERFACE.md`.
+`--detection-throttle-ms`, `--running-motion-activity`,
+`--paused-motion-activity`, and `--start-paused on|off`. The detailed public
+activity semantics belong to `docs/DBUS_INTERFACE.md`.
 
 ### `run`
 
@@ -156,16 +166,15 @@ Inspection must not:
 
 Suggestions are diagnostic output only.
 
-### Future operating modes
+### `install` and `uninstall`
 
-Future installation functionality may add another top-level command, for
-example:
+`install` creates one Installed Instance. `uninstall` removes one Installed
+Instance. Both are administrative operating modes, require root privileges, and
+remain separate from runtime and read-only diagnostics.
 
-```text
-input-proxy install
-```
-
-Installation must remain separate from normal runtime and diagnostic modes.
+Interactive prompting and explicit command-line arguments feed the same
+underlying operation. Every interactive choice has an explicit command-line
+equivalent so installation and removal can be completed without prompting.
 
 Normal `run`, `list`, and `inspect` operation must not make persistent system
 changes.
@@ -202,9 +211,13 @@ main
     |     |
     |     +-- Device Inspection
     |
-    +-- future install
+    +-- install
+    |     |
+    |     +-- Instance Installer
+    |
+    +-- uninstall
           |
-          +-- Installer
+          +-- Instance Remover
 ```
 
 `main.c` should not become the implementation location for proxy lifecycle,
@@ -772,8 +785,8 @@ lifecycle and pause-state transitions must remain explicit and understandable.
 
 ## Device discovery
 
-Device discovery supports operator-facing diagnostics and future installation
-work.
+Device discovery supports operator-facing diagnostics and persistent instance
+installation.
 
 It is responsible for:
 
@@ -818,8 +831,8 @@ that limitation rather than emit a misleading rule.
 
 Inspection remains strictly non-destructive.
 
-Actual installation or persistent configuration belongs to future installation
-functionality.
+Actual installation or persistent configuration belongs to the `install`
+operating mode.
 
 ## Runtime permissions
 
@@ -830,24 +843,27 @@ It requires:
 - sufficient access to read the configured physical evdev source;
 - sufficient access to `/dev/uinput`.
 
-On Raspberry Pi OS, the intended deployment model uses the existing `input`
-group where appropriate.
+The Debian package creates a dedicated, non-login service identity and provides
+that identity dedicated access to `/dev/uinput` through package-owned
+integration.
 
-`/dev/uinput` may require a static-node udev rule such as:
+Physical-source access is a separate policy decision. At package configuration
+time, debconf determines whether the service identity joins the existing
+`input` group and therefore receives machine-wide access to physical input
+devices. That host-level choice is package configuration, can be revisited
+through package reconfiguration, and is never owned by an Installed Instance.
 
-```udev
-KERNEL=="uinput", GROUP="input", MODE="0660", OPTIONS+="static_node=uinput"
-```
-
-Permission provisioning is external deployment configuration.
+When the service identity cannot read a selected source, `input-proxy install`
+may create a narrowly matched per-device udev permission rule owned by that
+Installed Instance. If access already exists, instance installation makes no
+source-permission change. It must not create an overly broad rule when the
+source cannot be identified narrowly enough.
 
 The runtime must not depend on:
 
 - sudoers configuration;
 - setuid-root execution;
 - running the long-lived proxy process as root.
-
-Future installation functionality may configure permissions explicitly.
 
 ## Logging architecture
 
@@ -961,8 +977,8 @@ D-Bus MUST NOT become the process-lifecycle authority.
 Runtime control therefore MUST NOT provide a method that terminates or restarts
 the proxy process.
 
-Future systemd integration remains responsible for service start, stop, restart,
-enablement, and persistence.
+Systemd integration is responsible for service start, stop, restart, enablement,
+and persistence.
 
 ### Instance identity
 
@@ -980,7 +996,7 @@ The same Instance Name identifies:
 - the virtual uinput device;
 - the D-Bus runtime endpoint;
 - operator-facing logs and diagnostics;
-- the future systemd service instance.
+- the systemd service instance.
 
 For example:
 
@@ -1248,12 +1264,11 @@ SHOULD remain silent rather than emitting a "none found" section.
 If D-Bus is unavailable, physical-device inspection MUST still succeed and the
 command SHOULD report that runtime-instance information could not be queried.
 
-### Future systemd compatibility
+### Systemd deployment
 
-Version 0.3 runtime architecture MUST remain compatible with a future systemd
-template-unit deployment model.
+Version 0.4 uses a systemd template-unit deployment model.
 
-The intended Version 0.4 relationship is:
+The deployment relationship is:
 
 ```text
 input-proxy@<InstanceName>.service
@@ -1265,14 +1280,14 @@ one input-proxy run process
 one independent D-Bus runtime endpoint
 ```
 
-A future systemd service instance supervises exactly one `input-proxy` process.
+A systemd service instance supervises exactly one `input-proxy` process.
 
 The service instance uses the same validated Instance Name as the runtime and
 D-Bus endpoint. Process lifetime remains owned by systemd or another launcher,
 not by D-Bus.
 
-No future service-management requirement should require replacing the
-decentralized Version 0.3 runtime-control model with a central orchestrator.
+Service management does not replace the decentralized Version 0.3
+runtime-control model with a central orchestrator.
 
 Manual execution and systemd execution MUST expose the same runtime-control
 behaviour.
@@ -1305,34 +1320,129 @@ Runtime control does not turn `input-proxy` into:
 
 Process supervision belongs to the process launcher.
 
-Persistent deployment belongs to future systemd integration.
+Persistent deployment and process supervision belong to systemd integration.
 
 The proxy session remains focused on faithfully managing one physical source and
 one logical virtual input device.
 
-## Installation boundary
+## Deployment architecture
 
-Version 0.4 installation may modify persistent system configuration.
+Version 0.4 distinguishes package lifecycle from Installed Instance lifecycle.
 
-Installation remains architecturally separate from runtime and read-only
-diagnostic modes.
+### Package lifecycle
 
-The installer may manage artifacts such as:
+Debian package installation prepares the host to run proxy instances. It owns:
 
-- udev rules;
-- `/dev/uinput` permissions;
-- persistent source mappings;
-- systemd service instances;
-- D-Bus policy or service metadata.
+- the application and documentation;
+- the dedicated service identity;
+- the systemd template;
+- dedicated `/dev/uinput` access;
+- D-Bus policy and service metadata;
+- the location used for persistent instance artifacts;
+- the debconf-managed choice of machine-wide physical-input access through the
+  existing `input` group.
 
-Persistent installation is expected to derive the systemd service instance from
-the same validated Instance Name used by the runtime and D-Bus endpoint.
+Package installation creates, enables, and starts zero proxy instances.
+
+Package removal and purge follow Debian semantics and remain distinct from
+instance removal. Normal removal preserves locally generated instance artifacts
+conservatively. Purge may remove package-owned configuration, but locally
+generated instance artifacts must not be silently destroyed without clear,
+documented semantics.
+
+### Installed Instance lifecycle
+
+`input-proxy install` creates one Installed Instance and
+`input-proxy uninstall` removes one. Both require root because they may modify
+persistent system configuration and service state. The long-running
+`input-proxy run` process remains unprivileged.
+
+Installation resolves a complete request from explicit arguments and, when
+needed, interactive prompts. Every prompt has an explicit command-line
+equivalent. The same validation, planning, and application path serves both
+interactive and fully non-interactive use.
+
+Before creating an instance, installation:
+
+- selects and inspects one physical source;
+- recommends a stable source path when one can be identified reliably, explains
+  the recommendation, and permits the operator to retain the supplied path;
+- validates an Instance Name that is not already installed;
+- resolves a complete runtime-policy snapshot;
+- verifies that the service identity can access the source and `/dev/uinput`;
+- offers a narrowly matched source-permission rule only when source access is
+  missing;
+- may offer a narrowly matched `LIBINPUT_IGNORE_DEVICE=1` rule.
+
+The complete runtime-policy snapshot contains the source, Instance Name, the four
+Version 0.3 activity options, and `--start-paused on|off`. Initial pause state
+is runtime startup policy, not a post-start D-Bus action, so no temporary
+forwarding window is introduced.
+
+Installation must not create a persistent service while readiness blockers
+remain unresolved.
+
+### Response artifacts
+
+Each Installed Instance is represented by a native argv response artifact
+consumed directly by:
+
+```text
+input-proxy run @file
+```
+
+The response format contains exactly one argument per line. It has no shell
+parsing, quoting language, variable expansion, includes, project-specific
+configuration language, or other interpretation beyond argv expansion.
+
+The artifact stores every runtime-policy value explicitly. An Installed
+Instance therefore does not silently adopt new compiled defaults after an
+upgrade.
+
+The set of response artifacts is the authoritative registry of Installed
+Instances. Systemd enablement, current process state, and D-Bus discovery may be
+used to inspect consistency, but none defines whether an instance is installed.
+
+A package-owned systemd template derives its service instance from the same
+validated Instance Name and invokes one `input-proxy run` process with that
+instance's response artifact.
+
+### Instance-owned artifacts and removal
+
+An Installed Instance owns:
+
+- its response artifact;
+- its systemd service enablement;
+- each per-instance udev rule generated during its installation.
+
+A per-instance udev rule may grant source read access, configure
+`LIBINPUT_IGNORE_DEVICE=1`, or perform both functions. Rules must use a
+sufficiently narrow physical-device match.
+
+Multiple Installed Instances may refer to the same physical source and may
+therefore own duplicate, identical udev rules. This duplication is intentional.
+There is no shared rule ownership, reference counting, or search for equivalent
+rules.
+
+When `input-proxy uninstall INSTANCE_NAME` runs, it stops and disables that
+service instance and removes only artifacts owned by that Installed Instance.
+It never removes another instance's artifacts and never changes the service
+identity's `input` group membership, which is package-level host policy.
+
+When no Instance Name is supplied, `uninstall` enumerates the authoritative
+response artifacts and allows interactive selection. It does not use D-Bus
+runtime discovery, because an Installed Instance may be stopped or unable to
+run. If no response artifacts exist, it reports that no instances are
+installed.
+
+Removal is transactional in intent, but a partial failure must report exactly
+which operations succeeded and failed rather than claiming rollback that did
+not occur.
 
 Normal runtime and inspection code must not silently perform persistent system
 changes.
 
-Detailed installation workflow, release scope, and sequencing belong in
-`docs/ROADMAP.md`.
+Detailed release scope and sequencing belong in `docs/ROADMAP.md`.
 
 ## Architectural invariants
 
@@ -1352,4 +1462,8 @@ The following invariants define the core design:
 - the project does not perform general-purpose input remapping;
 - D-Bus runtime control is optional and never required for event forwarding;
 - external runtime-control requests session transitions rather than manipulating
-  device resources directly.
+  device resources directly;
+- package lifecycle and Installed Instance lifecycle are distinct;
+- response artifacts authoritatively identify Installed Instances;
+- each Installed Instance owns only its own persistent artifacts;
+- instance removal never changes package-level physical-input group policy.

@@ -359,24 +359,34 @@ Version 0.3 adds a runtime control plane. Persistent deployment remains Version
 
 ## Goal
 
-Make installation, configuration, service deployment, and removal
+Make package installation, persistent instance deployment, and instance removal
 straightforward on Debian-family systems while keeping runtime privileges
-minimal.
+minimal and ownership boundaries explicit.
 
-## Packaging
+## Debian packaging
 
 - Build a distributable Debian package.
 - Support installation through `dpkg`.
+- Create a dedicated, non-login service identity for long-running proxy
+  processes.
 - Support normal package removal and purge semantics.
 - Install:
   - application binary;
   - documentation;
-  - systemd units;
-  - udev rules;
+  - a systemd template unit;
+  - package-owned `/dev/uinput` access;
   - D-Bus policy and service metadata;
+  - the persistent-instance artifact location;
   - other required deployment files.
+- Use a package-time debconf choice to determine whether the service identity is
+  added to the existing `input` group for access to all physical input devices.
+- Support unattended and preseeded package installation.
+- Configure, enable, and start zero proxy instances during package installation.
 
-## Interactive installation
+Package installation prepares the host to run instances. It does not create an
+installed proxy instance.
+
+## Persistent instance installation
 
 - Add:
 
@@ -384,28 +394,45 @@ minimal.
 input-proxy install
 ```
 
+- Require root privileges and fail with actionable guidance when invoked
+  unprivileged.
+- Treat interactive prompting and explicit command-line arguments as two ways
+  to supply the same complete installation request.
+- Provide an explicit command-line equivalent for every interactive decision so
+  the full workflow can run without prompting.
 - Use the existing discovery and inspection capabilities to validate the
   requested deployment before persistent configuration is created.
 - Enumerate available input devices.
 - Allow source selection.
 - Optionally identify a source through observed activity.
+- Recommend a more stable source path when one can be determined reliably,
+  explain the recommendation, and allow the operator to retain the supplied
+  path.
 - Propose or request a validated Instance Name.
-- Derive persistent runtime artifacts from that Instance Name.
-- Allow the instance to start active or paused.
-- Create the required persistent source mapping.
-- Configure source permissions where required.
-- Configure `/dev/uinput` access where required.
+- Refuse to overwrite an already installed Instance Name.
+- Capture a complete runtime-policy snapshot containing:
+  - source path;
+  - Instance Name;
+  - `--activity-timeout-ms`;
+  - `--detection-throttle-ms`;
+  - `--running-motion-activity`;
+  - `--paused-motion-activity`;
+  - `--start-paused on|off`.
+- Configure a narrowly matched per-device udev permission rule only when the
+  service identity otherwise cannot read the selected source.
+- Optionally configure a narrowly matched per-device
+  `LIBINPUT_IGNORE_DEVICE=1` rule.
+- Do not emit a device rule when the source cannot be identified narrowly
+  enough.
+- Create the persistent instance artifact.
 - Configure the corresponding systemd service instance.
-- Configure required D-Bus policy or service metadata.
 - Reload affected system services where required.
 - Enable and start the configured instance.
 - Report all persistent changes before applying them.
 - Do not create a persistent service when inspection reports unresolved runtime
   readiness blockers.
 
-## Non-interactive installation
-
-Support a scriptable form where practical, for example:
+A scriptable invocation may begin with:
 
 ```text
 input-proxy install \
@@ -413,42 +440,84 @@ input-proxy install \
     --name INSTANCE_NAME
 ```
 
-The supplied Instance Name must satisfy the same validation rules used by
-`input-proxy run`.
+The complete non-interactive form must expose every remaining policy decision
+explicitly and apply the same validation and deployment transaction as the
+interactive form. Exact option spelling beyond the runtime policy options is an
+interface-design decision.
 
-Non-interactive installation must perform the same deployment-readiness
-validation as interactive installation.
+## Persistent runtime representation
 
-Additional explicit options may be added when needed to remove ambiguity.
+- Represent each installed instance with a native argv response file consumed
+  by:
+
+```text
+input-proxy run @file
+```
+
+- Persist the complete runtime-policy snapshot rather than relying on compiled
+  defaults that may change in later releases.
+- Use a systemd template with one service instance supervising one
+  `input-proxy run` process.
+- Treat the set of response artifacts as the authoritative registry of installed
+  instances, independent of whether an instance is enabled, running, or visible
+  through D-Bus.
 
 ## Privilege model
 
-The long-running runtime process should remain unprivileged.
+The long-running runtime process remains unprivileged under the dedicated
+service identity.
 
-Installation may require elevated privileges for specific system changes.
+Package configuration owns host-level service identity and physical-input group
+membership. Package-owned integration provides dedicated access to
+`/dev/uinput`.
 
-Privileged operations must be explicit and narrowly scoped.
+Instance installation owns only the selected source's targeted permission rule,
+when one is required, and any optional libinput-ignore rule.
 
-The installer should verify access to:
-
-- the selected physical source;
-- `/dev/uinput`.
-
-On Raspberry Pi OS, the preferred default may use the existing `input` group.
-
-The installer must not require:
+The deployment must not require:
 
 - sudoers entries for normal runtime;
 - a setuid-root executable;
 - a permanently root-running proxy service.
 
-## Removal behaviour
+## Persistent instance removal
 
-Package removal should follow Debian conventions.
+- Add:
 
-Generated local proxy-instance configuration must be handled conservatively.
+```text
+input-proxy uninstall [INSTANCE_NAME]
+```
 
-Normal removal may retain local configuration.
+- Require root privileges.
+- When the Instance Name is omitted, enumerate installed instances from the
+  authoritative response artifacts and allow interactive selection.
+- When no installed instances exist, report that fact without consulting
+  runtime D-Bus discovery.
+- Provide a fully non-interactive equivalent when the Instance Name and
+  destructive confirmation are supplied explicitly.
+- Stop and disable the selected systemd service instance.
+- Remove only artifacts owned by that installed instance:
+  - its response artifact;
+  - its systemd enablement;
+  - each per-instance udev rule generated during installation.
+- Reload affected system services when required.
+- Report partial failure accurately rather than claiming transactional rollback.
+
+Multiple instances that refer to the same physical device may own duplicate,
+identical udev rules. This duplication is intentional: instance removal does not
+search for equivalent rules, share ownership, perform reference counting, or
+remove another instance's artifacts.
+
+Instance uninstall never changes the service identity's membership in the
+`input` group because that is package-level host policy.
+
+## Package removal and purge
+
+Package removal and `input-proxy uninstall` are intentionally different
+operations.
+
+Normal Debian package removal should preserve locally generated
+installed-instance artifacts conservatively.
 
 Purge may remove package-managed configuration where appropriate.
 
@@ -461,7 +530,8 @@ Version 0.4 does not introduce:
 
 - a graphical configuration interface;
 - network management;
-- general-purpose configuration files;
+- a general-purpose configuration language;
+- instance update or reconfiguration semantics;
 - display/backlight control;
 - input remapping.
 
