@@ -68,6 +68,30 @@ function(assert_cli_failure_omits unexpected_pattern)
     endif()
 endfunction()
 
+function(assert_cli_streams expected_result stdout_pattern stderr_pattern)
+    execute_process(
+        COMMAND "${INPUT_PROXY}" ${ARGN}
+        RESULT_VARIABLE actual_result
+        OUTPUT_VARIABLE standard_output
+        ERROR_VARIABLE standard_error
+    )
+
+    if(expected_result STREQUAL "success")
+        if(NOT actual_result EQUAL 0)
+            message(FATAL_ERROR "Command unexpectedly failed: ${ARGN}\n${standard_output}${standard_error}")
+        endif()
+    elseif(actual_result EQUAL 0)
+        message(FATAL_ERROR "Command unexpectedly succeeded: ${ARGN}\n${standard_output}${standard_error}")
+    endif()
+
+    if(NOT standard_output MATCHES "${stdout_pattern}")
+        message(FATAL_ERROR "stdout did not match '${stdout_pattern}': ${ARGN}\n${standard_output}")
+    endif()
+    if(NOT standard_error MATCHES "${stderr_pattern}")
+        message(FATAL_ERROR "stderr did not match '${stderr_pattern}': ${ARGN}\n${standard_error}")
+    endif()
+endfunction()
+
 function(assert_invalid_instance_name name)
     execute_process(
         COMMAND
@@ -193,9 +217,11 @@ function(assert_run_activity_header expected_running expected_paused)
 endfunction()
 
 assert_cli(success "input-proxy ${INPUT_PROXY_VERSION}.*Transparent Linux evdev-to-uinput input proxy\\..*Usage:.*Commands:.*Global options:.*Examples:.*https://github.com/fasteddy516/input-proxy" --help)
+assert_cli_streams(success "input-proxy ${INPUT_PROXY_VERSION}.*Usage:" "^$" --help)
 assert_cli_omits("${INPUT_PROXY}" --help)
 assert_cli_omits("input-proxy: Repository=" --help)
 assert_cli(success "^input-proxy ${INPUT_PROXY_VERSION}" --version)
+assert_cli_streams(success "^input-proxy ${INPUT_PROXY_VERSION}" "^$" --version)
 assert_cli_omits("input-proxy: Repository=" --version)
 assert_cli(success "Usage:.*input-proxy run --source PATH --name NAME \\[OPTIONS\\].*--source PATH.*--name NAME.*Instance Name.*--activity-timeout-ms MS.*default: 5000.*--detection-throttle-ms MS.*default: 250.*--running-motion-activity on\\|off.*Motion counts as activity while running.*default: on.*--paused-motion-activity on\\|off.*Motion counts as activity while paused.*default: on.*--verbose" run --help)
 assert_cli_omits("input-proxy: Repository=" run --help)
@@ -206,6 +232,7 @@ assert_cli_omits("not yet implemented" inspect --help)
 assert_cli(failure "missing command.*Usage:")
 assert_cli(failure "unknown command 'bogus'.*Usage:" bogus)
 assert_cli(failure "invalid run arguments.*Usage:" run)
+assert_cli_streams(failure "^$" "invalid run arguments.*Usage:" run)
 assert_cli(failure "invalid non-negative duration for --activity-timeout-ms: -1" run --source /missing --name test --activity-timeout-ms -1)
 assert_cli(failure "invalid non-negative duration for --activity-timeout-ms: nope" run --source /missing --name test --activity-timeout-ms nope)
 assert_cli(failure "invalid non-negative duration for --activity-timeout-ms: 4294967296" run --source /missing --name test --activity-timeout-ms 4294967296)
@@ -224,9 +251,11 @@ assert_invalid_instance_name("touch.screen")
 assert_invalid_instance_name("touch/screen")
 assert_invalid_instance_name("touch:screen")
 assert_cli(success "DEVICE.*TYPE.*BUS.*NAME" list)
+assert_cli_streams(success "DEVICE.*TYPE.*BUS.*NAME" "^$" list)
 assert_cli_omits("input-proxy: Repository=" list)
 assert_cli(failure "invalid list arguments.*Usage:" list unexpected)
 assert_cli(failure "is not an input event device" inspect /dev/input/does-not-exist)
+assert_cli_streams(failure "^$" "is not an input event device" inspect /dev/input/does-not-exist)
 assert_cli(failure "is not an input event device" inspect /dev/null)
 assert_cli(failure "invalid inspect arguments.*Usage:" inspect)
 assert_cli(failure "invalid inspect arguments.*Usage:" inspect /dev/input/event0 extra)

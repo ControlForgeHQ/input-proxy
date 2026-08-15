@@ -488,9 +488,10 @@ static enum input_proxy_result create_active_devices(
                     "/run/udev/data", &source_status, NULL, NULL);
             }
             if (libinput_status == INPUT_PROXY_LIBINPUT_STATUS_NOT_IGNORED) {
-                printf("input-proxy: warning - %s is not ignored by libinput, "
-                       "events may be duplicated\n", session->source_path);
-                fflush(stdout);
+                fprintf(stderr, "input-proxy: warning - %s is not ignored by "
+                    "libinput, events may be duplicated\n",
+                    session->source_path);
+                fflush(stderr);
                 session->libinput_status_definitive = true;
             } else if (libinput_status == INPUT_PROXY_LIBINPUT_STATUS_IGNORED) {
                 session->libinput_status_definitive = true;

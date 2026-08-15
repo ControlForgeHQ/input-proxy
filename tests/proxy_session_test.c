@@ -681,6 +681,69 @@ static int run_runtime_test_with_output(
     return failures;
 }
 
+static int run_runtime_test_with_streams(
+    const char *test_name,
+    const struct input_proxy_session_config *config,
+    enum input_proxy_result expected,
+    char *standard_output,
+    size_t standard_output_size,
+    char *standard_error,
+    size_t standard_error_size)
+{
+    FILE *stdout_capture;
+    FILE *stderr_capture;
+    int saved_stdout;
+    int saved_stderr;
+    int failures;
+    size_t bytes_read;
+
+    stdout_capture = tmpfile();
+    stderr_capture = tmpfile();
+    if (stdout_capture == NULL || stderr_capture == NULL) {
+        fprintf(stderr, "%s: failed to create stream captures\n", test_name);
+        if (stdout_capture != NULL) fclose(stdout_capture);
+        if (stderr_capture != NULL) fclose(stderr_capture);
+        return 1;
+    }
+
+    fflush(stdout);
+    fflush(stderr);
+    saved_stdout = dup(STDOUT_FILENO);
+    saved_stderr = dup(STDERR_FILENO);
+    if (saved_stdout < 0 || saved_stderr < 0 ||
+        dup2(fileno(stdout_capture), STDOUT_FILENO) < 0 ||
+        dup2(fileno(stderr_capture), STDERR_FILENO) < 0) {
+        if (saved_stdout >= 0) (void)dup2(saved_stdout, STDOUT_FILENO);
+        if (saved_stderr >= 0) (void)dup2(saved_stderr, STDERR_FILENO);
+        if (saved_stdout >= 0) close(saved_stdout);
+        if (saved_stderr >= 0) close(saved_stderr);
+        fclose(stdout_capture);
+        fclose(stderr_capture);
+        return 1;
+    }
+
+    failures = run_runtime_test(test_name, config, expected);
+    fflush(stdout);
+    fflush(stderr);
+    (void)dup2(saved_stdout, STDOUT_FILENO);
+    (void)dup2(saved_stderr, STDERR_FILENO);
+    close(saved_stdout);
+    close(saved_stderr);
+
+    rewind(stdout_capture);
+    bytes_read = fread(standard_output, 1, standard_output_size - 1,
+        stdout_capture);
+    standard_output[bytes_read] = '\0';
+    rewind(stderr_capture);
+    bytes_read = fread(standard_error, 1, standard_error_size - 1,
+        stderr_capture);
+    standard_error[bytes_read] = '\0';
+    fclose(stdout_capture);
+    fclose(stderr_capture);
+
+    return failures;
+}
+
 static int count_occurrences(const char *text, const char *substring)
 {
     int count = 0;
@@ -712,6 +775,7 @@ int main(void)
         (struct input_proxy_virtual_device *)1;
     struct input_proxy_session *session;
     char output[4096];
+    char error_output[4096];
     int previous_write_calls;
     int failures = 0;
 
@@ -1048,14 +1112,17 @@ int main(void)
     read_results[1] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
     read_result_count = 2;
     compatibility_results[0] = true;
-    failures += run_runtime_test_with_output(
+    failures += run_runtime_test_with_streams(
         "non-ignored warning is session scoped", &config,
-        INPUT_PROXY_ERROR_EVENT_READ_FAILED, output, sizeof(output));
-    if (count_occurrences(output,
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED, output, sizeof(output),
+        error_output, sizeof(error_output));
+    if (strstr(output, "events may be duplicated") != NULL ||
+        count_occurrences(error_output,
             "input-proxy: warning - /dev/input/event-test is not ignored by "
             "libinput, events may be duplicated\n") != 1 ||
         libinput_status_calls != 1 || open_calls != 2) {
-        fprintf(stderr, "non-ignored warning: unexpected output: %s\n", output);
+        fprintf(stderr, "non-ignored warning: unexpected stdout/stderr: %s%s\n",
+            output, error_output);
         failures++;
     }
 
@@ -1065,13 +1132,17 @@ int main(void)
     open_results[1] = INPUT_PROXY_SUCCESS;
     open_result_count = 2;
     read_result = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
-    failures += run_runtime_test_with_output(
+    failures += run_runtime_test_with_streams(
         "warning deferred until source acquisition", &config,
-        INPUT_PROXY_ERROR_EVENT_READ_FAILED, output, sizeof(output));
-    if (count_occurrences(output, "warning - /dev/input/event-test") != 1 ||
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED, output, sizeof(output),
+        error_output, sizeof(error_output));
+    if (strstr(output, "warning - /dev/input/event-test") != NULL ||
+        count_occurrences(error_output,
+            "warning - /dev/input/event-test") != 1 ||
         libinput_status_calls != 1 ||
-        strstr(output, "waiting for source") > strstr(output, "warning -")) {
-        fprintf(stderr, "deferred warning: unexpected output: %s\n", output);
+        strstr(output, "waiting for source") == NULL) {
+        fprintf(stderr, "deferred warning: unexpected stdout/stderr: %s%s\n",
+            output, error_output);
         failures++;
     }
 
@@ -1106,13 +1177,16 @@ int main(void)
     read_results[1] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
     read_result_count = 2;
     compatibility_results[0] = true;
-    failures += run_runtime_test_with_output(
+    failures += run_runtime_test_with_streams(
         "indeterminate status retried in verbose mode", &verbose_config,
-        INPUT_PROXY_ERROR_EVENT_READ_FAILED, output, sizeof(output));
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED, output, sizeof(output),
+        error_output, sizeof(error_output));
     if (count_occurrences(output, "libinput-ignore state could not be determined") != 1 ||
-        count_occurrences(output, "events may be duplicated") != 1 ||
+        strstr(output, "events may be duplicated") != NULL ||
+        count_occurrences(error_output, "events may be duplicated") != 1 ||
         libinput_status_calls != 2) {
-        fprintf(stderr, "indeterminate retry output: %s\n", output);
+        fprintf(stderr, "indeterminate retry stdout/stderr: %s%s\n", output,
+            error_output);
         failures++;
     }
 
