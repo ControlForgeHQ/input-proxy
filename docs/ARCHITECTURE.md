@@ -68,7 +68,8 @@ architecturally distinct.
 The primary command structure is:
 
 ```text
-input-proxy run --source PATH --name INSTANCE_NAME [--verbose]
+input-proxy run --source PATH --name INSTANCE_NAME [RUNTIME_POLICY_OPTIONS]
+                [--verbose]
 
 input-proxy list
 
@@ -79,6 +80,11 @@ input-proxy --version
 ```
 
 Each subcommand may provide command-specific `--help`.
+
+Runtime policy options include `--activity-timeout-ms`,
+`--detection-throttle-ms`, `--running-motion-activity`, and
+`--paused-motion-activity`. The detailed public semantics of these options
+belong to `docs/DBUS_INTERFACE.md`.
 
 ### `run`
 
@@ -490,7 +496,7 @@ events.
 If forwarding remains suppressed, source events continue to be consumed
 according to the current session policy without being forwarded.
 
-A reconnect is a lifecycle transition, not process reinitialization..
+A reconnect is a lifecycle transition, not process reinitialization.
 
 ## Reconnect settling
 

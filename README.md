@@ -21,9 +21,9 @@ libinput, compositor, or another input consumer
 This is useful whenever input needs a stable logical identity or a deliberate
 routing point that the physical device alone does not provide.
 
-The configured proxy name becomes that stable logical identity. In Version 0.3
-this evolves into the validated **Instance Name**, which also becomes the
-runtime-control identity and the basis for future persistent deployment.
+The configured, validated **Instance Name** becomes that stable logical identity.
+It is also the runtime-control identity and the basis for future persistent
+deployment.
 
 `input-proxy` does **not** remap events. It faithfully forwards the source event
 stream while preserving the source device's supported capabilities. It performs
@@ -35,14 +35,19 @@ no coordinate transformation, gesture interpretation, or per-code filtering.
 
 The latest released version is **0.2.0**.
 
-The repository is currently preparing the documented Version 0.3 runtime-control
-and observability contract for implementation. Features described for Version
-0.3 and later are design targets and are not available unless the README
-explicitly identifies them as implemented.
+The development tree implements the documented Version 0.3 runtime-control and
+observability functionality. This includes validated Instance Names; optional
+per-instance system D-Bus control; runtime Pause/Resume; observable runtime
+properties and activity; D-Bus-aware runtime information in `list` and
+`inspect`; and a normal runtime warning when the source is not ignored by
+libinput. Core evdev-to-uinput operation remains available when D-Bus is not.
+
+See the [D-Bus interface specification](docs/DBUS_INTERFACE.md) for the
+authoritative runtime-control semantics. Version 0.3 has not yet been released.
 
 - [Version 0.2 capabilities](#version-02-capabilities)
 - [Planned roadmap](docs/ROADMAP.md)
-- [Version 0.3 D-Bus interface design](docs/DBUS_INTERFACE.md)
+- [Version 0.3 D-Bus interface](docs/DBUS_INTERFACE.md)
 
 ---
 
@@ -119,19 +124,18 @@ configurations.
 Prefer a persistent source path when one is available:
 
 ```sh
-./build/input-proxy run --source /dev/input/by-path/platform-example-event --name "Touchscreen Proxy"
+./build/input-proxy run --source /dev/input/by-path/platform-example-event --name Touchscreen-Proxy
 ```
 
 Otherwise use the event path reported by `list`:
 
 ```sh
-./build/input-proxy run --source /dev/input/event0 --name "Touchscreen Proxy"
+./build/input-proxy run --source /dev/input/event0 --name Touchscreen-Proxy
 ```
 
-The configured name becomes the virtual device name and must be unique among
-simultaneously running `input-proxy` processes. Beginning with Version 0.3, this
-validated name also becomes the canonical runtime Instance Name used throughout
-the project.
+The validated Instance Name becomes the virtual device name and must be unique
+among simultaneously running `input-proxy` processes. It is the canonical
+runtime identity used throughout the project.
 
 Add `--verbose` to include detailed lifecycle diagnostics such as source
 identity, reconnect handling, compatibility decisions, synchronization recovery,
@@ -178,13 +182,14 @@ Building requires:
 
 - a C17 compiler;
 - CMake;
-- pkg-config; and
-- the libevdev development package.
+- pkg-config;
+- the libevdev development package; and
+- the libsystemd development package.
 
 On Debian or Ubuntu:
 
 ```sh
-sudo apt install build-essential cmake pkg-config libevdev-dev
+sudo apt install build-essential cmake pkg-config libevdev-dev libsystemd-dev
 ```
 
 Configure and build:
@@ -232,13 +237,11 @@ install udev rules, or change system configuration.
 
 ## Not yet available
 
-Version 0.2 intentionally focuses on the core proxy runtime and operator
-experience.
+Functionality beyond the implemented Version 0.3 development scope remains
+planned.
 
 The following capabilities are planned for future releases:
 
-- runtime D-Bus status and control;
-- pause and resume;
 - persistent service installation;
 - systemd unit creation;
 - automatic udev-rule installation;
@@ -246,8 +249,11 @@ The following capabilities are planned for future releases:
 - configuration files; and
 - general-purpose input remapping.
 
-Runtime awareness and control are the documented design target for Version 0.3.
 Persistent installation and service integration are planned for Version 0.4.
+
+For a minimal Python example demonstrating runtime discovery, property
+observation, and Pause/Resume through the public D-Bus interface, see
+[`examples/dbus_client.py`](examples/dbus_client.py).
 
 For additional project information see:
 
