@@ -286,6 +286,9 @@ identity used by the virtual device and runtime-control interface.
 - Add configurable:
   - `--activity-timeout-ms`
   - `--detection-throttle-ms`
+- Provide independent policy controlling whether motion counts as activity:
+  - while running;
+  - while paused.
 - Use a retriggerable hold interval for activity while forwarding.
 - Use a throttled indication for activity while paused.
 - Do not transport raw input events through D-Bus.
