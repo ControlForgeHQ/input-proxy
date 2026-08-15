@@ -1395,6 +1395,11 @@ The response format contains exactly one argument per line. It has no shell
 parsing, quoting language, variable expansion, includes, project-specific
 configuration language, or other interpretation beyond argv expansion.
 
+Arguments expanded from a response artifact are processed through the same
+runtime command-line parsing and validation path as arguments supplied directly
+to `input-proxy run`. Response artifacts do not define separate option
+semantics, validation rules, defaults, or runtime configuration behaviour.
+
 The artifact stores every runtime-policy value explicitly. An Installed
 Instance therefore does not silently adopt new compiled defaults after an
 upgrade.
