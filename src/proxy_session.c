@@ -7,6 +7,7 @@
 
 #include "proxy_session_internal.h"
 #include "instance_name_internal.h"
+#include "libinput_status_internal.h"
 #include "runtime_control_internal.h"
 #include "source_device_internal.h"
 #include "virtual_device_internal.h"
@@ -47,6 +48,7 @@ struct input_proxy_session {
     bool paused_activity_timer_active;
     enum input_proxy_result fatal_result;
     bool source_opened_successfully;
+    bool libinput_status_definitive;
     bool verbose;
     volatile sig_atomic_t shutdown_requested;
 };
@@ -473,6 +475,30 @@ static enum input_proxy_result create_active_devices(
             "source opened successfully: %s",
             session->source_path
         );
+
+        if (!session->libinput_status_definitive) {
+            struct stat source_status;
+            enum input_proxy_libinput_status libinput_status =
+                INPUT_PROXY_LIBINPUT_STATUS_INDETERMINATE;
+
+            if (input_proxy_source_device_get_status(
+                    session->source_device, &source_status) ==
+                INPUT_PROXY_SUCCESS) {
+                libinput_status = input_proxy_read_libinput_status(
+                    "/run/udev/data", &source_status, NULL, NULL);
+            }
+            if (libinput_status == INPUT_PROXY_LIBINPUT_STATUS_NOT_IGNORED) {
+                printf("input-proxy: warning - %s is not ignored by libinput, "
+                       "events may be duplicated\n", session->source_path);
+                fflush(stdout);
+                session->libinput_status_definitive = true;
+            } else if (libinput_status == INPUT_PROXY_LIBINPUT_STATUS_IGNORED) {
+                session->libinput_status_definitive = true;
+            } else {
+                log_verbose(session, "libinput-ignore state could not be "
+                    "determined for source %s", session->source_path);
+            }
+        }
 
         if (session->virtual_device != NULL &&
             input_proxy_virtual_device_is_compatible(

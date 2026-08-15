@@ -2,6 +2,7 @@
 #define _XOPEN_SOURCE 700
 
 #include "device_inspection_internal.h"
+#include "libinput_status_internal.h"
 #include "device_discovery_internal.h"
 #include "runtime_discovery_internal.h"
 
@@ -453,45 +454,30 @@ void input_proxy_print_runtime_associations(
     }
 }
 
-static bool read_udev_properties(const char *root, const struct stat *status,
-                                 FILE *stream, char *vendor, size_t vendor_size,
-                                 char *model, size_t model_size,
-                                 char *device_id_path, size_t id_path_size)
-{
-    char path[PATH_MAX];
-    char line[1024];
-    FILE *file;
-    bool ignored = false;
+struct inspection_udev_properties {
+    FILE *stream;
+    char *vendor;
+    size_t vendor_size;
+    char *model;
+    size_t model_size;
+    char *device_id_path;
+    size_t id_path_size;
+};
 
-    if (!S_ISCHR(status->st_mode) || snprintf(path, sizeof(path), "%s/c%u:%u",
-        root, major(status->st_rdev), minor(status->st_rdev)) >= (int)sizeof(path))
-        return false;
-    file = fopen(path, "r");
-    if (file == NULL) return false;
-    while (fgets(line, sizeof(line), file) != NULL) {
-        char *value;
-        size_t length = strlen(line);
-        while (length > 0 && (line[length - 1] == '\n' || line[length - 1] == '\r'))
-            line[--length] = '\0';
-        if (strncmp(line, "E:", 2) != 0) continue;
-        value = strchr(line + 2, '=');
-        if (value == NULL) continue;
-        *value++ = '\0';
-        if (strcmp(line + 2, "LIBINPUT_IGNORE_DEVICE") == 0 &&
-            strcmp(value, "1") == 0) ignored = true;
-        if (strcmp(line + 2, "ID_VENDOR_ID") == 0)
-            snprintf(vendor, vendor_size, "%s", value);
-        if (strcmp(line + 2, "ID_MODEL_ID") == 0)
-            snprintf(model, model_size, "%s", value);
-        if (strcmp(line + 2, "ID_PATH") == 0)
-            snprintf(device_id_path, id_path_size, "%s", value);
-        if (strncmp(line + 2, "ID_INPUT", 8) == 0 ||
-            strcmp(line + 2, "ID_PATH") == 0 ||
-            strcmp(line + 2, "LIBINPUT_IGNORE_DEVICE") == 0)
-            fprintf(stream, "  %-22s %s\n", line + 2, value);
-    }
-    fclose(file);
-    return ignored;
+static void collect_udev_property(const char *name, const char *value,
+                                  void *userdata)
+{
+    struct inspection_udev_properties *properties = userdata;
+
+    if (strcmp(name, "ID_VENDOR_ID") == 0)
+        snprintf(properties->vendor, properties->vendor_size, "%s", value);
+    if (strcmp(name, "ID_MODEL_ID") == 0)
+        snprintf(properties->model, properties->model_size, "%s", value);
+    if (strcmp(name, "ID_PATH") == 0)
+        snprintf(properties->device_id_path, properties->id_path_size, "%s", value);
+    if (strncmp(name, "ID_INPUT", 8) == 0 || strcmp(name, "ID_PATH") == 0 ||
+        strcmp(name, "LIBINPUT_IGNORE_DEVICE") == 0)
+        fprintf(properties->stream, "  %-22s %s\n", name, value);
 }
 
 enum input_proxy_result input_proxy_inspect_device(
@@ -512,6 +498,7 @@ enum input_proxy_result input_proxy_inspect_device(
     bool source_ok = false;
     bool uinput_ok = false;
     bool ignored = false;
+    enum input_proxy_libinput_status libinput_status;
     bool uinput_exists = false;
     bool uinput_status_available = false;
     struct stat uinput_status;
@@ -628,10 +615,15 @@ enum input_proxy_result input_proxy_inspect_device(
 
     fputc('\n', stream);
     print_heading(stream, "Udev and libinput context");
-    ignored = read_udev_properties(udev_data_path, &status, stream,
-                                   rule_vendor, sizeof(rule_vendor),
-                                   rule_model, sizeof(rule_model),
-                                   rule_path, sizeof(rule_path));
+    {
+        struct inspection_udev_properties properties = {
+            stream, rule_vendor, sizeof(rule_vendor), rule_model,
+            sizeof(rule_model), rule_path, sizeof(rule_path)
+        };
+        libinput_status = input_proxy_read_libinput_status(
+            udev_data_path, &status, collect_udev_property, &properties);
+        ignored = libinput_status == INPUT_PROXY_LIBINPUT_STATUS_IGNORED;
+    }
     fprintf(stream, "  %-22s %s\n", "Libinput ignored:",
             semantic_status(stream, ignored ? "Yes" : "No",
                             ignored ? "32" : "33"));
