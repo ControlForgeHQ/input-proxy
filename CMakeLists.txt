@@ -25,6 +25,7 @@ add_executable(
     src/device_discovery.c
     src/device_inspection.c
     src/instance_name.c
+    src/libinput_status.c
     src/main.c
     src/proxy_session.c
     src/runtime_control.c
@@ -76,6 +77,7 @@ if(BUILD_TESTING)
         tests/device_inspection_test.c
         src/device_inspection.c
         src/device_discovery.c
+        src/libinput_status.c
         src/runtime_discovery.c
     )
     target_include_directories(
@@ -85,6 +87,14 @@ if(BUILD_TESTING)
     target_link_libraries(device-inspection-test PRIVATE
         PkgConfig::LIBEVDEV PkgConfig::LIBSYSTEMD)
     add_test(NAME device-inspection-test COMMAND device-inspection-test)
+
+    add_executable(
+        libinput-status-test
+        tests/libinput_status_test.c
+        src/libinput_status.c
+    )
+    target_include_directories(libinput-status-test PRIVATE ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME libinput-status-test COMMAND libinput-status-test)
 
     add_executable(
         source-device-test
@@ -134,6 +144,7 @@ if(BUILD_TESTING)
         proxy-session-test
         tests/proxy_session_test.c
         src/proxy_session.c
+        src/libinput_status.c
         src/runtime_control.c
         src/instance_name.c
         src/result.c
@@ -157,6 +168,7 @@ if(BUILD_TESTING)
             "-Wl,--wrap=input_proxy_runtime_control_process"
             "-Wl,--wrap=input_proxy_runtime_control_wait"
             "-Wl,--wrap=input_proxy_runtime_control_destroy"
+            "-Wl,--wrap=input_proxy_read_libinput_status"
     )
 
     add_test(NAME proxy-session-test COMMAND proxy-session-test)

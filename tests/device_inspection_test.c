@@ -164,6 +164,8 @@ int main(void)
     snprintf(path, sizeof(path), "%s/device/properties", event); failures += write_text(path, "0\n");
     snprintf(path, sizeof(path), "%s/dev", event); failures += write_text(path, "1:3\n");
     failures += make_directory(udev);
+    snprintf(path, sizeof(path), "%s/c1:3", udev);
+    failures += write_text(path, "E:ID_INPUT=1\n");
     snprintf(path, sizeof(path), "%s/event7", root);
     if (symlink("/dev/null", path) != 0) failures++;
     {
@@ -214,6 +216,7 @@ int main(void)
         strstr(output, "Preferred run source:") == NULL ||
         strstr(output, "/by-id/test-device") == NULL ||
         strstr(output, "Fixture Keyboard") == NULL ||
+        strstr(output, "Libinput ignored:      No") == NULL ||
         strstr(output, "Bus:                   USB") == NULL ||
         strstr(output, "Source readable:       No\n") == NULL ||
         strstr(output, "/dev/uinput writable:  Yes") == NULL ||
@@ -314,6 +317,24 @@ int main(void)
         failures++;
     }
     free(output);
+    output = NULL; error = NULL; output_size = 0; error_size = 0;
+    snprintf(path, sizeof(path), "%s/c1:3", udev);
+    failures += write_text(path, "E:LIBINPUT_IGNORE_DEVICE=1\n");
+    stream = open_memstream(&output, &output_size);
+    error_stream = open_memstream(&error, &error_size);
+    if (stream == NULL || error_stream == NULL) return 1;
+    snprintf(path, sizeof(path), "%s/event7", root);
+    result = input_proxy_inspect_device(stream, error_stream, path, sysfs, root,
+                                        "/dev/null", udev, &empty_snapshot);
+    fclose(stream); fclose(error_stream);
+    if (result != INPUT_PROXY_SUCCESS ||
+        strstr(output, "Libinput ignored:      Yes") == NULL ||
+        strstr(output, "Libinput remediation") != NULL || error[0] != '\0') {
+        fprintf(stderr, "unexpected ignored inspection result:\n%s%s", output,
+                error);
+        failures++;
+    }
+    free(output); free(error);
     if (nftw(root, remove_entry, 16, FTW_DEPTH | FTW_PHYS) != 0) failures++;
     return failures == 0 ? 0 : 1;
 }

@@ -11,6 +11,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/ioctl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 struct input_proxy_source_device {
@@ -152,6 +153,18 @@ const struct libevdev *input_proxy_source_device_get_libevdev(
     }
 
     return device->evdev;
+}
+
+enum input_proxy_result input_proxy_source_device_get_status(
+    const struct input_proxy_source_device *device,
+    struct stat *status)
+{
+    if (device == NULL || status == NULL) {
+        return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
+    }
+    return fstat(device->file_descriptor, status) == 0
+        ? INPUT_PROXY_SUCCESS
+        : INPUT_PROXY_ERROR_SOURCE_OPEN_FAILED;
 }
 
 static enum input_proxy_result append_state_event(

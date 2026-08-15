@@ -5,6 +5,7 @@
 #include <input_proxy/virtual_device.h>
 
 #include "proxy_session_internal.h"
+#include "libinput_status_internal.h"
 #include "runtime_control_internal.h"
 #include "source_device_internal.h"
 
@@ -94,6 +95,10 @@ static int activity_operation_count;
 static int runtime_control_drop_process_call;
 static int runtime_control_second_drop_process_call;
 static long long sync_read_time_advance_ns;
+static enum input_proxy_libinput_status libinput_status;
+static enum input_proxy_libinput_status libinput_status_results[8];
+static int libinput_status_result_count;
+static int libinput_status_calls;
 
 static struct input_proxy_source_device *const test_source_device =
     (struct input_proxy_source_device *)1;
@@ -340,6 +345,34 @@ enum input_proxy_result input_proxy_source_device_check_available(
     return source_available_result;
 }
 
+enum input_proxy_result input_proxy_source_device_get_status(
+    const struct input_proxy_source_device *device, struct stat *status)
+{
+    if (device != test_source_device || status == NULL) {
+        return INPUT_PROXY_ERROR_INTERNAL;
+    }
+    memset(status, 0, sizeof(*status));
+    return INPUT_PROXY_SUCCESS;
+}
+
+enum input_proxy_libinput_status __wrap_input_proxy_read_libinput_status(
+    const char *udev_data_path, const struct stat *device_status,
+    input_proxy_udev_property_handler property_handler,
+    void *property_handler_userdata)
+{
+    (void)device_status;
+    (void)property_handler;
+    (void)property_handler_userdata;
+    if (strcmp(udev_data_path, "/run/udev/data") != 0) {
+        return INPUT_PROXY_LIBINPUT_STATUS_INDETERMINATE;
+    }
+    libinput_status_calls++;
+    if (libinput_status_calls <= libinput_status_result_count) {
+        return libinput_status_results[libinput_status_calls - 1];
+    }
+    return libinput_status;
+}
+
 enum input_proxy_result input_proxy_virtual_device_create(
     struct input_proxy_virtual_device **device,
     const struct input_proxy_source_device *source_device,
@@ -557,6 +590,9 @@ static void reset_runtime(void)
     runtime_control_second_drop_process_call = 0;
     sync_read_time_advance_ns = 0;
     source_event_count = 0;
+    libinput_status = INPUT_PROXY_LIBINPUT_STATUS_IGNORED;
+    libinput_status_calls = 0;
+    libinput_status_result_count = 0;
     memset(operations, 0, sizeof(operations));
     memset(state_written_events, 0, sizeof(state_written_events));
     memset(barrier_operations, 0, sizeof(barrier_operations));
@@ -572,6 +608,7 @@ static void reset_runtime(void)
     memset(source_events, 0, sizeof(source_events));
     memset(read_time_advance_ns, 0, sizeof(read_time_advance_ns));
     memset(compatibility_results, 0, sizeof(compatibility_results));
+    memset(libinput_status_results, 0, sizeof(libinput_status_results));
 }
 
 static int run_runtime_test(
@@ -1002,6 +1039,80 @@ int main(void)
         strcmp(barrier_operations, "QBARF") != 0 ||
         strcmp(operations, "DC") != 0) {
         fprintf(stderr, "shutdown while actively forwarding: bad cleanup\n");
+        failures++;
+    }
+
+    reset_runtime();
+    libinput_status = INPUT_PROXY_LIBINPUT_STATUS_NOT_IGNORED;
+    read_results[0] = INPUT_PROXY_ERROR_SOURCE_DISCONNECTED;
+    read_results[1] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+    read_result_count = 2;
+    compatibility_results[0] = true;
+    failures += run_runtime_test_with_output(
+        "non-ignored warning is session scoped", &config,
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED, output, sizeof(output));
+    if (count_occurrences(output,
+            "input-proxy: warning - /dev/input/event-test is not ignored by "
+            "libinput, events may be duplicated\n") != 1 ||
+        libinput_status_calls != 1 || open_calls != 2) {
+        fprintf(stderr, "non-ignored warning: unexpected output: %s\n", output);
+        failures++;
+    }
+
+    reset_runtime();
+    libinput_status = INPUT_PROXY_LIBINPUT_STATUS_NOT_IGNORED;
+    open_results[0] = INPUT_PROXY_ERROR_SOURCE_UNAVAILABLE;
+    open_results[1] = INPUT_PROXY_SUCCESS;
+    open_result_count = 2;
+    read_result = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+    failures += run_runtime_test_with_output(
+        "warning deferred until source acquisition", &config,
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED, output, sizeof(output));
+    if (count_occurrences(output, "warning - /dev/input/event-test") != 1 ||
+        libinput_status_calls != 1 ||
+        strstr(output, "waiting for source") > strstr(output, "warning -")) {
+        fprintf(stderr, "deferred warning: unexpected output: %s\n", output);
+        failures++;
+    }
+
+    reset_runtime();
+    read_result = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+    failures += run_runtime_test_with_output(
+        "ignored source", &config, INPUT_PROXY_ERROR_EVENT_READ_FAILED,
+        output, sizeof(output));
+    if (strstr(output, "events may be duplicated") != NULL ||
+        libinput_status_calls != 1) {
+        fprintf(stderr, "ignored source: unexpected output: %s\n", output);
+        failures++;
+    }
+
+    reset_runtime();
+    libinput_status = INPUT_PROXY_LIBINPUT_STATUS_INDETERMINATE;
+    read_result = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+    failures += run_runtime_test_with_output(
+        "indeterminate source normal logging", &config,
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED, output, sizeof(output));
+    if (strstr(output, "events may be duplicated") != NULL ||
+        strstr(output, "libinput-ignore state could not") != NULL) {
+        fprintf(stderr, "indeterminate normal output: %s\n", output);
+        failures++;
+    }
+
+    reset_runtime();
+    libinput_status_results[0] = INPUT_PROXY_LIBINPUT_STATUS_INDETERMINATE;
+    libinput_status_results[1] = INPUT_PROXY_LIBINPUT_STATUS_NOT_IGNORED;
+    libinput_status_result_count = 2;
+    read_results[0] = INPUT_PROXY_ERROR_SOURCE_DISCONNECTED;
+    read_results[1] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+    read_result_count = 2;
+    compatibility_results[0] = true;
+    failures += run_runtime_test_with_output(
+        "indeterminate status retried in verbose mode", &verbose_config,
+        INPUT_PROXY_ERROR_EVENT_READ_FAILED, output, sizeof(output));
+    if (count_occurrences(output, "libinput-ignore state could not be determined") != 1 ||
+        count_occurrences(output, "events may be duplicated") != 1 ||
+        libinput_status_calls != 2) {
+        fprintf(stderr, "indeterminate retry output: %s\n", output);
         failures++;
     }
 

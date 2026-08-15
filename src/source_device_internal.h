@@ -3,6 +3,7 @@
 
 #include <linux/input.h>
 #include <stddef.h>
+#include <sys/stat.h>
 
 struct input_proxy_source_device;
 struct libevdev;
@@ -23,6 +24,11 @@ enum input_proxy_result input_proxy_source_device_capture_state(
 
 enum input_proxy_result input_proxy_source_device_check_available(
     const struct input_proxy_source_device *device
+);
+
+enum input_proxy_result input_proxy_source_device_get_status(
+    const struct input_proxy_source_device *device,
+    struct stat *status
 );
 
 void input_proxy_source_state_destroy(struct input_proxy_source_state *state);
