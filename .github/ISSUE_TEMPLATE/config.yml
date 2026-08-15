@@ -2,13 +2,13 @@ blank_issues_enabled: false
 
 contact_links:
   - name: Engineering documentation
-    url: https://github.com/fasteddy516/input-proxy/blob/main/docs/ENGINEERING.md
+    url: https://github.com/ControlForgeHQ/input-proxy/blob/main/docs/ENGINEERING.md
     about: Project engineering standards and contributor expectations.
 
   - name: Architecture
-    url: https://github.com/fasteddy516/input-proxy/blob/main/docs/ARCHITECTURE.md
+    url: https://github.com/ControlForgeHQ/input-proxy/blob/main/docs/ARCHITECTURE.md
     about: Runtime architecture and design.
 
   - name: Roadmap
-    url: https://github.com/fasteddy516/input-proxy/blob/main/docs/ROADMAP.md
+    url: https://github.com/ControlForgeHQ/input-proxy/blob/main/docs/ROADMAP.md
     about: Planned features and release goals.
