@@ -64,7 +64,7 @@ Only the GitHub issue URL should normally need to be changed.
 ```text
 Implement the GitHub issue:
 
-https://github.com/fasteddy516/input-proxy/issues/<issue>
+https://github.com/ControlForgeHQ/input-proxy/issues/<issue>
 
 Read and follow AGENTS.md before making changes.
 
@@ -92,7 +92,7 @@ Only the pull-request URL should normally need to be changed.
 ```text
 Address the latest unresolved review feedback and discussion on this pull request:
 
-https://github.com/fasteddy516/input-proxy/pull/<pr>
+https://github.com/ControlForgeHQ/input-proxy/pull/<pr>
 
 Read and follow AGENTS.md before making changes.
 

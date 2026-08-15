@@ -175,7 +175,7 @@ function(assert_run_header)
     endif()
 
     set(expected_context
-        "\ninput-proxy: Repository=https://github.com/fasteddy516/input-proxy\ninput-proxy: Source=/input-proxy-test-path-that-does-not-exist\ninput-proxy: InstanceName=Touchscreen_Proxy\ninput-proxy: activity timeout=5000ms (default), motion activity while running=yes (default)\ninput-proxy: detection throttle=250ms (default), motion activity while paused=yes (default)\ninput-proxy: waiting for source"
+        "\ninput-proxy: Repository=https://github.com/ControlForgeHQ/input-proxy\ninput-proxy: Source=/input-proxy-test-path-that-does-not-exist\ninput-proxy: InstanceName=Touchscreen_Proxy\ninput-proxy: activity timeout=5000ms (default), motion activity while running=yes (default)\ninput-proxy: detection throttle=250ms (default), motion activity while paused=yes (default)\ninput-proxy: waiting for source"
     )
     string(FIND "${standard_output}" "${expected_context}" context_position)
     if(context_position EQUAL -1)
@@ -185,7 +185,7 @@ function(assert_run_header)
         )
     endif()
 
-    string(REGEX MATCHALL "input-proxy: Repository=https://github.com/fasteddy516/input-proxy" header_matches "${standard_output}")
+    string(REGEX MATCHALL "input-proxy: Repository=https://github.com/ControlForgeHQ/input-proxy" header_matches "${standard_output}")
     list(LENGTH header_matches header_count)
     if(NOT header_count EQUAL 1)
         message(FATAL_ERROR "Expected exactly one startup header:\n${standard_output}")
@@ -216,7 +216,7 @@ function(assert_run_activity_header expected_running expected_paused)
     endif()
 endfunction()
 
-assert_cli(success "input-proxy ${INPUT_PROXY_VERSION}.*Transparent Linux evdev-to-uinput input proxy\\..*Usage:.*Commands:.*Global options:.*Examples:.*https://github.com/fasteddy516/input-proxy" --help)
+assert_cli(success "input-proxy ${INPUT_PROXY_VERSION}.*Transparent Linux evdev-to-uinput input proxy\\..*Usage:.*Commands:.*Global options:.*Examples:.*https://github.com/ControlForgeHQ/input-proxy" --help)
 assert_cli_streams(success "input-proxy ${INPUT_PROXY_VERSION}.*Usage:" "^$" --help)
 assert_cli_omits("${INPUT_PROXY}" --help)
 assert_cli_omits("input-proxy: Repository=" --help)

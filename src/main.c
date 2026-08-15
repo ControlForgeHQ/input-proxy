@@ -85,7 +85,7 @@ static void print_top_level_help(FILE *stream)
         "  input-proxy inspect /dev/input/event0\n"
         "\n"
         "Report bugs and find the project at:\n"
-        "  https://github.com/fasteddy516/input-proxy\n\n",
+        "  https://github.com/ControlForgeHQ/input-proxy\n\n",
         INPUT_PROXY_VERSION_STRING
     );
 }
@@ -166,7 +166,7 @@ static void print_startup_header(
 {
     printf(
         "input-proxy: Version=%s\n"
-        "input-proxy: Repository=https://github.com/fasteddy516/input-proxy\n"
+        "input-proxy: Repository=https://github.com/ControlForgeHQ/input-proxy\n"
         "input-proxy: Source=%s\n"
         "input-proxy: InstanceName=%s\n"
         "input-proxy: activity timeout=%" PRIu64 "ms%s, motion activity "
