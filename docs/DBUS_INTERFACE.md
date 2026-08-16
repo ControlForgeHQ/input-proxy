@@ -496,12 +496,12 @@ Initialization failures are classified as follows:
 
 | Category | Meaning | Runtime outcome |
 |----------|---------|-----------------|
-| System bus unavailable | The system bus endpoint is absent or unreachable. | D-Bus integration is disabled; forwarding continues. |
-| Bus connection rejected | Authentication or connection policy prevents access to the system bus. | D-Bus integration is disabled; forwarding continues. |
-| Service-name ownership denied | System-bus policy does not permit the process to own its derived name. | D-Bus integration is disabled; forwarding continues. |
-| Service name already owned | Another bus connection owns the exact derived name. | D-Bus integration is disabled; forwarding continues. |
-| Invalid derived identifier | A validated Instance Name unexpectedly produces an invalid D-Bus identifier. | D-Bus integration is disabled; forwarding continues. |
-| Object export or initialization failure | Object registration, interface setup, or another internal D-Bus initialization step fails. | Partial D-Bus state is cleaned up; forwarding continues. |
+| System bus unavailable | The system bus endpoint is absent or unreachable. | D-Bus integration remains unavailable; forwarding continues; periodic reinitialization is scheduled. |
+| Bus connection rejected | Authentication or connection policy prevents access to the system bus. | D-Bus integration remains unavailable; forwarding continues; periodic reinitialization is scheduled. |
+| Service-name ownership denied | System-bus policy does not permit the process to own its derived name. | D-Bus integration remains unavailable; forwarding continues; periodic reinitialization is scheduled. |
+| Service name already owned | Another bus connection owns the exact derived name. | D-Bus integration remains unavailable; forwarding continues; periodic reinitialization is scheduled. |
+| Invalid derived identifier | A validated Instance Name unexpectedly produces an invalid D-Bus identifier. | D-Bus integration is disabled; forwarding continues; automatic reinitialization is not scheduled. |
+| Object export or initialization failure | Object registration, interface setup, or another internal D-Bus initialization step fails. | Partial D-Bus state is cleaned up; forwarding continues; periodic reinitialization is scheduled when the failure is recoverable. |
 
 Startup MUST report a warning that distinguishes these categories and includes
 the affected service name or initialization stage where relevant. Platform
@@ -515,20 +515,44 @@ input forwarding.
 
 An invalid derived identifier after successful Instance Name validation is an
 internal project invariant violation. The diagnostic MUST identify derivation
-or validation as defective rather than report invalid operator input.
+or validation as defective rather than report invalid operator input. Because
+waiting cannot make the derived identifier valid, this failure does not enter
+periodic D-Bus reinitialization.
 
-When D-Bus initialization is unavailable:
+When D-Bus initialization is unavailable because of a recoverable failure:
 
 - runtime control is unavailable;
 - D-Bus runtime activity tracking is unavailable;
-- the proxy continues normal input forwarding;
-- startup reports a warning.
+- the proxy continues operating according to its current session-owned runtime
+  policy;
+- complete D-Bus initialization is retried periodically.
+
+The same recovery behavior applies whether D-Bus initialization failed during
+process startup or an established D-Bus connection was later lost. Recovery
+does not depend on D-Bus having initialized successfully earlier in the process
+lifetime.
+
+The recovery interval is 5000 ms.
+
+Recovery MUST use the normal runtime wait/deadline mechanism and MUST NOT block
+input processing while waiting to retry. Repeated failures of the same
+unchanged condition MUST NOT produce an identical standard warning on every
+retry interval.
+
+Each recovery attempt repeats complete D-Bus initialization. Partial state from
+a failed attempt is cleaned up before a later attempt. Runtime control becomes
+available only after the complete runtime object has been exported and the
+process has acquired its well-known service name without queueing.
 
 If an established connection is lost, runtime control and D-Bus activity
-tracking become unavailable immediately, activity timers and state are
-discarded, and forwarding continues. A later reinitialization starts both
-activity properties at `false` and repeats complete no-queue service-name
-acquisition.
+tracking become unavailable immediately, and activity timers and state are
+discarded. Session-owned runtime policy, including pause state and source
+availability, is unaffected.
+
+When D-Bus initialization or reinitialization later succeeds, the public
+properties expose the current session-owned state. Both activity properties
+start at `false`; earlier activity intervals are not reconstructed, and activity
+observed while D-Bus integration was unavailable is not replayed.
 
 Clients MUST tolerate an instance losing its D-Bus owner because its connection
 was lost or its process exited or restarted.
@@ -540,9 +564,9 @@ A client performing enumeration SHOULD refresh its discovered instance set when
 bus-name ownership changes.
 
 Clients may infer that an owned well-known service name exposes the complete
-public interface. They MUST NOT infer why an expected name is absent. Absence may
-mean that the proxy is not running or that D-Bus connection, policy, ownership,
-or initialization failed.
+public interface. They MUST NOT infer why an expected name is absent. Absence
+may mean that the proxy is not running or that D-Bus connection, policy,
+ownership, or initialization failed.
 
 Method completion, idempotence, and fatal state-correction errors are defined in
 the Methods section.
