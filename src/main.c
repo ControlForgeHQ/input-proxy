@@ -113,6 +113,8 @@ static void print_run_help(FILE *stream)
         "  --paused-motion-activity on|off\n"
         "                 Motion counts as activity while paused "
         "(default: on).\n"
+        "  --start-paused on|off\n"
+        "                 Initial session pause policy (default: off).\n"
         "  --verbose      Show additional lifecycle diagnostics.\n"
         "  --help         Show this help and exit.\n\n",
         stream
@@ -172,7 +174,8 @@ static void print_startup_header(
         "input-proxy: activity timeout=%" PRIu64 "ms%s, motion activity "
         "while running=%s%s\n"
         "input-proxy: detection throttle=%" PRIu64 "ms%s, motion activity "
-        "while paused=%s%s\n",
+        "while paused=%s%s\n"
+        "input-proxy: start paused=%s%s\n",
         INPUT_PROXY_VERSION_STRING,
         config->source_path,
         config->instance_name,
@@ -185,7 +188,9 @@ static void print_startup_header(
         config->detection_throttle_ms ==
             INPUT_PROXY_DEFAULT_DETECTION_THROTTLE_MS ? " (default)" : "",
         config->paused_motion_activity ? "yes" : "no",
-        config->paused_motion_activity ? " (default)" : ""
+        config->paused_motion_activity ? " (default)" : "",
+        config->start_paused ? "yes" : "no",
+        config->start_paused ? "" : " (default)"
     );
     fflush(stdout);
 }
@@ -241,6 +246,7 @@ static enum input_proxy_result parse_run_config(
     bool detection_throttle_seen = false;
     bool running_motion_seen = false;
     bool paused_motion_seen = false;
+    bool start_paused_seen = false;
 
     if (config == NULL) {
         return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
@@ -327,6 +333,18 @@ static enum input_proxy_result parse_run_config(
                 return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
             }
             paused_motion_seen = true;
+            index++;
+            continue;
+        }
+
+        if (strcmp(argv[index], "--start-paused") == 0) {
+            if (start_paused_seen || index + 1 >= argc || !parse_on_off(
+                    argv[index + 1], &config->start_paused)) {
+                fprintf(stderr, "input-proxy: invalid value for "
+                    "--start-paused: expected 'on' or 'off'\n");
+                return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
+            }
+            start_paused_seen = true;
             index++;
             continue;
         }

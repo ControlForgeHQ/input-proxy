@@ -16,6 +16,7 @@ struct input_proxy_session_config {
     uint64_t detection_throttle_ms;
     bool running_motion_activity;
     bool paused_motion_activity;
+    bool start_paused;
     bool verbose;
 };
 
