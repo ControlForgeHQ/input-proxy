@@ -1060,12 +1060,13 @@ When D-Bus initialization fails:
   and activity state MUST be cleaned up;
 - normal evdev-to-uinput proxy operation MUST continue;
 - pause/resume control through D-Bus is unavailable;
-- D-Bus activity tracking is disabled.
+- D-Bus activity tracking is disabled;
+- recoverable failures schedule periodic complete reinitialization attempts.
 
 The service-name request MUST use no-queue behavior. If the name is already
-owned, the process disables D-Bus integration rather than waiting to acquire the
-name later. Any future explicit reinitialization attempt repeats the complete
-sequence and again requests the name without queueing.
+owned, the current attempt disables D-Bus integration rather than queueing for
+the name. Each scheduled reinitialization attempt repeats the complete sequence
+and again requests the name without queueing.
 
 Because authoritative abstract-socket ownership is acquired first, a D-Bus
 service-name collision cannot be another conforming `input-proxy` process with
@@ -1079,20 +1080,21 @@ an internal invariant violation, not an operator naming error. The diagnostic
 MUST identify name derivation or validation as defective while the core proxy
 continues without D-Bus integration.
 
-If an established D-Bus connection is lost, the runtime MUST immediately mark
-D-Bus integration unavailable, cancel activity timers, discard activity state,
-stop exposing runtime control, report the loss without repeated log flooding,
-and continue normal input forwarding. It then retries the complete
-initialization sequence. Recovery rebuilds and exports the complete object
+After a recoverable startup initialization failure or loss of an established
+D-Bus connection, the runtime MUST mark D-Bus integration unavailable, cancel
+activity timers, discard activity state, stop exposing runtime control, report
+the failure without repeated log flooding, and continue normal input
+forwarding or suppression according to current session policy. It retries the
+complete initialization sequence every 5000 ms using the normal non-blocking
+runtime deadline machinery. Recovery rebuilds and exports the complete object
 before requesting the same well-known name without queueing. It exposes the
 session's current pause and source-availability state, while both activity
-properties restart at false. Failed recovery attempts do not flood standard
-logging and leave normal proxy operation unaffected. Automatic retry cadence is
-not an architectural requirement.
+properties restart at false. Failed recovery attempts leave normal proxy
+operation unaffected and schedule the next attempt at the same cadence.
 
-An initial startup failure remains distinct: it warns and continues without
-entering the recovery loop. Recovery is enabled only after an endpoint has been
-successfully established during the current process lifetime.
+Failures that cannot become valid through waiting, including an invalid derived
+D-Bus identifier representing an internal invariant failure, do not enter the
+recovery loop.
 
 The core proxy runtime MUST remain usable without D-Bus.
 
