@@ -168,14 +168,14 @@ function(assert_run_header)
     endif()
 
     set(default_activity
-        "input-proxy: activity timeout=5000ms \\(default\\), motion activity while running=yes \\(default\\)\ninput-proxy: detection throttle=250ms \\(default\\), motion activity while paused=yes \\(default\\)"
+        "input-proxy: activity timeout=5000ms \\(default\\), motion activity while running=yes \\(default\\)\ninput-proxy: detection throttle=250ms \\(default\\), motion activity while paused=yes \\(default\\)\ninput-proxy: start paused=no \\(default\\)"
     )
     if(NOT standard_output MATCHES "${default_activity}")
         message(FATAL_ERROR "Default activity configuration was missing from startup header:\n${standard_output}${standard_error}")
     endif()
 
     set(expected_context
-        "\ninput-proxy: Repository=https://github.com/ControlForgeHQ/input-proxy\ninput-proxy: Source=/input-proxy-test-path-that-does-not-exist\ninput-proxy: InstanceName=Touchscreen_Proxy\ninput-proxy: activity timeout=5000ms (default), motion activity while running=yes (default)\ninput-proxy: detection throttle=250ms (default), motion activity while paused=yes (default)\ninput-proxy: waiting for source"
+        "\ninput-proxy: Repository=https://github.com/ControlForgeHQ/input-proxy\ninput-proxy: Source=/input-proxy-test-path-that-does-not-exist\ninput-proxy: InstanceName=Touchscreen_Proxy\ninput-proxy: activity timeout=5000ms (default), motion activity while running=yes (default)\ninput-proxy: detection throttle=250ms (default), motion activity while paused=yes (default)\ninput-proxy: start paused=no (default)\ninput-proxy: waiting for source"
     )
     string(FIND "${standard_output}" "${expected_context}" context_position)
     if(context_position EQUAL -1)
@@ -216,6 +216,27 @@ function(assert_run_activity_header expected_running expected_paused)
     endif()
 endfunction()
 
+function(assert_run_start_paused_header value expected_pattern)
+    execute_process(
+        COMMAND
+            timeout --signal=TERM 1
+            "${INPUT_PROXY}" run
+            --source /input-proxy-test-path-that-does-not-exist
+            --name "Start_Paused_Header_Test"
+            --start-paused "${value}"
+        RESULT_VARIABLE actual_result
+        OUTPUT_VARIABLE standard_output
+        ERROR_VARIABLE standard_error
+    )
+
+    if(NOT actual_result EQUAL 124)
+        message(FATAL_ERROR "Start-paused runtime did not remain active: ${actual_result}\n${standard_output}${standard_error}")
+    endif()
+    if(NOT standard_output MATCHES "${expected_pattern}")
+        message(FATAL_ERROR "Start-paused header did not match '${expected_pattern}':\n${standard_output}${standard_error}")
+    endif()
+endfunction()
+
 assert_cli(success "input-proxy ${INPUT_PROXY_VERSION}.*Transparent Linux evdev-to-uinput input proxy\\..*Usage:.*Commands:.*Global options:.*Examples:.*https://github.com/ControlForgeHQ/input-proxy" --help)
 assert_cli_streams(success "input-proxy ${INPUT_PROXY_VERSION}.*Usage:" "^$" --help)
 assert_cli_omits("${INPUT_PROXY}" --help)
@@ -223,7 +244,7 @@ assert_cli_omits("input-proxy: Repository=" --help)
 assert_cli(success "^input-proxy ${INPUT_PROXY_VERSION}" --version)
 assert_cli_streams(success "^input-proxy ${INPUT_PROXY_VERSION}" "^$" --version)
 assert_cli_omits("input-proxy: Repository=" --version)
-assert_cli(success "Usage:.*input-proxy run --source PATH --name NAME \\[OPTIONS\\].*--source PATH.*--name NAME.*Instance Name.*--activity-timeout-ms MS.*default: 5000.*--detection-throttle-ms MS.*default: 250.*--running-motion-activity on\\|off.*Motion counts as activity while running.*default: on.*--paused-motion-activity on\\|off.*Motion counts as activity while paused.*default: on.*--verbose" run --help)
+assert_cli(success "Usage:.*input-proxy run --source PATH --name NAME \\[OPTIONS\\].*--source PATH.*--name NAME.*Instance Name.*--activity-timeout-ms MS.*default: 5000.*--detection-throttle-ms MS.*default: 250.*--running-motion-activity on\\|off.*Motion counts as activity while running.*default: on.*--paused-motion-activity on\\|off.*Motion counts as activity while paused.*default: on.*--start-paused on\\|off.*Initial session pause policy.*default: off.*--verbose" run --help)
 assert_cli_omits("input-proxy: Repository=" run --help)
 assert_cli(success "List available physical input devices concisely\\..*Usage:.*input-proxy list.*Virtual uinput devices are excluded.*currently running input-proxy instances" list --help)
 assert_cli_omits("not yet implemented" list --help)
@@ -240,6 +261,8 @@ assert_cli(failure "invalid non-negative duration for --detection-throttle-ms: -
 assert_cli(failure "invalid non-negative duration for --detection-throttle-ms: nope" run --source /missing --name test --detection-throttle-ms nope)
 assert_cli(failure "invalid value for --running-motion-activity: expected 'on' or 'off'" run --source /missing --name test --running-motion-activity yes)
 assert_cli(failure "invalid value for --paused-motion-activity: expected 'on' or 'off'" run --source /missing --name test --paused-motion-activity OFF)
+assert_cli(failure "invalid value for --start-paused: expected 'on' or 'off'" run --source /missing --name test --start-paused yes)
+assert_cli_failure_omits("input-proxy: Repository=" run --source /missing --name test --start-paused yes)
 assert_cli_failure_omits("input-proxy: Repository=" run)
 assert_invalid_instance_name("")
 assert_invalid_instance_name("1touchscreen")
@@ -274,6 +297,8 @@ assert_cli_blank_line(failure run)
 assert_cli_blank_line(failure list unexpected)
 assert_cli_blank_line(failure inspect)
 assert_run_header()
+assert_run_start_paused_header(on "start paused=yes")
+assert_run_start_paused_header(off "start paused=no \\(default\\)")
 assert_run_activity_header(
     "activity timeout=5000ms \\(default\\), motion activity while running=no"
     "detection throttle=100ms, motion activity while paused=no"

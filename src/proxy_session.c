@@ -879,7 +879,7 @@ enum input_proxy_result input_proxy_session_create(
     new_session->runtime_state = (struct input_proxy_runtime_control_state) {
         .instance_name = new_session->instance_name,
         .source_path = new_session->source_path,
-        .paused = false,
+        .paused = config->start_paused,
         .source_available = false,
         .activity_while_running = false,
         .activity_while_paused = false

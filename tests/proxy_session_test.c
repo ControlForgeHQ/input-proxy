@@ -79,6 +79,7 @@ static enum input_proxy_result pause_request_results[8];
 static char pause_operations[32];
 static int pause_operation_count;
 static bool runtime_control_available;
+static bool created_paused;
 static bool runtime_control_recovery_available;
 static int runtime_control_recreate_calls;
 static int runtime_control_recovery_success_call;
@@ -156,9 +157,9 @@ struct input_proxy_runtime_control *__wrap_input_proxy_runtime_control_create(
     input_proxy_runtime_control_pause_handler pause_handler,
     void *pause_handler_userdata)
 {
-    (void)state;
     (void)pause_handler;
     (void)pause_handler_userdata;
+    created_paused = state->paused;
     return runtime_control_available
         ? (struct input_proxy_runtime_control *)1
         : NULL;
@@ -576,6 +577,7 @@ static void reset_runtime(void)
     pause_request_index = 0;
     pause_operation_count = 0;
     runtime_control_available = false;
+    created_paused = false;
     runtime_control_recovery_available = false;
     runtime_control_recreate_calls = 0;
     runtime_control_recovery_success_call = 1;
@@ -1770,6 +1772,101 @@ int main(void)
         strcmp(pause_operations, "PU") != 0) {
         fprintf(stderr, "source-unavailable pause transitions were incorrect\n");
         failures++;
+    }
+
+    {
+        const struct input_proxy_session_config initially_paused_config = {
+            .source_path = "/dev/input/event-test",
+            .instance_name = "proxy_test_device",
+            .activity_timeout_ms = INPUT_PROXY_DEFAULT_ACTIVITY_TIMEOUT_MS,
+            .detection_throttle_ms =
+                INPUT_PROXY_DEFAULT_DETECTION_THROTTLE_MS,
+            .running_motion_activity = true,
+            .paused_motion_activity = true,
+            .start_paused = true
+        };
+
+        reset_runtime();
+        runtime_control_available = true;
+        pause_request_process_calls[0] = 2;
+        pause_request_values[0] = true;
+        pause_request_process_calls[1] = 4;
+        pause_request_values[1] = false;
+        pause_request_count = 2;
+        source_events[0] = (struct input_event) {
+            .type = EV_KEY, .code = KEY_A, .value = 1
+        };
+        source_events[1] = (struct input_event) {
+            .type = EV_KEY, .code = KEY_A, .value = 0
+        };
+        source_events[2] = (struct input_event) {
+            .type = EV_KEY, .code = KEY_B, .value = 1
+        };
+        source_event_count = 3;
+        read_results[0] = INPUT_PROXY_SUCCESS;
+        read_results[1] = INPUT_PROXY_SUCCESS;
+        read_results[2] = INPUT_PROXY_SUCCESS;
+        read_results[3] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+        read_result_count = 4;
+        failures += run_runtime_test(
+            "initial pause suppresses until resume",
+            &initially_paused_config,
+            INPUT_PROXY_ERROR_EVENT_READ_FAILED
+        );
+        if (!created_paused || pause_request_index != 2 ||
+            pause_request_results[0] != INPUT_PROXY_SUCCESS ||
+            pause_request_results[1] != INPUT_PROXY_SUCCESS ||
+            neutralize_calls != 0 || capture_state_calls != 1 ||
+            read_calls != 4 || write_calls != 1 ||
+            strcmp(pause_operations, "U") != 0 ||
+            strcmp(activity_operations, "PpRr") != 0) {
+            fprintf(stderr,
+                "initial paused state, activity, or first resume failed: "
+                "created=%d requests=%d results=%d/%d neutralize=%d "
+                "capture=%d reads=%d writes=%d pauses=%s activity=%s\n",
+                created_paused, pause_request_index,
+                pause_request_results[0], pause_request_results[1],
+                neutralize_calls, capture_state_calls, read_calls, write_calls,
+                pause_operations, activity_operations);
+            failures++;
+        }
+
+        reset_runtime();
+        runtime_control_available = true;
+        open_result = INPUT_PROXY_ERROR_SOURCE_UNAVAILABLE;
+        shutdown_during_event_sleep = true;
+        failures += run_runtime_test(
+            "initial pause while source unavailable",
+            &initially_paused_config,
+            INPUT_PROXY_SUCCESS
+        );
+        if (!created_paused || open_calls != 1 || create_calls != 0 ||
+            capture_state_calls != 0 || neutralize_calls != 0 ||
+            pause_operation_count != 0) {
+            fprintf(stderr,
+                "initial paused source-wait state was incorrect\n");
+            failures++;
+        }
+
+        reset_runtime();
+        open_results[0] = INPUT_PROXY_ERROR_SOURCE_UNAVAILABLE;
+        open_results[1] = INPUT_PROXY_SUCCESS;
+        open_result_count = 2;
+        read_results[0] = INPUT_PROXY_SUCCESS;
+        read_results[1] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+        read_result_count = 2;
+        failures += run_runtime_test(
+            "initial pause source appears later",
+            &initially_paused_config,
+            INPUT_PROXY_ERROR_EVENT_READ_FAILED
+        );
+        if (!created_paused || open_calls != 2 || create_calls != 1 ||
+            capture_state_calls != 0 || neutralize_calls != 0 ||
+            read_calls != 2 || write_calls != 0) {
+            fprintf(stderr,
+                "late source acquisition did not preserve initial pause\n");
+            failures++;
+        }
     }
 
     reset_runtime();
