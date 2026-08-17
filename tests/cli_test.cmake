@@ -237,6 +237,63 @@ function(assert_run_start_paused_header value expected_pattern)
     endif()
 endfunction()
 
+function(write_response_file path)
+    string(CONCAT content ${ARGN})
+    file(WRITE "${path}" "${content}")
+endfunction()
+
+function(assert_response_failure path expected_pattern)
+    assert_cli_streams(failure "^$" "${expected_pattern}" run "@${path}")
+    assert_cli_failure_omits("input-proxy: Version=" run "@${path}")
+    assert_cli_failure_omits("input-proxy: waiting for source" run "@${path}")
+endfunction()
+
+set(response_dir "${CMAKE_CURRENT_BINARY_DIR}/cli-response-files")
+file(MAKE_DIRECTORY "${response_dir}")
+
+set(complete_response "${response_dir}/complete.args")
+write_response_file("${complete_response}"
+    "--source\n/input proxy path with spaces\n--name\nResponse_File_Test\n"
+    "--activity-timeout-ms\n2000\n--detection-throttle-ms\n100\n"
+    "--running-motion-activity\noff\n--paused-motion-activity\noff\n"
+    "--start-paused\non")
+
+set(invalid_value_response "${response_dir}/invalid-value.args")
+write_response_file("${invalid_value_response}"
+    "--source\n/missing\n--name\ntest\n--start-paused\nyes\n")
+
+set(missing_option_response "${response_dir}/missing-option.args")
+write_response_file("${missing_option_response}" "--source\n/missing\n")
+
+set(duplicate_option_response "${response_dir}/duplicate-option.args")
+write_response_file("${duplicate_option_response}"
+    "--source\n/missing\n--source\n/other\n--name\ntest\n")
+
+set(unknown_option_response "${response_dir}/unknown-option.args")
+write_response_file("${unknown_option_response}"
+    "--source\n/missing\n--name\ntest\n--unknown\n")
+
+set(blank_line_response "${response_dir}/blank-line.args")
+write_response_file("${blank_line_response}"
+    "--source\n/missing\n\n--name\ntest\n")
+
+set(literal_response "${response_dir}/literal.args")
+write_response_file("${literal_response}"
+    "--source\n@nested.args\n--name\nLiteral_Test\n")
+
+set(special_character_response "${response_dir}/special-characters.args")
+write_response_file("${special_character_response}"
+    "--source\n\"$HOME\\literal path~\"\n--name\nSpecial_Character_Test\n")
+
+set(nul_response "${response_dir}/nul.args")
+execute_process(
+    COMMAND /bin/sh -c "printf '\\055\\055source\\012/missing\\000suffix\\012\\055\\055name\\012test\\012' > \"$1\"" sh "${nul_response}"
+    RESULT_VARIABLE nul_fixture_result
+)
+if(NOT nul_fixture_result EQUAL 0)
+    message(FATAL_ERROR "Failed to create embedded-NUL response fixture")
+endif()
+
 assert_cli(success "input-proxy ${INPUT_PROXY_VERSION}.*Transparent Linux evdev-to-uinput input proxy\\..*Usage:.*Commands:.*Global options:.*Examples:.*https://github.com/ControlForgeHQ/input-proxy" --help)
 assert_cli_streams(success "input-proxy ${INPUT_PROXY_VERSION}.*Usage:" "^$" --help)
 assert_cli_omits("${INPUT_PROXY}" --help)
@@ -244,7 +301,7 @@ assert_cli_omits("input-proxy: Repository=" --help)
 assert_cli(success "^input-proxy ${INPUT_PROXY_VERSION}" --version)
 assert_cli_streams(success "^input-proxy ${INPUT_PROXY_VERSION}" "^$" --version)
 assert_cli_omits("input-proxy: Repository=" --version)
-assert_cli(success "Usage:.*input-proxy run --source PATH --name NAME \\[OPTIONS\\].*--source PATH.*--name NAME.*Instance Name.*--activity-timeout-ms MS.*default: 5000.*--detection-throttle-ms MS.*default: 250.*--running-motion-activity on\\|off.*Motion counts as activity while running.*default: on.*--paused-motion-activity on\\|off.*Motion counts as activity while paused.*default: on.*--start-paused on\\|off.*Initial session pause policy.*default: off.*--verbose" run --help)
+assert_cli(success "Usage:.*input-proxy run --source PATH --name NAME \\[OPTIONS\\].*input-proxy run @file.*one runtime argument per line.*--source PATH.*--name NAME.*Instance Name.*--activity-timeout-ms MS.*default: 5000.*--detection-throttle-ms MS.*default: 250.*--running-motion-activity on\\|off.*Motion counts as activity while running.*default: on.*--paused-motion-activity on\\|off.*Motion counts as activity while paused.*default: on.*--start-paused on\\|off.*Initial session pause policy.*default: off.*--verbose" run --help)
 assert_cli_omits("input-proxy: Repository=" run --help)
 assert_cli(success "List available physical input devices concisely\\..*Usage:.*input-proxy list.*Virtual uinput devices are excluded.*currently running input-proxy instances" list --help)
 assert_cli_omits("not yet implemented" list --help)
@@ -264,6 +321,14 @@ assert_cli(failure "invalid value for --paused-motion-activity: expected 'on' or
 assert_cli(failure "invalid value for --start-paused: expected 'on' or 'off'" run --source /missing --name test --start-paused yes)
 assert_cli_failure_omits("input-proxy: Repository=" run --source /missing --name test --start-paused yes)
 assert_cli_failure_omits("input-proxy: Repository=" run)
+assert_cli(failure "response-file path after '@' is empty" run "@")
+assert_response_failure("${response_dir}/does-not-exist.args" "cannot open response file.*does-not-exist.args")
+assert_response_failure("${invalid_value_response}" "invalid value for --start-paused: expected 'on' or 'off'")
+assert_response_failure("${missing_option_response}" "invalid run arguments")
+assert_response_failure("${duplicate_option_response}" "invalid run arguments")
+assert_response_failure("${unknown_option_response}" "invalid run arguments")
+assert_response_failure("${blank_line_response}" "invalid run arguments")
+assert_response_failure("${nul_response}" "contains an embedded NUL byte")
 assert_invalid_instance_name("")
 assert_invalid_instance_name("1touchscreen")
 assert_invalid_instance_name("-touchscreen")
@@ -321,3 +386,39 @@ assert_run_activity_header(
     "detection throttle=250ms \\(default\\), motion activity while paused=on \\(default\\)"
     --activity-timeout-ms 2000
 )
+execute_process(
+    COMMAND timeout --signal=TERM 1 "${INPUT_PROXY}" run "@${complete_response}"
+    RESULT_VARIABLE response_result
+    OUTPUT_VARIABLE response_output
+    ERROR_VARIABLE response_error
+)
+if(NOT response_result EQUAL 124)
+    message(FATAL_ERROR "Complete response-file runtime did not remain active: ${response_result}\n${response_output}${response_error}")
+endif()
+set(response_header
+    "input-proxy: Source=/input proxy path with spaces\ninput-proxy: InstanceName=Response_File_Test\ninput-proxy: activity timeout=2000ms, motion activity while running=off\ninput-proxy: detection throttle=100ms, motion activity while paused=off\ninput-proxy: start paused=on"
+)
+if(NOT response_output MATCHES "${response_header}")
+    message(FATAL_ERROR "Response-file configuration was not parsed through the runtime path:\n${response_output}${response_error}")
+endif()
+
+foreach(literal_path IN ITEMS "${literal_response}" "${special_character_response}")
+    execute_process(
+        COMMAND timeout --signal=TERM 1 "${INPUT_PROXY}" run "@${literal_path}"
+        RESULT_VARIABLE literal_result
+        OUTPUT_VARIABLE literal_output
+        ERROR_VARIABLE literal_error
+    )
+    if(NOT literal_result EQUAL 124)
+        message(FATAL_ERROR "Literal response-file runtime did not remain active: ${literal_result}\n${literal_output}${literal_error}")
+    endif()
+    if(literal_path STREQUAL "${literal_response}")
+        set(expected_source "input-proxy: Source=@nested.args")
+    else()
+        set(expected_source "input-proxy: Source=\"$HOME\\literal path~\"")
+    endif()
+    string(FIND "${literal_output}" "${expected_source}" source_position)
+    if(source_position EQUAL -1)
+        message(FATAL_ERROR "Response-file literal characters were not preserved:\n${literal_output}${literal_error}")
+    endif()
+endforeach()
