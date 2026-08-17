@@ -152,6 +152,10 @@ int main(void)
     expect(write_file(path, "fixture"), "create config fixture");
     snprintf(path, sizeof(path), "%s/Subdirectory.args", directory);
     expect(mkdir(path, 0700) == 0, "create suffix-matching subdirectory");
+    expect(input_proxy_installed_instance_exists(
+        store, "Subdirectory", &exists) ==
+        INPUT_PROXY_INSTALLED_INSTANCE_SUCCESS && exists,
+        "non-regular final path occupies the Instance Name");
 
     expect(input_proxy_installed_instance_enumerate(store, &list) ==
         INPUT_PROXY_INSTALLED_INSTANCE_SUCCESS, "enumerate artifacts");

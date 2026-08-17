@@ -145,7 +145,7 @@ input_proxy_installed_instance_exists(
     }
 
     if (lstat(path, &status) == 0) {
-        *exists = S_ISREG(status.st_mode);
+        *exists = true;
         free(path);
         return INPUT_PROXY_INSTALLED_INSTANCE_SUCCESS;
     }
