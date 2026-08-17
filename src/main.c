@@ -182,14 +182,14 @@ static void print_startup_header(
         config->activity_timeout_ms,
         config->activity_timeout_ms ==
             INPUT_PROXY_DEFAULT_ACTIVITY_TIMEOUT_MS ? " (default)" : "",
-        config->running_motion_activity ? "yes" : "no",
+        config->running_motion_activity ? "on" : "off",
         config->running_motion_activity ? " (default)" : "",
         config->detection_throttle_ms,
         config->detection_throttle_ms ==
             INPUT_PROXY_DEFAULT_DETECTION_THROTTLE_MS ? " (default)" : "",
-        config->paused_motion_activity ? "yes" : "no",
+        config->paused_motion_activity ? "on" : "off",
         config->paused_motion_activity ? " (default)" : "",
-        config->start_paused ? "yes" : "no",
+        config->start_paused ? "on" : "off",
         config->start_paused ? "" : " (default)"
     );
     fflush(stdout);

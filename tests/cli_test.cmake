@@ -168,14 +168,14 @@ function(assert_run_header)
     endif()
 
     set(default_activity
-        "input-proxy: activity timeout=5000ms \\(default\\), motion activity while running=yes \\(default\\)\ninput-proxy: detection throttle=250ms \\(default\\), motion activity while paused=yes \\(default\\)\ninput-proxy: start paused=no \\(default\\)"
+        "input-proxy: activity timeout=5000ms \\(default\\), motion activity while running=on \\(default\\)\ninput-proxy: detection throttle=250ms \\(default\\), motion activity while paused=on \\(default\\)\ninput-proxy: start paused=off \\(default\\)"
     )
     if(NOT standard_output MATCHES "${default_activity}")
         message(FATAL_ERROR "Default activity configuration was missing from startup header:\n${standard_output}${standard_error}")
     endif()
 
     set(expected_context
-        "\ninput-proxy: Repository=https://github.com/ControlForgeHQ/input-proxy\ninput-proxy: Source=/input-proxy-test-path-that-does-not-exist\ninput-proxy: InstanceName=Touchscreen_Proxy\ninput-proxy: activity timeout=5000ms (default), motion activity while running=yes (default)\ninput-proxy: detection throttle=250ms (default), motion activity while paused=yes (default)\ninput-proxy: start paused=no (default)\ninput-proxy: waiting for source"
+        "\ninput-proxy: Repository=https://github.com/ControlForgeHQ/input-proxy\ninput-proxy: Source=/input-proxy-test-path-that-does-not-exist\ninput-proxy: InstanceName=Touchscreen_Proxy\ninput-proxy: activity timeout=5000ms (default), motion activity while running=on (default)\ninput-proxy: detection throttle=250ms (default), motion activity while paused=on (default)\ninput-proxy: start paused=off (default)\ninput-proxy: waiting for source"
     )
     string(FIND "${standard_output}" "${expected_context}" context_position)
     if(context_position EQUAL -1)
@@ -297,19 +297,19 @@ assert_cli_blank_line(failure run)
 assert_cli_blank_line(failure list unexpected)
 assert_cli_blank_line(failure inspect)
 assert_run_header()
-assert_run_start_paused_header(on "start paused=yes")
-assert_run_start_paused_header(off "start paused=no \\(default\\)")
+assert_run_start_paused_header(on "start paused=on")
+assert_run_start_paused_header(off "start paused=off \\(default\\)")
 assert_run_activity_header(
-    "activity timeout=5000ms \\(default\\), motion activity while running=no"
-    "detection throttle=100ms, motion activity while paused=no"
+    "activity timeout=5000ms \\(default\\), motion activity while running=off"
+    "detection throttle=100ms, motion activity while paused=off"
     --activity-timeout-ms 5000
     --detection-throttle-ms 100
     --running-motion-activity off
     --paused-motion-activity off
 )
 assert_run_activity_header(
-    "activity timeout=5000ms \\(default\\), motion activity while running=yes \\(default\\)"
-    "detection throttle=250ms \\(default\\), motion activity while paused=yes \\(default\\)"
+    "activity timeout=5000ms \\(default\\), motion activity while running=on \\(default\\)"
+    "detection throttle=250ms \\(default\\), motion activity while paused=on \\(default\\)"
     --activity-timeout-ms 5000
     --detection-throttle-ms 250
     --running-motion-activity on
@@ -317,7 +317,7 @@ assert_run_activity_header(
     --verbose
 )
 assert_run_activity_header(
-    "activity timeout=2000ms, motion activity while running=yes \\(default\\)"
-    "detection throttle=250ms \\(default\\), motion activity while paused=yes \\(default\\)"
+    "activity timeout=2000ms, motion activity while running=on \\(default\\)"
+    "detection throttle=250ms \\(default\\), motion activity while paused=on \\(default\\)"
     --activity-timeout-ms 2000
 )
