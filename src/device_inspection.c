@@ -734,7 +734,7 @@ enum input_proxy_result input_proxy_inspect_device(
             source_ok, uinput_ok, associated_instance_count)) {
         fputc('\n', stream);
         print_heading(stream, "Suggested input-proxy run command");
-        fprintf(stream, "  input-proxy run --source %s --name \"YOUR DEVICE NAME\"\n",
+        fprintf(stream, "  input-proxy run --source %s --name YOUR_INSTANCE_NAME\n",
                 persistent_path[0] != '\0' ? persistent_path : device_path);
     }
     fputc('\n', stream);
