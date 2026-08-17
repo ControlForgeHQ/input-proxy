@@ -175,7 +175,7 @@ static int test_property_failure_cleanup(void)
     bus_unref_calls = 0;
     teardown_during_dispatch = false;
     control = input_proxy_runtime_control_create(
-        &state, ignore_pause_request, NULL);
+        &state, ignore_pause_request, NULL, NULL);
     input_proxy_runtime_control_apply_changes(&control, &state, &changes);
     if (control != NULL || !state.paused || slot_unref_calls != 1 ||
         bus_unref_calls != 1 || teardown_during_dispatch) {
@@ -189,7 +189,7 @@ static int test_property_failure_cleanup(void)
     teardown_during_dispatch = false;
     callback_continued_after_notification = false;
     control = input_proxy_runtime_control_create(
-        &state, ignore_pause_request, NULL);
+        &state, ignore_pause_request, NULL, NULL);
     dispatch_control = &control;
     dispatch_state = &state;
     change_property_during_dispatch = true;

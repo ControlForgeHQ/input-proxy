@@ -275,10 +275,11 @@ error:
 struct input_proxy_runtime_control *input_proxy_runtime_control_create(
     const struct input_proxy_runtime_control_state *state,
     input_proxy_runtime_control_pause_handler pause_handler,
-    void *pause_handler_userdata)
+    void *pause_handler_userdata,
+    enum input_proxy_runtime_control_failure *failure)
 {
     return create_runtime_control(
-        state, pause_handler, pause_handler_userdata, true, NULL);
+        state, pause_handler, pause_handler_userdata, true, failure);
 }
 
 struct input_proxy_runtime_control *input_proxy_runtime_control_recreate(

@@ -55,7 +55,8 @@ input_proxy_runtime_control_classify_name_failure(int error_number);
 struct input_proxy_runtime_control *input_proxy_runtime_control_create(
     const struct input_proxy_runtime_control_state *state,
     input_proxy_runtime_control_pause_handler pause_handler,
-    void *pause_handler_userdata);
+    void *pause_handler_userdata,
+    enum input_proxy_runtime_control_failure *failure);
 struct input_proxy_runtime_control *input_proxy_runtime_control_recreate(
     const struct input_proxy_runtime_control_state *state,
     input_proxy_runtime_control_pause_handler pause_handler,

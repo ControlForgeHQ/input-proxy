@@ -42,7 +42,6 @@ struct input_proxy_session {
     bool running_motion_activity;
     bool paused_motion_activity;
     bool activity_tracking_available;
-    bool runtime_control_ever_established;
     bool runtime_control_retry_active;
     bool running_activity_timer_active;
     bool paused_activity_timer_active;
@@ -138,9 +137,7 @@ static void update_control_availability(struct input_proxy_session *session)
     if (session->runtime_control == NULL) {
         if (session->activity_tracking_available) {
             discard_activity_tracking(session);
-            if (session->runtime_control_ever_established) {
-                schedule_runtime_control_retry(session);
-            }
+            schedule_runtime_control_retry(session);
         }
     } else if (!session->activity_tracking_available) {
         session->activity_tracking_available = true;
@@ -897,6 +894,7 @@ error:
 enum input_proxy_result input_proxy_session_run(
     struct input_proxy_session *session)
 {
+    enum input_proxy_runtime_control_failure runtime_control_failure;
     enum input_proxy_result result;
 
     if (session == NULL) {
@@ -906,10 +904,15 @@ enum input_proxy_result input_proxy_session_run(
     session->runtime_control = input_proxy_runtime_control_create(
         &session->runtime_state,
         handle_pause_request,
-        session
+        session,
+        &runtime_control_failure
     );
-    session->runtime_control_ever_established = session->runtime_control != NULL;
     session->activity_tracking_available = session->runtime_control != NULL;
+    if (session->runtime_control == NULL &&
+        runtime_control_failure !=
+            INPUT_PROXY_RUNTIME_CONTROL_INVALID_IDENTIFIER) {
+        schedule_runtime_control_retry(session);
+    }
     result = INPUT_PROXY_SUCCESS;
     while (!session->shutdown_requested) {
         result = create_active_devices(session);

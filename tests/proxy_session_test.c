@@ -80,6 +80,8 @@ static char pause_operations[32];
 static int pause_operation_count;
 static bool runtime_control_available;
 static bool created_paused;
+static enum input_proxy_runtime_control_failure
+    initial_runtime_control_failure;
 static bool runtime_control_recovery_available;
 static int runtime_control_recreate_calls;
 static int runtime_control_recovery_success_call;
@@ -155,11 +157,15 @@ size_t __wrap_input_proxy_runtime_control_apply_changes(
 struct input_proxy_runtime_control *__wrap_input_proxy_runtime_control_create(
     const struct input_proxy_runtime_control_state *state,
     input_proxy_runtime_control_pause_handler pause_handler,
-    void *pause_handler_userdata)
+    void *pause_handler_userdata,
+    enum input_proxy_runtime_control_failure *failure)
 {
     (void)pause_handler;
     (void)pause_handler_userdata;
     created_paused = state->paused;
+    if (!runtime_control_available && failure != NULL) {
+        *failure = initial_runtime_control_failure;
+    }
     return runtime_control_available
         ? (struct input_proxy_runtime_control *)1
         : NULL;
@@ -578,6 +584,8 @@ static void reset_runtime(void)
     pause_operation_count = 0;
     runtime_control_available = false;
     created_paused = false;
+    initial_runtime_control_failure =
+        INPUT_PROXY_RUNTIME_CONTROL_SYSTEM_BUS_UNAVAILABLE;
     runtime_control_recovery_available = false;
     runtime_control_recreate_calls = 0;
     runtime_control_recovery_success_call = 1;
@@ -2214,17 +2222,105 @@ int main(void)
         }
 
         reset_runtime();
+        runtime_control_recovery_available = true;
+        read_results[0] = INPUT_PROXY_SUCCESS;
+        read_results[1] = INPUT_PROXY_SUCCESS;
+        read_results[2] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+        read_result_count = 3;
+        read_time_advance_ns[0] = 4999000000LL;
+        read_time_advance_ns[1] = 1000000LL;
+        failures += run_runtime_test(
+            "initial runtime control failure retries at deadline",
+            &activity_config,
+            INPUT_PROXY_ERROR_EVENT_READ_FAILED
+        );
+        if (runtime_control_recreate_calls != 1 || recreated_paused ||
+            !recreated_source_available || recreated_running_activity ||
+            recreated_paused_activity || write_calls != 2) {
+            fprintf(stderr, "initial runtime control recovery did not wait "
+                "for its deadline or restore current state\n");
+            failures++;
+        }
+
+        reset_runtime();
+        runtime_control_recovery_available = true;
+        read_results[0] = INPUT_PROXY_SUCCESS;
+        read_results[1] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+        read_result_count = 2;
+        read_time_advance_ns[0] = 5000000000LL;
+        {
+            struct input_proxy_session_config paused_config = activity_config;
+            paused_config.start_paused = true;
+            failures += run_runtime_test(
+                "initially paused runtime control recovers",
+                &paused_config,
+                INPUT_PROXY_ERROR_EVENT_READ_FAILED
+            );
+        }
+        if (runtime_control_recreate_calls != 1 || !recreated_paused ||
+            !recreated_source_available || recreated_running_activity ||
+            recreated_paused_activity || write_calls != 0) {
+            fprintf(stderr, "startup recovery did not preserve initial pause "
+                "or reset activity\n");
+            failures++;
+        }
+
+        reset_runtime();
+        runtime_control_recovery_available = true;
+        runtime_control_recovery_success_call = 2;
+        read_results[0] = INPUT_PROXY_SUCCESS;
+        read_results[1] = INPUT_PROXY_SUCCESS;
+        read_results[2] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+        read_result_count = 3;
+        read_time_advance_ns[0] = 5000000000LL;
+        read_time_advance_ns[1] = 5000000000LL;
+        failures += run_runtime_test(
+            "failed startup recovery is rescheduled",
+            &activity_config,
+            INPUT_PROXY_ERROR_EVENT_READ_FAILED
+        );
+        if (runtime_control_recreate_calls != 2 || write_calls != 2) {
+            fprintf(stderr, "failed startup recovery was not retried at the "
+                "next deadline\n");
+            failures++;
+        }
+
+        reset_runtime();
+        runtime_control_recovery_available = true;
+        runtime_control_drop_process_call = 4;
+        read_results[0] = INPUT_PROXY_SUCCESS;
+        read_results[1] = INPUT_PROXY_SUCCESS;
+        read_results[2] = INPUT_PROXY_SUCCESS;
+        read_results[3] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
+        read_result_count = 4;
+        read_time_advance_ns[0] = 5000000000LL;
+        read_time_advance_ns[1] = 5000000000LL;
+        read_time_advance_ns[2] = 5000000000LL;
+        failures += run_runtime_test(
+            "delayed control recovers again after established loss",
+            &activity_config,
+            INPUT_PROXY_ERROR_EVENT_READ_FAILED
+        );
+        if (runtime_control_recreate_calls != 2 || write_calls != 3) {
+            fprintf(stderr, "runtime control recovered after startup but not "
+                "after a later established loss\n");
+            failures++;
+        }
+
+        reset_runtime();
+        initial_runtime_control_failure =
+            INPUT_PROXY_RUNTIME_CONTROL_INVALID_IDENTIFIER;
         read_results[0] = INPUT_PROXY_SUCCESS;
         read_results[1] = INPUT_PROXY_ERROR_EVENT_READ_FAILED;
         read_result_count = 2;
         read_time_advance_ns[0] = 6000000000LL;
         failures += run_runtime_test(
-            "initial runtime control failure is not retried",
+            "invalid runtime control identifier is not retried",
             &activity_config,
             INPUT_PROXY_ERROR_EVENT_READ_FAILED
         );
         if (runtime_control_recreate_calls != 0) {
-            fprintf(stderr, "initial runtime control failure entered the "
+            fprintf(stderr, "non-recoverable startup failure entered the "
                 "recovery loop\n");
             failures++;
         }
