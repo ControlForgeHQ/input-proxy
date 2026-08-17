@@ -4,6 +4,7 @@
 #include <input_proxy/proxy_session.h>
 
 #include "installed_instance_internal.h"
+#include "deployment_readiness_internal.h"
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -49,6 +50,16 @@ enum input_proxy_installation_plan_result input_proxy_installation_plan_create(
 );
 
 const struct input_proxy_session_config *input_proxy_installation_plan_config(
+    const struct input_proxy_installation_plan *plan
+);
+
+enum input_proxy_installation_plan_result input_proxy_installation_plan_assess(
+    struct input_proxy_installation_plan *plan,
+    const struct input_proxy_deployment_environment *environment
+);
+
+const struct input_proxy_deployment_readiness *
+input_proxy_installation_plan_readiness(
     const struct input_proxy_installation_plan *plan
 );
 

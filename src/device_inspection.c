@@ -154,7 +154,7 @@ static void print_event_types(FILE *stream, const struct libevdev *device)
     end_list(stream, any);
 }
 
-static bool find_persistent_path(const char *device_input_path,
+bool input_proxy_find_persistent_input_path(const char *device_input_path,
                                  const struct stat *status,
                                  char *persistent_path, size_t path_size)
 {
@@ -197,7 +197,7 @@ static bool find_persistent_path(const char *device_input_path,
     return false;
 }
 
-static bool resolve_event_node(const char *sysfs_input_path,
+bool input_proxy_resolve_event_node(const char *sysfs_input_path,
                                const char *device_input_path,
                                const struct stat *device_status,
                                char *event_node, size_t event_node_size,
@@ -243,7 +243,7 @@ static bool resolve_event_node(const char *sysfs_input_path,
     return false;
 }
 
-static bool safe_rule_value(const char *value)
+bool input_proxy_rule_value_is_safe(const char *value)
 {
     size_t index;
 
@@ -255,6 +255,29 @@ static bool safe_rule_value(const char *value)
             return false;
     }
     return true;
+}
+
+void input_proxy_collect_rule_identity(const char *name, const char *value,
+                                       void *userdata)
+{
+    struct input_proxy_device_rule_identity *identity = userdata;
+
+    if (identity == NULL) return;
+    if (strcmp(name, "ID_VENDOR_ID") == 0)
+        snprintf(identity->vendor, sizeof(identity->vendor), "%s", value);
+    else if (strcmp(name, "ID_MODEL_ID") == 0)
+        snprintf(identity->model, sizeof(identity->model), "%s", value);
+    else if (strcmp(name, "ID_PATH") == 0)
+        snprintf(identity->path, sizeof(identity->path), "%s", value);
+}
+
+bool input_proxy_rule_identity_is_narrow(
+    const struct input_proxy_device_rule_identity *identity)
+{
+    return identity != NULL &&
+        input_proxy_rule_value_is_safe(identity->vendor) &&
+        input_proxy_rule_value_is_safe(identity->model) &&
+        input_proxy_rule_value_is_safe(identity->path);
 }
 
 static bool safe_account_name(const char *value)
@@ -456,12 +479,7 @@ void input_proxy_print_runtime_associations(
 
 struct inspection_udev_properties {
     FILE *stream;
-    char *vendor;
-    size_t vendor_size;
-    char *model;
-    size_t model_size;
-    char *device_id_path;
-    size_t id_path_size;
+    struct input_proxy_device_rule_identity *rule_identity;
 };
 
 static void collect_udev_property(const char *name, const char *value,
@@ -469,12 +487,7 @@ static void collect_udev_property(const char *name, const char *value,
 {
     struct inspection_udev_properties *properties = userdata;
 
-    if (strcmp(name, "ID_VENDOR_ID") == 0)
-        snprintf(properties->vendor, properties->vendor_size, "%s", value);
-    if (strcmp(name, "ID_MODEL_ID") == 0)
-        snprintf(properties->model, properties->model_size, "%s", value);
-    if (strcmp(name, "ID_PATH") == 0)
-        snprintf(properties->device_id_path, properties->id_path_size, "%s", value);
+    input_proxy_collect_rule_identity(name, value, properties->rule_identity);
     if (strncmp(name, "ID_INPUT", 8) == 0 || strcmp(name, "ID_PATH") == 0 ||
         strcmp(name, "LIBINPUT_IGNORE_DEVICE") == 0)
         fprintf(properties->stream, "  %-22s %s\n", name, value);
@@ -506,9 +519,7 @@ enum input_proxy_result input_proxy_inspect_device(
     char uinput_group[128];
     const struct passwd *user_entry;
     struct input_proxy_access_remediation remediation;
-    char rule_vendor[32] = "";
-    char rule_model[32] = "";
-    char rule_path[512] = "";
+    struct input_proxy_device_rule_identity rule_identity = {0};
     size_t associated_instance_count;
 
     if (stream == NULL || error_stream == NULL || device_path == NULL ||
@@ -520,7 +531,7 @@ enum input_proxy_result input_proxy_inspect_device(
                 device_path);
         return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
     }
-    if (!resolve_event_node(sysfs_input_path, device_input_path, &status,
+    if (!input_proxy_resolve_event_node(sysfs_input_path, device_input_path, &status,
                             event_node, sizeof(event_node), sysfs_path,
                             sizeof(sysfs_path))) {
         fprintf(error_stream, "input-proxy: '%s' is not an input event device\n",
@@ -540,7 +551,7 @@ enum input_proxy_result input_proxy_inspect_device(
     if (uinput_fd >= 0) uinput_ok = true;
     uinput_exists = stat(uinput_path, &uinput_status) == 0;
     uinput_status_available = uinput_exists;
-    (void)find_persistent_path(device_input_path, &status,
+    (void)input_proxy_find_persistent_input_path(device_input_path, &status,
                                persistent_path, sizeof(persistent_path));
     associated_instance_count = input_proxy_runtime_association_count(
         runtime_snapshot, event_node, persistent_path);
@@ -617,8 +628,7 @@ enum input_proxy_result input_proxy_inspect_device(
     print_heading(stream, "Udev and libinput context");
     {
         struct inspection_udev_properties properties = {
-            stream, rule_vendor, sizeof(rule_vendor), rule_model,
-            sizeof(rule_model), rule_path, sizeof(rule_path)
+            stream, &rule_identity
         };
         libinput_status = input_proxy_read_libinput_status(
             udev_data_path, &status, collect_udev_property, &properties);
@@ -669,14 +679,13 @@ enum input_proxy_result input_proxy_inspect_device(
         print_heading(stream, "Libinput remediation");
         fprintf(stream, "\n  %s: the physical source may also be consumed directly by libinput.\n",
                 semantic_status(stream, "WARNING", "33"));
-        if (safe_rule_value(rule_vendor) && safe_rule_value(rule_model) &&
-            safe_rule_value(rule_path)) {
+        if (input_proxy_rule_identity_is_narrow(&rule_identity)) {
             fprintf(stream,
                 "\n  Suggested udev rule:\n"
                 "    ACTION==\"add|change\", SUBSYSTEM==\"input\", KERNEL==\"event*\", "
                 "ENV{ID_VENDOR_ID}==\"%s\", ENV{ID_MODEL_ID}==\"%s\", "
                 "ENV{ID_PATH}==\"%s\", ENV{LIBINPUT_IGNORE_DEVICE}=\"1\"\n",
-                rule_vendor, rule_model, rule_path);
+                rule_identity.vendor, rule_identity.model, rule_identity.path);
             if (strcmp(identity.bus, "USB") == 0)
                 fprintf(stream,
                       "\n  %s: this rule includes ID_PATH and is tied to the device's current\n"

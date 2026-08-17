@@ -11,9 +11,50 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 static int failures;
+
+struct stat_fixture {
+    const char *source_path;
+    const char *uinput_path;
+    mode_t source_mode;
+    mode_t uinput_mode;
+    uid_t owner;
+    gid_t group;
+};
+
+static int fixture_stat(const char *path, struct stat *status, void *userdata)
+{
+    struct stat_fixture *fixture = userdata;
+    int result = stat(path, status);
+
+    if (result != 0) return result;
+    if (strcmp(path, fixture->source_path) == 0) {
+        status->st_mode = (status->st_mode & ~0777) | fixture->source_mode;
+        status->st_uid = fixture->owner;
+        status->st_gid = fixture->group;
+    } else if (strcmp(path, fixture->uinput_path) == 0) {
+        status->st_mode = (status->st_mode & ~0777) | fixture->uinput_mode;
+        status->st_uid = fixture->owner;
+        status->st_gid = fixture->group;
+    }
+    return 0;
+}
+
+static int make_directory(const char *path)
+{
+    return mkdir(path, 0700) == 0 ? 0 : 1;
+}
+
+static int write_text(const char *path, const char *text)
+{
+    FILE *file = fopen(path, "w");
+    if (file == NULL) return 1;
+    if (fputs(text, file) < 0 || fclose(file) != 0) return 1;
+    return 0;
+}
 
 static void expect(bool condition, const char *description)
 {
@@ -46,12 +87,190 @@ int main(void)
     enum input_proxy_installation_plan_result result;
     uint64_t duration;
     bool enabled;
+    char sysfs[512];
+    char event_sysfs[512];
+    char device_dir[512];
+    char path[512];
+    char source[512];
+    char alias_dir[512];
+    char alias[512];
+    char udev[512];
+    char udev_record[512];
+    const char *uinput = "/dev/null";
+    struct stat_fixture fixture;
+    struct input_proxy_deployment_environment environment;
+    const struct input_proxy_deployment_readiness *readiness;
 
     expect(mkdtemp(directory) != NULL, "create isolated artifact directory");
     expect(input_proxy_installed_instance_store_create_for_directory(
         &store,
         directory
     ) == INPUT_PROXY_INSTALLED_INSTANCE_SUCCESS, "create isolated store");
+
+    snprintf(sysfs, sizeof(sysfs), "%s/sys", directory);
+    snprintf(event_sysfs, sizeof(event_sysfs), "%s/event7", sysfs);
+    snprintf(device_dir, sizeof(device_dir), "%s/device", event_sysfs);
+    snprintf(source, sizeof(source), "%s/event7", directory);
+    snprintf(alias_dir, sizeof(alias_dir), "%s/by-id", directory);
+    snprintf(alias, sizeof(alias), "%s/test-device", alias_dir);
+    snprintf(udev, sizeof(udev), "%s/udev", directory);
+    snprintf(udev_record, sizeof(udev_record), "%s/c1:3", udev);
+    expect(make_directory(sysfs) == 0 && make_directory(event_sysfs) == 0 &&
+        make_directory(device_dir) == 0 && make_directory(alias_dir) == 0 &&
+        make_directory(udev) == 0, "create readiness fixture directories");
+    snprintf(path, sizeof(path), "%s/capabilities", device_dir);
+    expect(make_directory(path) == 0, "create fixture capabilities");
+    snprintf(path, sizeof(path), "%s/id", device_dir);
+    expect(make_directory(path) == 0, "create fixture identity directory");
+    snprintf(path, sizeof(path), "%s/name", device_dir);
+    expect(write_text(path, "Fixture Input\n") == 0, "write fixture name");
+    snprintf(path, sizeof(path), "%s/id/bustype", device_dir);
+    expect(write_text(path, "0003\n") == 0, "write fixture bus");
+    snprintf(path, sizeof(path), "%s/capabilities/key", device_dir);
+    expect(write_text(path, "1\n") == 0, "write fixture keys");
+    snprintf(path, sizeof(path), "%s/capabilities/abs", device_dir);
+    expect(write_text(path, "0\n") == 0, "write fixture abs");
+    snprintf(path, sizeof(path), "%s/capabilities/rel", device_dir);
+    expect(write_text(path, "0\n") == 0, "write fixture rel");
+    snprintf(path, sizeof(path), "%s/properties", device_dir);
+    expect(write_text(path, "0\n") == 0, "write fixture properties");
+    snprintf(path, sizeof(path), "%s/dev", event_sysfs);
+    expect(write_text(path, "1:3\n") == 0, "write fixture device number");
+    expect(symlink("/dev/null", source) == 0 &&
+        symlink("../event7", alias) == 0, "create source and stable alias");
+    expect(write_text(udev_record,
+        "E:ID_VENDOR_ID=1234\nE:ID_MODEL_ID=5678\nE:ID_PATH=platform-test\n") == 0,
+        "write narrow udev identity");
+
+    fixture = (struct stat_fixture) {
+        .source_path = source, .uinput_path = uinput,
+        .source_mode = 0640, .uinput_mode = 0660,
+        .owner = 2000, .group = 3000
+    };
+    {
+        static const gid_t service_groups[] = {3000};
+        environment = (struct input_proxy_deployment_environment) {
+            .sysfs_input_path = sysfs,
+            .device_input_path = directory,
+            .uinput_path = uinput,
+            .udev_data_path = udev,
+            .service_uid = 1000,
+            .service_gid = 1000,
+            .service_groups = service_groups,
+            .service_group_count = 1,
+            .stat_path = fixture_stat,
+            .stat_userdata = &fixture
+        };
+    }
+
+    request = make_request("ReadinessAccessible");
+    request.source_path = source;
+    expect(input_proxy_installation_plan_create(&plan, &request, store) ==
+        INPUT_PROXY_INSTALLATION_PLAN_SUCCESS, "create readiness plan");
+    expect(input_proxy_installation_plan_assess(plan, &environment) ==
+        INPUT_PROXY_INSTALLATION_PLAN_SUCCESS, "assess accessible deployment");
+    readiness = input_proxy_installation_plan_readiness(plan);
+    expect(readiness != NULL && readiness->physical_source &&
+        readiness->source_accessible && readiness->uinput_accessible &&
+        readiness->blockers == INPUT_PROXY_DEPLOYMENT_BLOCKER_NONE &&
+        readiness->source_permission_remediation ==
+            INPUT_PROXY_PERMISSION_REMEDIATION_NOT_REQUIRED,
+        "service group access is ready without instance permission rule");
+    expect(readiness != NULL && readiness->preferred_source_path != NULL &&
+        strcmp(readiness->preferred_source_path, alias) == 0 &&
+        readiness->preferred_source_differs,
+        "volatile event source reports matching stable alias");
+    expect(readiness != NULL &&
+        readiness->libinput_status == INPUT_PROXY_LIBINPUT_STATUS_NOT_IGNORED &&
+        readiness->libinput_ignore_rule_available,
+        "active libinput with narrow identity offers optional ignore rule");
+    expect(input_proxy_instance_name_acquire(&ownership,
+        "ReadinessAccessible") == INPUT_PROXY_ERROR_INSTANCE_NAME_OWNED,
+        "readiness assessment preserves runtime name reservation");
+    input_proxy_installation_plan_destroy(plan); plan = NULL;
+
+    request = make_request("StableSupplied"); request.source_path = alias;
+    expect(input_proxy_installation_plan_create(&plan, &request, store) ==
+        INPUT_PROXY_INSTALLATION_PLAN_SUCCESS &&
+        input_proxy_installation_plan_assess(plan, &environment) ==
+        INPUT_PROXY_INSTALLATION_PLAN_SUCCESS, "assess supplied stable path");
+    readiness = input_proxy_installation_plan_readiness(plan);
+    expect(readiness != NULL && strcmp(readiness->selected_source_path, alias) == 0 &&
+        readiness->preferred_source_path != NULL &&
+        !readiness->preferred_source_differs,
+        "stable supplied path remains selected without replacement");
+    input_proxy_installation_plan_destroy(plan); plan = NULL;
+
+    expect(unlink(alias) == 0, "temporarily remove stable alias");
+    request = make_request("NoStableAlias"); request.source_path = source;
+    expect(input_proxy_installation_plan_create(&plan, &request, store) ==
+        INPUT_PROXY_INSTALLATION_PLAN_SUCCESS &&
+        input_proxy_installation_plan_assess(plan, &environment) ==
+        INPUT_PROXY_INSTALLATION_PLAN_SUCCESS, "assess source without stable alias");
+    readiness = input_proxy_installation_plan_readiness(plan);
+    expect(readiness != NULL && readiness->preferred_source_path == NULL &&
+        readiness->blockers == INPUT_PROXY_DEPLOYMENT_BLOCKER_NONE,
+        "absence of stable alias is not a blocker");
+    input_proxy_installation_plan_destroy(plan); plan = NULL;
+    expect(symlink("../event7", alias) == 0, "restore stable alias");
+
+    fixture.source_mode = 0600;
+    request = make_request("PermissionAvailable"); request.source_path = source;
+    expect(input_proxy_installation_plan_create(&plan, &request, store) ==
+        INPUT_PROXY_INSTALLATION_PLAN_SUCCESS &&
+        input_proxy_installation_plan_assess(plan, &environment) ==
+        INPUT_PROXY_INSTALLATION_PLAN_SUCCESS, "assess missing source access");
+    readiness = input_proxy_installation_plan_readiness(plan);
+    expect(readiness != NULL && !readiness->source_accessible &&
+        readiness->source_permission_remediation ==
+            INPUT_PROXY_PERMISSION_REMEDIATION_AVAILABLE &&
+        (readiness->blockers & INPUT_PROXY_DEPLOYMENT_BLOCKER_SOURCE_PERMISSION) == 0,
+        "narrow match makes targeted source remediation available");
+    input_proxy_installation_plan_destroy(plan); plan = NULL;
+
+    expect(write_text(udev_record, "E:ID_VENDOR_ID=1234\n") == 0,
+        "remove narrow udev identity");
+    request = make_request("PermissionBlocked"); request.source_path = source;
+    expect(input_proxy_installation_plan_create(&plan, &request, store) ==
+        INPUT_PROXY_INSTALLATION_PLAN_SUCCESS &&
+        input_proxy_installation_plan_assess(plan, &environment) ==
+        INPUT_PROXY_INSTALLATION_PLAN_SUCCESS, "assess unmatched source");
+    readiness = input_proxy_installation_plan_readiness(plan);
+    expect(readiness != NULL &&
+        readiness->source_permission_remediation ==
+            INPUT_PROXY_PERMISSION_REMEDIATION_UNAVAILABLE &&
+        (readiness->blockers & INPUT_PROXY_DEPLOYMENT_BLOCKER_SOURCE_PERMISSION) != 0 &&
+        !readiness->libinput_ignore_rule_available,
+        "missing narrow match blocks permission repair and ignore offer");
+    input_proxy_installation_plan_destroy(plan); plan = NULL;
+
+    fixture.source_mode = 0640; fixture.uinput_mode = 0600;
+    request = make_request("UinputBlocked"); request.source_path = source;
+    expect(input_proxy_installation_plan_create(&plan, &request, store) ==
+        INPUT_PROXY_INSTALLATION_PLAN_SUCCESS &&
+        input_proxy_installation_plan_assess(plan, &environment) ==
+        INPUT_PROXY_INSTALLATION_PLAN_SUCCESS, "assess missing uinput access");
+    readiness = input_proxy_installation_plan_readiness(plan);
+    expect(readiness != NULL && !readiness->uinput_accessible &&
+        (readiness->blockers & INPUT_PROXY_DEPLOYMENT_BLOCKER_UINPUT) != 0,
+        "missing package-owned uinput access is a blocker");
+    input_proxy_installation_plan_destroy(plan); plan = NULL;
+
+    fixture.uinput_mode = 0660;
+    expect(write_text(udev_record,
+        "E:ID_VENDOR_ID=1234\nE:ID_MODEL_ID=5678\nE:ID_PATH=platform-test\nE:LIBINPUT_IGNORE_DEVICE=1\n") == 0,
+        "mark fixture ignored by libinput");
+    request = make_request("AlreadyIgnored"); request.source_path = source;
+    expect(input_proxy_installation_plan_create(&plan, &request, store) ==
+        INPUT_PROXY_INSTALLATION_PLAN_SUCCESS &&
+        input_proxy_installation_plan_assess(plan, &environment) ==
+        INPUT_PROXY_INSTALLATION_PLAN_SUCCESS, "assess ignored source");
+    readiness = input_proxy_installation_plan_readiness(plan);
+    expect(readiness != NULL &&
+        readiness->libinput_status == INPUT_PROXY_LIBINPUT_STATUS_IGNORED &&
+        !readiness->libinput_ignore_rule_available,
+        "already ignored source requires no ignore rule");
+    input_proxy_installation_plan_destroy(plan); plan = NULL;
 
     request = make_request("PlanDefaults");
     result = input_proxy_installation_plan_create(&plan, &request, store);
@@ -187,6 +406,20 @@ int main(void)
         "InstalledCollision"
     ) == INPUT_PROXY_INSTALLED_INSTANCE_SUCCESS, "remove test artifact");
     input_proxy_installed_instance_store_destroy(store);
+    expect(unlink(alias) == 0 && unlink(source) == 0 &&
+        unlink(udev_record) == 0, "remove readiness fixture links and udev data");
+    snprintf(path, sizeof(path), "%s/name", device_dir); expect(unlink(path) == 0, "remove fixture name");
+    snprintf(path, sizeof(path), "%s/id/bustype", device_dir); expect(unlink(path) == 0, "remove fixture bus");
+    snprintf(path, sizeof(path), "%s/capabilities/key", device_dir); expect(unlink(path) == 0, "remove fixture keys");
+    snprintf(path, sizeof(path), "%s/capabilities/abs", device_dir); expect(unlink(path) == 0, "remove fixture abs");
+    snprintf(path, sizeof(path), "%s/capabilities/rel", device_dir); expect(unlink(path) == 0, "remove fixture rel");
+    snprintf(path, sizeof(path), "%s/properties", device_dir); expect(unlink(path) == 0, "remove fixture properties");
+    snprintf(path, sizeof(path), "%s/dev", event_sysfs); expect(unlink(path) == 0, "remove fixture device number");
+    snprintf(path, sizeof(path), "%s/capabilities", device_dir); expect(rmdir(path) == 0, "remove fixture capabilities directory");
+    snprintf(path, sizeof(path), "%s/id", device_dir); expect(rmdir(path) == 0, "remove fixture identity directory");
+    expect(rmdir(device_dir) == 0 && rmdir(event_sysfs) == 0 &&
+        rmdir(sysfs) == 0 && rmdir(alias_dir) == 0 && rmdir(udev) == 0,
+        "remove readiness fixture directories");
     expect(rmdir(directory) == 0, "remove isolated artifact directory");
 
     if (failures != 0) {
