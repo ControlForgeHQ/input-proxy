@@ -100,6 +100,8 @@ int main(void)
     struct stat_fixture fixture;
     struct input_proxy_deployment_environment environment;
     const struct input_proxy_deployment_readiness *readiness;
+    const struct input_proxy_deployment_resolution *resolution;
+    struct input_proxy_deployment_choices choices;
 
     expect(mkdtemp(directory) != NULL, "create isolated artifact directory");
     expect(input_proxy_installed_instance_store_create_for_directory(
@@ -184,6 +186,49 @@ int main(void)
         readiness->libinput_status == INPUT_PROXY_LIBINPUT_STATUS_NOT_IGNORED &&
         readiness->libinput_ignore_rule_available,
         "active libinput with narrow identity offers optional ignore rule");
+    choices = (struct input_proxy_deployment_choices) {0};
+    expect(input_proxy_installation_plan_resolve(plan, &choices) ==
+        INPUT_PROXY_INSTALLATION_PLAN_SUCCESS,
+        "unresolved deployment choices produce a resolution");
+    resolution = input_proxy_installation_plan_resolution(plan);
+    expect(resolution != NULL && !resolution->choices_resolved &&
+        !resolution->application_ready &&
+        strcmp(resolution->persistent_source_path, source) == 0,
+        "different Preferred run source and optional rule require choices");
+    choices.preferred_source = INPUT_PROXY_PREFERRED_SOURCE_USE_PREFERRED;
+    choices.libinput_ignore = INPUT_PROXY_REMEDIATION_INSTALL;
+    expect(input_proxy_installation_plan_resolve(plan, &choices) ==
+        INPUT_PROXY_INSTALLATION_PLAN_SUCCESS,
+        "choose Preferred run source and optional ignore action");
+    resolution = input_proxy_installation_plan_resolution(plan);
+    config = input_proxy_installation_plan_config(plan);
+    expect(resolution != NULL && resolution->choices_resolved &&
+        resolution->application_ready && resolution->libinput_ignore_action &&
+        !resolution->source_permission_action &&
+        strcmp(resolution->persistent_source_path, alias) == 0 &&
+        strcmp(readiness->selected_source_path, alias) == 0 &&
+        strcmp(config->source_path, alias) == 0,
+        "Preferred run source becomes the persistent runtime source");
+    expect(config->activity_timeout_ms == INPUT_PROXY_DEFAULT_ACTIVITY_TIMEOUT_MS &&
+        config->detection_throttle_ms ==
+            INPUT_PROXY_DEFAULT_DETECTION_THROTTLE_MS &&
+        config->running_motion_activity && config->paused_motion_activity &&
+        !config->start_paused && strcmp(config->instance_name,
+            "ReadinessAccessible") == 0,
+        "source selection preserves every other runtime-policy field");
+    choices.preferred_source = INPUT_PROXY_PREFERRED_SOURCE_RETAIN_SUPPLIED;
+    choices.libinput_ignore = INPUT_PROXY_REMEDIATION_DO_NOT_INSTALL;
+    expect(input_proxy_installation_plan_resolve(plan, &choices) ==
+        INPUT_PROXY_INSTALLATION_PLAN_SUCCESS,
+        "revise deployment choices before application");
+    resolution = input_proxy_installation_plan_resolution(plan);
+    expect(resolution != NULL && resolution->application_ready &&
+        !resolution->libinput_ignore_action &&
+        strcmp(resolution->persistent_source_path, source) == 0 &&
+        strcmp(readiness->selected_source_path, source) == 0 &&
+        strcmp(readiness->supplied_source_path, source) == 0 &&
+        strcmp(readiness->preferred_source_path, alias) == 0,
+        "revised resolution retains diagnostic source facts");
     expect(input_proxy_instance_name_acquire(&ownership,
         "ReadinessAccessible") == INPUT_PROXY_ERROR_INSTANCE_NAME_OWNED,
         "readiness assessment preserves runtime name reservation");
@@ -199,6 +244,14 @@ int main(void)
         readiness->preferred_source_path != NULL &&
         !readiness->preferred_source_differs,
         "stable supplied path remains selected without replacement");
+    choices = (struct input_proxy_deployment_choices) {
+        .libinput_ignore = INPUT_PROXY_REMEDIATION_DO_NOT_INSTALL
+    };
+    expect(input_proxy_installation_plan_resolve(plan, &choices) ==
+        INPUT_PROXY_INSTALLATION_PLAN_SUCCESS &&
+        input_proxy_installation_plan_resolution(plan)->application_ready &&
+        strcmp(input_proxy_installation_plan_config(plan)->source_path, alias) == 0,
+        "no different Preferred run source selects supplied source automatically");
     input_proxy_installation_plan_destroy(plan); plan = NULL;
 
     expect(unlink(alias) == 0, "temporarily remove stable alias");
@@ -211,6 +264,13 @@ int main(void)
     expect(readiness != NULL && readiness->preferred_source_path == NULL &&
         readiness->blockers == INPUT_PROXY_DEPLOYMENT_BLOCKER_NONE,
         "absence of stable alias is not a blocker");
+    choices = (struct input_proxy_deployment_choices) {
+        .libinput_ignore = INPUT_PROXY_REMEDIATION_DO_NOT_INSTALL
+    };
+    expect(input_proxy_installation_plan_resolve(plan, &choices) ==
+        INPUT_PROXY_INSTALLATION_PLAN_SUCCESS &&
+        input_proxy_installation_plan_resolution(plan)->application_ready,
+        "missing Preferred run source requires no source choice");
     input_proxy_installation_plan_destroy(plan); plan = NULL;
     expect(symlink("../event7", alias) == 0, "restore stable alias");
 
@@ -226,6 +286,27 @@ int main(void)
             INPUT_PROXY_PERMISSION_REMEDIATION_AVAILABLE &&
         (readiness->blockers & INPUT_PROXY_DEPLOYMENT_BLOCKER_SOURCE_PERMISSION) == 0,
         "narrow match makes targeted source remediation available");
+    choices = (struct input_proxy_deployment_choices) {
+        .preferred_source = INPUT_PROXY_PREFERRED_SOURCE_RETAIN_SUPPLIED,
+        .source_permission = INPUT_PROXY_REMEDIATION_INSTALL,
+        .libinput_ignore = INPUT_PROXY_REMEDIATION_DO_NOT_INSTALL
+    };
+    expect(input_proxy_installation_plan_resolve(plan, &choices) ==
+        INPUT_PROXY_INSTALLATION_PLAN_SUCCESS,
+        "resolve targeted source permission installation");
+    resolution = input_proxy_installation_plan_resolution(plan);
+    expect(resolution != NULL && resolution->application_ready &&
+        resolution->source_permission_action &&
+        !resolution->libinput_ignore_action,
+        "permission installation plans an independent instance-owned action");
+    choices.source_permission = INPUT_PROXY_REMEDIATION_DO_NOT_INSTALL;
+    expect(input_proxy_installation_plan_resolve(plan, &choices) ==
+        INPUT_PROXY_INSTALLATION_PLAN_SUCCESS,
+        "decline targeted source permission installation");
+    resolution = input_proxy_installation_plan_resolution(plan);
+    expect(resolution != NULL && resolution->choices_resolved &&
+        !resolution->application_ready && !resolution->source_permission_action,
+        "declining required permission remediation remains non-ready");
     input_proxy_installation_plan_destroy(plan); plan = NULL;
 
     snprintf(path, sizeof(path), "%s/id/bustype", device_dir);
@@ -272,6 +353,19 @@ int main(void)
         (readiness->blockers & INPUT_PROXY_DEPLOYMENT_BLOCKER_SOURCE_PERMISSION) != 0 &&
         !readiness->libinput_ignore_rule_available,
         "missing narrow match blocks permission repair and ignore offer");
+    choices = (struct input_proxy_deployment_choices) {
+        .preferred_source = INPUT_PROXY_PREFERRED_SOURCE_RETAIN_SUPPLIED,
+        .source_permission = INPUT_PROXY_REMEDIATION_INSTALL
+    };
+    expect(input_proxy_installation_plan_resolve(plan, &choices) ==
+        INPUT_PROXY_INSTALLATION_PLAN_INVALID_CHOICES &&
+        input_proxy_installation_plan_resolution(plan) == NULL,
+        "choice cannot force unavailable permission remediation");
+    choices.source_permission = INPUT_PROXY_REMEDIATION_UNRESOLVED;
+    expect(input_proxy_installation_plan_resolve(plan, &choices) ==
+        INPUT_PROXY_INSTALLATION_PLAN_SUCCESS &&
+        !input_proxy_installation_plan_resolution(plan)->application_ready,
+        "unavailable permission remediation leaves blocker intact");
     input_proxy_installation_plan_destroy(plan); plan = NULL;
 
     fixture.source_mode = 0640; fixture.uinput_mode = 0600;
@@ -284,6 +378,13 @@ int main(void)
     expect(readiness != NULL && !readiness->uinput_accessible &&
         (readiness->blockers & INPUT_PROXY_DEPLOYMENT_BLOCKER_UINPUT) != 0,
         "missing package-owned uinput access is a blocker");
+    choices = (struct input_proxy_deployment_choices) {
+        .preferred_source = INPUT_PROXY_PREFERRED_SOURCE_RETAIN_SUPPLIED
+    };
+    expect(input_proxy_installation_plan_resolve(plan, &choices) ==
+        INPUT_PROXY_INSTALLATION_PLAN_SUCCESS &&
+        !input_proxy_installation_plan_resolution(plan)->application_ready,
+        "deployment choices cannot clear package-owned uinput blocker");
     input_proxy_installation_plan_destroy(plan); plan = NULL;
 
     fixture.uinput_mode = 0660;
@@ -300,6 +401,19 @@ int main(void)
         readiness->libinput_status == INPUT_PROXY_LIBINPUT_STATUS_IGNORED &&
         !readiness->libinput_ignore_rule_available,
         "already ignored source requires no ignore rule");
+    choices = (struct input_proxy_deployment_choices) {
+        .preferred_source = INPUT_PROXY_PREFERRED_SOURCE_RETAIN_SUPPLIED
+    };
+    expect(input_proxy_installation_plan_resolve(plan, &choices) ==
+        INPUT_PROXY_INSTALLATION_PLAN_SUCCESS &&
+        input_proxy_installation_plan_resolution(plan)->application_ready &&
+        !input_proxy_installation_plan_resolution(plan)->libinput_ignore_action,
+        "already ignored source needs no libinput choice or new action");
+    choices.libinput_ignore = INPUT_PROXY_REMEDIATION_INSTALL;
+    expect(input_proxy_installation_plan_resolve(plan, &choices) ==
+        INPUT_PROXY_INSTALLATION_PLAN_INVALID_CHOICES &&
+        input_proxy_installation_plan_resolution(plan)->application_ready,
+        "invalid repeated resolution preserves the previous valid resolution");
     input_proxy_installation_plan_destroy(plan); plan = NULL;
 
     request = make_request("PlanDefaults");
