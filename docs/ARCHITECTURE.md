@@ -1393,6 +1393,16 @@ consumed directly by:
 input-proxy run @file
 ```
 
+The project-owned persistent artifact directory is:
+
+```text
+/etc/input-proxy/instances
+```
+
+Each validated Instance Name maps one-to-one to
+`<InstanceName>.args` within that directory. There is no alternate directory,
+per-user location, search path, or environment override.
+
 The response format contains exactly one argument per line. It has no shell
 parsing, quoting language, variable expansion, includes, project-specific
 configuration language, or other interpretation beyond argv expansion.
