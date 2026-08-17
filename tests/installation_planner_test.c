@@ -228,6 +228,36 @@ int main(void)
         "narrow match makes targeted source remediation available");
     input_proxy_installation_plan_destroy(plan); plan = NULL;
 
+    snprintf(path, sizeof(path), "%s/id/bustype", device_dir);
+    expect(write_text(path, "0018\n") == 0, "write I2C fixture bus");
+    snprintf(path, sizeof(path), "%s/id/vendor", device_dir);
+    expect(write_text(path, "0416\n") == 0, "write I2C fixture vendor");
+    snprintf(path, sizeof(path), "%s/id/product", device_dir);
+    expect(write_text(path, "038f\n") == 0, "write I2C fixture product");
+    expect(write_text(udev_record, "E:ID_PATH=platform-test-i2c\n") == 0,
+        "write I2C udev path without USB identifiers");
+    request = make_request("I2cIdentity"); request.source_path = source;
+    expect(input_proxy_installation_plan_create(&plan, &request, store) ==
+        INPUT_PROXY_INSTALLATION_PLAN_SUCCESS &&
+        input_proxy_installation_plan_assess(plan, &environment) ==
+        INPUT_PROXY_INSTALLATION_PLAN_SUCCESS,
+        "assess I2C source using kernel input identity");
+    readiness = input_proxy_installation_plan_readiness(plan);
+    expect(readiness != NULL && !readiness->source_accessible &&
+        readiness->source_permission_remediation ==
+            INPUT_PROXY_PERMISSION_REMEDIATION_AVAILABLE &&
+        readiness->libinput_ignore_rule_available &&
+        (readiness->blockers &
+            INPUT_PROXY_DEPLOYMENT_BLOCKER_SOURCE_PERMISSION) == 0,
+        "I2C bus/vendor/product plus ID_PATH supports both remediations");
+    input_proxy_installation_plan_destroy(plan); plan = NULL;
+    snprintf(path, sizeof(path), "%s/id/bustype", device_dir);
+    expect(write_text(path, "0003\n") == 0, "restore USB fixture bus");
+    snprintf(path, sizeof(path), "%s/id/vendor", device_dir);
+    expect(unlink(path) == 0, "remove I2C fixture vendor");
+    snprintf(path, sizeof(path), "%s/id/product", device_dir);
+    expect(unlink(path) == 0, "remove I2C fixture product");
+
     expect(write_text(udev_record, "E:ID_VENDOR_ID=1234\n") == 0,
         "remove narrow udev identity");
     request = make_request("PermissionBlocked"); request.source_path = source;

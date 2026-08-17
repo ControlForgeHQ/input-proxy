@@ -225,6 +225,7 @@ enum input_proxy_installation_plan_result input_proxy_installation_plan_assess(
     plan->readiness.libinput_status = input_proxy_read_libinput_status(
         env->udev_data_path, &source_status, input_proxy_collect_rule_identity,
         &rule_identity);
+    input_proxy_rule_identity_add_kernel_identity(&rule_identity, &identity);
     narrow_match = input_proxy_rule_identity_is_narrow(&rule_identity);
     plan->readiness.source_accessible = identity_has_access(&source_status, env,
         S_IRUSR, S_IRGRP, S_IROTH);

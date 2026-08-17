@@ -264,20 +264,45 @@ void input_proxy_collect_rule_identity(const char *name, const char *value,
 
     if (identity == NULL) return;
     if (strcmp(name, "ID_VENDOR_ID") == 0)
-        snprintf(identity->vendor, sizeof(identity->vendor), "%s", value);
+        snprintf(identity->udev_vendor, sizeof(identity->udev_vendor), "%s",
+                 value);
     else if (strcmp(name, "ID_MODEL_ID") == 0)
-        snprintf(identity->model, sizeof(identity->model), "%s", value);
+        snprintf(identity->udev_model, sizeof(identity->udev_model), "%s",
+                 value);
     else if (strcmp(name, "ID_PATH") == 0)
         snprintf(identity->path, sizeof(identity->path), "%s", value);
+}
+
+void input_proxy_rule_identity_add_kernel_identity(
+    struct input_proxy_device_rule_identity *rule_identity,
+    const struct input_proxy_device_identity *device_identity)
+{
+    if (rule_identity == NULL || device_identity == NULL) return;
+    snprintf(rule_identity->bus, sizeof(rule_identity->bus), "%s",
+             device_identity->bus_id);
+    snprintf(rule_identity->vendor, sizeof(rule_identity->vendor), "%s",
+             device_identity->vendor_id);
+    snprintf(rule_identity->product, sizeof(rule_identity->product), "%s",
+             device_identity->product_id);
+}
+
+bool input_proxy_rule_identity_has_udev_identity(
+    const struct input_proxy_device_rule_identity *identity)
+{
+    return identity != NULL &&
+        input_proxy_rule_value_is_safe(identity->udev_vendor) &&
+        input_proxy_rule_value_is_safe(identity->udev_model);
 }
 
 bool input_proxy_rule_identity_is_narrow(
     const struct input_proxy_device_rule_identity *identity)
 {
     return identity != NULL &&
-        input_proxy_rule_value_is_safe(identity->vendor) &&
-        input_proxy_rule_value_is_safe(identity->model) &&
-        input_proxy_rule_value_is_safe(identity->path);
+        input_proxy_rule_value_is_safe(identity->path) &&
+        (input_proxy_rule_identity_has_udev_identity(identity) ||
+         (input_proxy_rule_value_is_safe(identity->bus) &&
+          input_proxy_rule_value_is_safe(identity->vendor) &&
+          input_proxy_rule_value_is_safe(identity->product)));
 }
 
 static bool safe_account_name(const char *value)
@@ -543,6 +568,7 @@ enum input_proxy_result input_proxy_inspect_device(
                 device_path);
         return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
     }
+    input_proxy_rule_identity_add_kernel_identity(&rule_identity, &identity);
 
     source_fd = open(device_path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
     if (source_fd >= 0 && libevdev_new_from_fd(source_fd, &device) == 0)
@@ -679,13 +705,15 @@ enum input_proxy_result input_proxy_inspect_device(
         print_heading(stream, "Libinput remediation");
         fprintf(stream, "\n  %s: the physical source may also be consumed directly by libinput.\n",
                 semantic_status(stream, "WARNING", "33"));
-        if (input_proxy_rule_identity_is_narrow(&rule_identity)) {
+        if (input_proxy_rule_identity_has_udev_identity(&rule_identity) &&
+            input_proxy_rule_value_is_safe(rule_identity.path)) {
             fprintf(stream,
                 "\n  Suggested udev rule:\n"
                 "    ACTION==\"add|change\", SUBSYSTEM==\"input\", KERNEL==\"event*\", "
                 "ENV{ID_VENDOR_ID}==\"%s\", ENV{ID_MODEL_ID}==\"%s\", "
                 "ENV{ID_PATH}==\"%s\", ENV{LIBINPUT_IGNORE_DEVICE}=\"1\"\n",
-                rule_identity.vendor, rule_identity.model, rule_identity.path);
+                rule_identity.udev_vendor, rule_identity.udev_model,
+                rule_identity.path);
             if (strcmp(identity.bus, "USB") == 0)
                 fprintf(stream,
                       "\n  %s: this rule includes ID_PATH and is tied to the device's current\n"
