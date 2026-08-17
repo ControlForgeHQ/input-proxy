@@ -25,12 +25,14 @@ add_executable(
     src/device_discovery.c
     src/device_inspection.c
     src/installed_instance.c
+    src/installation_planner.c
     src/instance_name.c
     src/libinput_status.c
     src/main.c
     src/proxy_session.c
     src/runtime_control.c
     src/runtime_discovery.c
+    src/runtime_policy.c
     src/result.c
     src/source_device.c
     src/virtual_device.c
@@ -204,6 +206,23 @@ if(BUILD_TESTING)
             ${PROJECT_SOURCE_DIR}/src
     )
     add_test(NAME installed-instance-test COMMAND installed-instance-test)
+
+    add_executable(
+        installation-planner-test
+        tests/installation_planner_test.c
+        src/installation_planner.c
+        src/installed_instance.c
+        src/instance_name.c
+        src/runtime_policy.c
+        src/result.c
+    )
+    target_include_directories(
+        installation-planner-test
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src
+    )
+    add_test(NAME installation-planner-test COMMAND installation-planner-test)
 
     add_executable(
         runtime-control-test

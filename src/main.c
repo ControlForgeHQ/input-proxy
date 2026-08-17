@@ -7,9 +7,9 @@
 #include "device_discovery_internal.h"
 #include "device_inspection_internal.h"
 #include "runtime_discovery_internal.h"
+#include "runtime_policy_internal.h"
 
 #include <stdbool.h>
-#include <ctype.h>
 #include <errno.h>
 #include <inttypes.h>
 #include <limits.h>
@@ -126,48 +126,6 @@ static void print_run_help(FILE *stream)
     );
 }
 
-static bool parse_on_off(const char *text, bool *enabled)
-{
-    if (text == NULL || enabled == NULL) {
-        return false;
-    }
-    if (strcmp(text, "on") == 0) {
-        *enabled = true;
-        return true;
-    }
-    if (strcmp(text, "off") == 0) {
-        *enabled = false;
-        return true;
-    }
-    return false;
-}
-
-static bool parse_duration_ms(const char *text, uint64_t *duration_ms)
-{
-    char *end;
-    const unsigned char *character;
-    uintmax_t value;
-
-    if (text == NULL || duration_ms == NULL || text[0] == '\0') {
-        return false;
-    }
-    for (character = (const unsigned char *)text; *character != '\0';
-         character++) {
-        if (!isdigit(*character)) {
-            return false;
-        }
-    }
-    errno = 0;
-    end = NULL;
-    value = strtoumax(text, &end, 10);
-    if (errno == ERANGE || end == text || *end != '\0' ||
-        value > UINT32_MAX) {
-        return false;
-    }
-    *duration_ms = (uint64_t)value;
-    return true;
-}
-
 static void print_startup_header(
     const struct input_proxy_session_config *config)
 {
@@ -257,12 +215,7 @@ static enum input_proxy_result parse_run_config(
         return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
     }
 
-    *config = (struct input_proxy_session_config) {
-        .activity_timeout_ms = INPUT_PROXY_DEFAULT_ACTIVITY_TIMEOUT_MS,
-        .detection_throttle_ms = INPUT_PROXY_DEFAULT_DETECTION_THROTTLE_MS,
-        .running_motion_activity = true,
-        .paused_motion_activity = true
-    };
+    input_proxy_runtime_policy_defaults(config);
 
     for (index = 2; index < argc; ++index) {
         if (strcmp(argv[index], "--source") == 0) {
@@ -293,8 +246,11 @@ static enum input_proxy_result parse_run_config(
         }
 
         if (strcmp(argv[index], "--activity-timeout-ms") == 0) {
-            if (activity_timeout_seen || index + 1 >= argc || !parse_duration_ms(
-                    argv[index + 1], &config->activity_timeout_ms)) {
+            if (activity_timeout_seen || index + 1 >= argc ||
+                !input_proxy_runtime_policy_parse_duration(
+                    argv[index + 1],
+                    &config->activity_timeout_ms
+                )) {
                 fprintf(stderr, "input-proxy: invalid non-negative duration "
                     "for --activity-timeout-ms: %s\n",
                     index + 1 < argc ? argv[index + 1] : "missing value");
@@ -306,8 +262,11 @@ static enum input_proxy_result parse_run_config(
         }
 
         if (strcmp(argv[index], "--detection-throttle-ms") == 0) {
-            if (detection_throttle_seen || index + 1 >= argc || !parse_duration_ms(
-                    argv[index + 1], &config->detection_throttle_ms)) {
+            if (detection_throttle_seen || index + 1 >= argc ||
+                !input_proxy_runtime_policy_parse_duration(
+                    argv[index + 1],
+                    &config->detection_throttle_ms
+                )) {
                 fprintf(stderr, "input-proxy: invalid non-negative duration "
                     "for --detection-throttle-ms: %s\n",
                     index + 1 < argc ? argv[index + 1] : "missing value");
@@ -319,8 +278,11 @@ static enum input_proxy_result parse_run_config(
         }
 
         if (strcmp(argv[index], "--running-motion-activity") == 0) {
-            if (running_motion_seen || index + 1 >= argc || !parse_on_off(
-                    argv[index + 1], &config->running_motion_activity)) {
+            if (running_motion_seen || index + 1 >= argc ||
+                !input_proxy_runtime_policy_parse_on_off(
+                    argv[index + 1],
+                    &config->running_motion_activity
+                )) {
                 fprintf(stderr, "input-proxy: invalid value for "
                     "--running-motion-activity: expected 'on' or 'off'\n");
                 return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
@@ -331,8 +293,11 @@ static enum input_proxy_result parse_run_config(
         }
 
         if (strcmp(argv[index], "--paused-motion-activity") == 0) {
-            if (paused_motion_seen || index + 1 >= argc || !parse_on_off(
-                    argv[index + 1], &config->paused_motion_activity)) {
+            if (paused_motion_seen || index + 1 >= argc ||
+                !input_proxy_runtime_policy_parse_on_off(
+                    argv[index + 1],
+                    &config->paused_motion_activity
+                )) {
                 fprintf(stderr, "input-proxy: invalid value for "
                     "--paused-motion-activity: expected 'on' or 'off'\n");
                 return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
@@ -343,8 +308,11 @@ static enum input_proxy_result parse_run_config(
         }
 
         if (strcmp(argv[index], "--start-paused") == 0) {
-            if (start_paused_seen || index + 1 >= argc || !parse_on_off(
-                    argv[index + 1], &config->start_paused)) {
+            if (start_paused_seen || index + 1 >= argc ||
+                !input_proxy_runtime_policy_parse_on_off(
+                    argv[index + 1],
+                    &config->start_paused
+                )) {
                 fprintf(stderr, "input-proxy: invalid value for "
                     "--start-paused: expected 'on' or 'off'\n");
                 return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
