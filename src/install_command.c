@@ -196,13 +196,35 @@ static void print_plan(const struct input_proxy_session_config *config,
     const struct input_proxy_deployment_readiness *readiness,
     const struct input_proxy_deployment_resolution *resolution, FILE *output)
 {
+    const char *source_permission_state;
+    const char *libinput_ignore_state;
+
+    if (resolution->source_permission_action) {
+        source_permission_state = "yes";
+    } else if (readiness->source_accessible) {
+        source_permission_state = "not required";
+    } else if (readiness->source_permission_remediation ==
+               INPUT_PROXY_PERMISSION_REMEDIATION_AVAILABLE) {
+        source_permission_state = "no";
+    } else {
+        source_permission_state = "unavailable";
+    }
+
+    if (resolution->libinput_ignore_action) {
+        libinput_ignore_state = "yes";
+    } else if (readiness->libinput_status ==
+               INPUT_PROXY_LIBINPUT_STATUS_IGNORED) {
+        libinput_ignore_state = "not required";
+    } else if (readiness->libinput_ignore_rule_available) {
+        libinput_ignore_state = "no";
+    } else {
+        libinput_ignore_state = "unavailable";
+    }
+
     fprintf(output, "\nInstallation plan (no changes applied)\n"
-        "  Instance Name: %s\n  Supplied Physical Source: %s\n"
-        "  Selected persistent source: %s\n",
-        config->instance_name, readiness->supplied_source_path,
+        "  Instance Name: %s\n  Physical Source: %s\n",
+        config->instance_name,
         resolution->persistent_source_path);
-    if (readiness->preferred_source_path != NULL)
-        fprintf(output, "  Preferred run source: %s\n", readiness->preferred_source_path);
     fprintf(output, "  Activity timeout: %" PRIu64 " ms\n"
         "  Detection throttle: %" PRIu64 " ms\n"
         "  Running-motion activity: %s\n  Paused-motion activity: %s\n"
@@ -213,8 +235,8 @@ static void print_plan(const struct input_proxy_session_config *config,
         config->running_motion_activity ? "on" : "off",
         config->paused_motion_activity ? "on" : "off",
         config->start_paused ? "on" : "off",
-        resolution->source_permission_action ? "would be installed" : "no",
-        resolution->libinput_ignore_action ? "would be installed" : "no",
+        source_permission_state,
+        libinput_ignore_state,
         readiness->uinput_accessible ? "yes" : "no",
         resolution->application_ready ? "yes" : "no");
 }

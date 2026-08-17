@@ -176,7 +176,9 @@ int main(void)
         char *args[] = {"input-proxy", "install", "--source", source,
             "--name", "ExplicitPreferred", "--use-preferred-run-source", "yes",
             "--add-libinput-ignore-rule", "yes"};
-        check_command(args, 10, &environment, true, alias,
+        char expected[640];
+        snprintf(expected, sizeof(expected), "Physical Source: %s", alias);
+        check_command(args, 10, &environment, true, expected,
             NULL, "explicit preferred and ignore choices produce ready plan");
     }
     {
@@ -187,6 +189,15 @@ int main(void)
             "Libinput-ignore rule: no", NULL,
             "explicit retain and ignore decline produce ready plan");
     }
+    {
+        char *args[] = {"input-proxy", "install", "--source", source,
+            "--name", "RetainPresentation", "--use-preferred-run-source", "no",
+            "--add-libinput-ignore-rule", "no"};
+        char expected[640];
+        snprintf(expected, sizeof(expected), "Physical Source: %s", source);
+        check_command(args, 10, &environment, true, expected, NULL,
+            "retained supplied source is the resolved Physical Source");
+    }
     fixture.source_mode = 0600;
     {
         char *args[] = {"input-proxy", "install", "--source", source,
@@ -194,7 +205,7 @@ int main(void)
             "--add-source-permission-rule", "yes",
             "--add-libinput-ignore-rule", "no"};
         check_command(args, 12, &environment, true,
-            "Source-permission rule: would be installed", NULL,
+            "Source-permission rule: yes", NULL,
             "required permission remediation is planned");
     }
     {
@@ -207,6 +218,36 @@ int main(void)
             "declined required remediation explains non-ready plan");
     }
     fixture.source_mode = 0640;
+    {
+        char *args[] = {"input-proxy", "install", "--source", source,
+            "--name", "PermissionNotRequired", "--use-preferred-run-source", "no",
+            "--add-libinput-ignore-rule", "no"};
+        check_command(args, 10, &environment, true,
+            "Source-permission rule: not required", NULL,
+            "existing source access reports permission rule not required");
+    }
+    expect(write_text(udev_record,
+        "E:ID_VENDOR_ID=1234\nE:ID_MODEL_ID=5678\nE:ID_PATH=platform-test\n"
+        "E:LIBINPUT_IGNORE_DEVICE=1\n"), "mark source ignored by libinput");
+    {
+        char *args[] = {"input-proxy", "install", "--source", source,
+            "--name", "IgnoreNotRequired", "--use-preferred-run-source", "no"};
+        check_command(args, 8, &environment, true,
+            "Libinput-ignore rule: not required", NULL,
+            "existing libinput ignore reports rule not required");
+    }
+    expect(write_text(udev_record, "E:ID_VENDOR_ID=1234\n"),
+        "remove narrow remediation identity");
+    {
+        char *args[] = {"input-proxy", "install", "--source", source,
+            "--name", "IgnoreUnavailable", "--use-preferred-run-source", "no"};
+        check_command(args, 8, &environment, true,
+            "Libinput-ignore rule: unavailable", NULL,
+            "unsafe libinput remediation is reported as unavailable");
+    }
+    expect(write_text(udev_record,
+        "E:ID_VENDOR_ID=1234\nE:ID_MODEL_ID=5678\nE:ID_PATH=platform-test\n"),
+        "restore narrow remediation identity");
     expect(input_proxy_installed_instance_store_create_for_directory(
         &store, directory) == INPUT_PROXY_INSTALLED_INSTANCE_SUCCESS,
         "open fixture Installed Instance store");
