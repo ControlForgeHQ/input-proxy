@@ -19,8 +19,10 @@ struct input_proxy_installation_plan {
     char *instance_name;
     struct input_proxy_instance_name *name_ownership;
     struct input_proxy_deployment_readiness readiness;
+    struct input_proxy_deployment_resolution resolution;
     char preferred_source_path[PATH_MAX];
     bool readiness_available;
+    bool resolution_available;
 };
 
 void input_proxy_installation_request_init(
@@ -193,6 +195,9 @@ enum input_proxy_installation_plan_result input_proxy_installation_plan_assess(
         return INPUT_PROXY_INSTALLATION_PLAN_INVALID_REQUEST;
 
     memset(&plan->readiness, 0, sizeof(plan->readiness));
+    memset(&plan->resolution, 0, sizeof(plan->resolution));
+    plan->resolution_available = false;
+    plan->config.source_path = plan->source_path;
     plan->preferred_source_path[0] = '\0';
     plan->readiness.supplied_source_path = plan->source_path;
     plan->readiness.selected_source_path = plan->source_path;
@@ -258,6 +263,97 @@ input_proxy_installation_plan_readiness(
     const struct input_proxy_installation_plan *plan)
 {
     return plan != NULL && plan->readiness_available ? &plan->readiness : NULL;
+}
+
+static bool preferred_source_choice_valid(
+    enum input_proxy_preferred_source_choice choice)
+{
+    return choice >= INPUT_PROXY_PREFERRED_SOURCE_UNRESOLVED &&
+        choice <= INPUT_PROXY_PREFERRED_SOURCE_USE_PREFERRED;
+}
+
+static bool remediation_choice_valid(enum input_proxy_remediation_choice choice)
+{
+    return choice >= INPUT_PROXY_REMEDIATION_UNRESOLVED &&
+        choice <= INPUT_PROXY_REMEDIATION_INSTALL;
+}
+
+enum input_proxy_installation_plan_result input_proxy_installation_plan_resolve(
+    struct input_proxy_installation_plan *plan,
+    const struct input_proxy_deployment_choices *choices)
+{
+    struct input_proxy_deployment_resolution resolution = {0};
+    bool source_permission_resolved = true;
+    bool libinput_ignore_resolved = true;
+
+    if (plan == NULL || choices == NULL || !plan->readiness_available ||
+        !preferred_source_choice_valid(choices->preferred_source) ||
+        !remediation_choice_valid(choices->source_permission) ||
+        !remediation_choice_valid(choices->libinput_ignore)) {
+        return INPUT_PROXY_INSTALLATION_PLAN_INVALID_CHOICES;
+    }
+
+    resolution.persistent_source_path = plan->source_path;
+    if (plan->readiness.preferred_source_differs) {
+        if (choices->preferred_source ==
+            INPUT_PROXY_PREFERRED_SOURCE_USE_PREFERRED) {
+            resolution.persistent_source_path = plan->preferred_source_path;
+        } else if (choices->preferred_source ==
+                   INPUT_PROXY_PREFERRED_SOURCE_UNRESOLVED) {
+            resolution.choices_resolved = false;
+        }
+    } else if (choices->preferred_source ==
+               INPUT_PROXY_PREFERRED_SOURCE_USE_PREFERRED) {
+        return INPUT_PROXY_INSTALLATION_PLAN_INVALID_CHOICES;
+    }
+
+    if (plan->readiness.source_accessible) {
+        if (choices->source_permission == INPUT_PROXY_REMEDIATION_INSTALL)
+            return INPUT_PROXY_INSTALLATION_PLAN_INVALID_CHOICES;
+    } else if (plan->readiness.source_permission_remediation ==
+               INPUT_PROXY_PERMISSION_REMEDIATION_AVAILABLE) {
+        source_permission_resolved =
+            choices->source_permission != INPUT_PROXY_REMEDIATION_UNRESOLVED;
+        resolution.source_permission_action =
+            choices->source_permission == INPUT_PROXY_REMEDIATION_INSTALL;
+    } else if (choices->source_permission == INPUT_PROXY_REMEDIATION_INSTALL) {
+        return INPUT_PROXY_INSTALLATION_PLAN_INVALID_CHOICES;
+    }
+
+    if (plan->readiness.libinput_status == INPUT_PROXY_LIBINPUT_STATUS_IGNORED) {
+        if (choices->libinput_ignore == INPUT_PROXY_REMEDIATION_INSTALL)
+            return INPUT_PROXY_INSTALLATION_PLAN_INVALID_CHOICES;
+    } else if (plan->readiness.libinput_ignore_rule_available) {
+        libinput_ignore_resolved =
+            choices->libinput_ignore != INPUT_PROXY_REMEDIATION_UNRESOLVED;
+        resolution.libinput_ignore_action =
+            choices->libinput_ignore == INPUT_PROXY_REMEDIATION_INSTALL;
+    } else if (choices->libinput_ignore == INPUT_PROXY_REMEDIATION_INSTALL) {
+        return INPUT_PROXY_INSTALLATION_PLAN_INVALID_CHOICES;
+    }
+
+    resolution.choices_resolved =
+        (!plan->readiness.preferred_source_differs ||
+         choices->preferred_source != INPUT_PROXY_PREFERRED_SOURCE_UNRESOLVED) &&
+        source_permission_resolved && libinput_ignore_resolved;
+    resolution.application_ready = resolution.choices_resolved &&
+        plan->readiness.blockers == INPUT_PROXY_DEPLOYMENT_BLOCKER_NONE &&
+        (plan->readiness.source_accessible ||
+         resolution.source_permission_action);
+
+    plan->resolution = resolution;
+    plan->resolution_available = true;
+    plan->readiness.selected_source_path = resolution.persistent_source_path;
+    plan->config.source_path = resolution.persistent_source_path;
+    return INPUT_PROXY_INSTALLATION_PLAN_SUCCESS;
+}
+
+const struct input_proxy_deployment_resolution *
+input_proxy_installation_plan_resolution(
+    const struct input_proxy_installation_plan *plan)
+{
+    return plan != NULL && plan->resolution_available
+        ? &plan->resolution : NULL;
 }
 
 void input_proxy_installation_plan_destroy(

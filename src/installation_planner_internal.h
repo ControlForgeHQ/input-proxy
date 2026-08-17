@@ -34,7 +34,34 @@ enum input_proxy_installation_plan_result {
     INPUT_PROXY_INSTALLATION_PLAN_RUNTIME_NAME_COLLISION,
     INPUT_PROXY_INSTALLATION_PLAN_STORE_FAILED,
     INPUT_PROXY_INSTALLATION_PLAN_OWNERSHIP_FAILED,
-    INPUT_PROXY_INSTALLATION_PLAN_OUT_OF_MEMORY
+    INPUT_PROXY_INSTALLATION_PLAN_OUT_OF_MEMORY,
+    INPUT_PROXY_INSTALLATION_PLAN_INVALID_CHOICES
+};
+
+enum input_proxy_preferred_source_choice {
+    INPUT_PROXY_PREFERRED_SOURCE_UNRESOLVED = 0,
+    INPUT_PROXY_PREFERRED_SOURCE_RETAIN_SUPPLIED,
+    INPUT_PROXY_PREFERRED_SOURCE_USE_PREFERRED
+};
+
+enum input_proxy_remediation_choice {
+    INPUT_PROXY_REMEDIATION_UNRESOLVED = 0,
+    INPUT_PROXY_REMEDIATION_DO_NOT_INSTALL,
+    INPUT_PROXY_REMEDIATION_INSTALL
+};
+
+struct input_proxy_deployment_choices {
+    enum input_proxy_preferred_source_choice preferred_source;
+    enum input_proxy_remediation_choice source_permission;
+    enum input_proxy_remediation_choice libinput_ignore;
+};
+
+struct input_proxy_deployment_resolution {
+    const char *persistent_source_path;
+    bool source_permission_action;
+    bool libinput_ignore_action;
+    bool choices_resolved;
+    bool application_ready;
 };
 
 struct input_proxy_installation_plan;
@@ -60,6 +87,16 @@ enum input_proxy_installation_plan_result input_proxy_installation_plan_assess(
 
 const struct input_proxy_deployment_readiness *
 input_proxy_installation_plan_readiness(
+    const struct input_proxy_installation_plan *plan
+);
+
+enum input_proxy_installation_plan_result input_proxy_installation_plan_resolve(
+    struct input_proxy_installation_plan *plan,
+    const struct input_proxy_deployment_choices *choices
+);
+
+const struct input_proxy_deployment_resolution *
+input_proxy_installation_plan_resolution(
     const struct input_proxy_installation_plan *plan
 );
 
