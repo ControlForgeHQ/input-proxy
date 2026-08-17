@@ -25,6 +25,7 @@ add_executable(
     src/device_discovery.c
     src/device_inspection.c
     src/installed_instance.c
+    src/install_command.c
     src/installation_planner.c
     src/instance_name.c
     src/libinput_status.c
@@ -229,6 +230,26 @@ if(BUILD_TESTING)
     target_link_libraries(installation-planner-test PRIVATE
         PkgConfig::LIBEVDEV PkgConfig::LIBSYSTEMD)
     add_test(NAME installation-planner-test COMMAND installation-planner-test)
+
+    add_executable(
+        install-command-test
+        tests/install_command_test.c
+        src/install_command.c
+        src/installation_planner.c
+        src/installed_instance.c
+        src/instance_name.c
+        src/runtime_policy.c
+        src/device_discovery.c
+        src/device_inspection.c
+        src/libinput_status.c
+        src/runtime_discovery.c
+        src/result.c
+    )
+    target_include_directories(install-command-test PRIVATE
+        ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/src)
+    target_link_libraries(install-command-test PRIVATE
+        PkgConfig::LIBEVDEV PkgConfig::LIBSYSTEMD)
+    add_test(NAME install-command-test COMMAND install-command-test)
 
     add_executable(
         runtime-control-test
