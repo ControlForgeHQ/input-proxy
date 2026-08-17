@@ -6,8 +6,36 @@
 #include <stdio.h>
 #include <stddef.h>
 #include <stdbool.h>
+#include <sys/stat.h>
 
 struct input_proxy_runtime_snapshot;
+struct input_proxy_device_identity;
+
+struct input_proxy_device_rule_identity {
+    char udev_vendor[32];
+    char udev_model[32];
+    char path[512];
+    char bus[16];
+    char vendor[16];
+    char product[16];
+};
+
+bool input_proxy_find_persistent_input_path(const char *device_input_path,
+    const struct stat *status, char *persistent_path, size_t path_size);
+bool input_proxy_resolve_event_node(const char *sysfs_input_path,
+    const char *device_input_path, const struct stat *device_status,
+    char *event_node, size_t event_node_size, char *event_sysfs_path,
+    size_t sysfs_path_size);
+bool input_proxy_rule_value_is_safe(const char *value);
+void input_proxy_collect_rule_identity(const char *name, const char *value,
+    void *userdata);
+void input_proxy_rule_identity_add_kernel_identity(
+    struct input_proxy_device_rule_identity *rule_identity,
+    const struct input_proxy_device_identity *device_identity);
+bool input_proxy_rule_identity_has_udev_identity(
+    const struct input_proxy_device_rule_identity *identity);
+bool input_proxy_rule_identity_is_narrow(
+    const struct input_proxy_device_rule_identity *identity);
 
 struct input_proxy_access_remediation {
     bool source_ok;

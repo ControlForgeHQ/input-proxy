@@ -4,15 +4,23 @@
 
 #include "instance_name_internal.h"
 #include "runtime_policy_internal.h"
+#include "device_discovery_internal.h"
+#include "device_inspection_internal.h"
+#include "libinput_status_internal.h"
 
+#include <limits.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 
 struct input_proxy_installation_plan {
     struct input_proxy_session_config config;
     char *source_path;
     char *instance_name;
     struct input_proxy_instance_name *name_ownership;
+    struct input_proxy_deployment_readiness readiness;
+    char preferred_source_path[PATH_MAX];
+    bool readiness_available;
 };
 
 void input_proxy_installation_request_init(
@@ -131,6 +139,125 @@ const struct input_proxy_session_config *input_proxy_installation_plan_config(
     const struct input_proxy_installation_plan *plan)
 {
     return plan == NULL ? NULL : &plan->config;
+}
+
+static bool group_matches(const struct input_proxy_deployment_environment *env,
+                          gid_t group)
+{
+    size_t index;
+
+    if (env->service_gid == group) return true;
+    for (index = 0; index < env->service_group_count; ++index) {
+        if (env->service_groups[index] == group) return true;
+    }
+    return false;
+}
+
+static bool identity_has_access(const struct stat *status,
+                                const struct input_proxy_deployment_environment *env,
+                                mode_t owner_bit, mode_t group_bit,
+                                mode_t other_bit)
+{
+    if (env->service_uid == 0) return true;
+    if (env->service_uid == status->st_uid)
+        return (status->st_mode & owner_bit) != 0;
+    if (group_matches(env, status->st_gid))
+        return (status->st_mode & group_bit) != 0;
+    return (status->st_mode & other_bit) != 0;
+}
+
+static int deployment_stat(const struct input_proxy_deployment_environment *env,
+                           const char *path, struct stat *status)
+{
+    return env->stat_path == NULL ? stat(path, status)
+                                  : env->stat_path(path, status,
+                                                   env->stat_userdata);
+}
+
+enum input_proxy_installation_plan_result input_proxy_installation_plan_assess(
+    struct input_proxy_installation_plan *plan,
+    const struct input_proxy_deployment_environment *env)
+{
+    struct stat source_status;
+    struct stat uinput_status;
+    char event_node[PATH_MAX];
+    char event_sysfs_path[PATH_MAX];
+    struct input_proxy_device_identity identity;
+    struct input_proxy_device_rule_identity rule_identity = {0};
+    bool narrow_match;
+
+    if (plan == NULL || env == NULL || env->sysfs_input_path == NULL ||
+        env->device_input_path == NULL || env->uinput_path == NULL ||
+        env->udev_data_path == NULL ||
+        (env->service_group_count > 0 && env->service_groups == NULL))
+        return INPUT_PROXY_INSTALLATION_PLAN_INVALID_REQUEST;
+
+    memset(&plan->readiness, 0, sizeof(plan->readiness));
+    plan->preferred_source_path[0] = '\0';
+    plan->readiness.supplied_source_path = plan->source_path;
+    plan->readiness.selected_source_path = plan->source_path;
+    plan->readiness.source_permission_remediation =
+        INPUT_PROXY_PERMISSION_REMEDIATION_UNAVAILABLE;
+    plan->readiness.libinput_status = INPUT_PROXY_LIBINPUT_STATUS_INDETERMINATE;
+
+    if (deployment_stat(env, plan->source_path, &source_status) != 0 ||
+        !S_ISCHR(source_status.st_mode) ||
+        !input_proxy_resolve_event_node(env->sysfs_input_path,
+            env->device_input_path, &source_status, event_node,
+            sizeof(event_node), event_sysfs_path, sizeof(event_sysfs_path)) ||
+        !input_proxy_read_device_identity(event_sysfs_path, &identity)) {
+        plan->readiness.blockers |= INPUT_PROXY_DEPLOYMENT_BLOCKER_SOURCE;
+        plan->readiness_available = true;
+        return INPUT_PROXY_INSTALLATION_PLAN_SUCCESS;
+    }
+
+    plan->readiness.physical_source = !identity.virtual_device;
+    if (!plan->readiness.physical_source)
+        plan->readiness.blockers |= INPUT_PROXY_DEPLOYMENT_BLOCKER_SOURCE;
+    if (input_proxy_find_persistent_input_path(env->device_input_path,
+            &source_status, plan->preferred_source_path,
+            sizeof(plan->preferred_source_path))) {
+        plan->readiness.preferred_source_path = plan->preferred_source_path;
+        plan->readiness.preferred_source_differs =
+            strcmp(plan->source_path, plan->preferred_source_path) != 0;
+    }
+
+    plan->readiness.libinput_status = input_proxy_read_libinput_status(
+        env->udev_data_path, &source_status, input_proxy_collect_rule_identity,
+        &rule_identity);
+    input_proxy_rule_identity_add_kernel_identity(&rule_identity, &identity);
+    narrow_match = input_proxy_rule_identity_is_narrow(&rule_identity);
+    plan->readiness.source_accessible = identity_has_access(&source_status, env,
+        S_IRUSR, S_IRGRP, S_IROTH);
+    if (plan->readiness.source_accessible) {
+        plan->readiness.source_permission_remediation =
+            INPUT_PROXY_PERMISSION_REMEDIATION_NOT_REQUIRED;
+    } else if (narrow_match) {
+        plan->readiness.source_permission_remediation =
+            INPUT_PROXY_PERMISSION_REMEDIATION_AVAILABLE;
+    } else {
+        plan->readiness.blockers |=
+            INPUT_PROXY_DEPLOYMENT_BLOCKER_SOURCE_PERMISSION;
+    }
+    plan->readiness.libinput_ignore_rule_available = narrow_match &&
+        plan->readiness.libinput_status ==
+            INPUT_PROXY_LIBINPUT_STATUS_NOT_IGNORED;
+
+    plan->readiness.uinput_accessible =
+        deployment_stat(env, env->uinput_path, &uinput_status) == 0 &&
+        S_ISCHR(uinput_status.st_mode) &&
+        identity_has_access(&uinput_status, env, S_IWUSR, S_IWGRP, S_IWOTH);
+    if (!plan->readiness.uinput_accessible)
+        plan->readiness.blockers |= INPUT_PROXY_DEPLOYMENT_BLOCKER_UINPUT;
+    plan->readiness_available = true;
+    return INPUT_PROXY_INSTALLATION_PLAN_SUCCESS;
+}
+
+const struct input_proxy_deployment_readiness *
+input_proxy_installation_plan_readiness(
+    const struct input_proxy_installation_plan *plan)
+{
+    return plan != NULL && plan->readiness_available ? &plan->readiness : NULL;
 }
 
 void input_proxy_installation_plan_destroy(

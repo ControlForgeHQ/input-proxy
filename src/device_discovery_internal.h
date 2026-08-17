@@ -8,6 +8,9 @@
 
 struct input_proxy_device_identity {
     char name[256];
+    char bus_id[16];
+    char vendor_id[16];
+    char product_id[16];
     const char *bus;
     const char *classification;
     bool virtual_device;

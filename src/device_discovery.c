@@ -297,10 +297,21 @@ bool input_proxy_read_device_identity(
     }
     {
         unsigned long bus_type;
-        identity->bus = read_bus_type(event_path, &bus_type)
-            ? bus_name(bus_type)
-            : "Unknown";
+        if (read_line(event_path, "id/bustype", identity->bus_id,
+                      sizeof(identity->bus_id)) &&
+            read_bus_type(event_path, &bus_type)) {
+            identity->bus = bus_name(bus_type);
+        } else {
+            identity->bus_id[0] = '\0';
+            identity->bus = "Unknown";
+        }
     }
+    if (!read_line(event_path, "id/vendor", identity->vendor_id,
+                   sizeof(identity->vendor_id)))
+        identity->vendor_id[0] = '\0';
+    if (!read_line(event_path, "id/product", identity->product_id,
+                   sizeof(identity->product_id)))
+        identity->product_id[0] = '\0';
     identity->classification = classify_device(event_path);
     identity->virtual_device = is_virtual_input(event_path);
     return true;

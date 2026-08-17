@@ -210,9 +210,13 @@ if(BUILD_TESTING)
     add_executable(
         installation-planner-test
         tests/installation_planner_test.c
+        src/device_discovery.c
+        src/device_inspection.c
         src/installation_planner.c
         src/installed_instance.c
         src/instance_name.c
+        src/libinput_status.c
+        src/runtime_discovery.c
         src/runtime_policy.c
         src/result.c
     )
@@ -222,6 +226,8 @@ if(BUILD_TESTING)
             ${PROJECT_SOURCE_DIR}/include
             ${PROJECT_SOURCE_DIR}/src
     )
+    target_link_libraries(installation-planner-test PRIVATE
+        PkgConfig::LIBEVDEV PkgConfig::LIBSYSTEMD)
     add_test(NAME installation-planner-test COMMAND installation-planner-test)
 
     add_executable(
