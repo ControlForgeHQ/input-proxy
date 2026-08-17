@@ -24,6 +24,7 @@ add_executable(
     input-proxy
     src/device_discovery.c
     src/device_inspection.c
+    src/installed_instance.c
     src/instance_name.c
     src/libinput_status.c
     src/main.c
@@ -188,6 +189,21 @@ if(BUILD_TESTING)
     )
 
     add_test(NAME instance-name-test COMMAND instance-name-test)
+
+    add_executable(
+        installed-instance-test
+        tests/installed_instance_test.c
+        src/installed_instance.c
+        src/instance_name.c
+        src/result.c
+    )
+    target_include_directories(
+        installed-instance-test
+        PRIVATE
+            ${PROJECT_SOURCE_DIR}/include
+            ${PROJECT_SOURCE_DIR}/src
+    )
+    add_test(NAME installed-instance-test COMMAND installed-instance-test)
 
     add_executable(
         runtime-control-test
