@@ -14,6 +14,9 @@ struct input_proxy_install_command_environment {
     FILE *output;
     FILE *error;
     const char *installed_instance_directory;
+    const char *udev_rule_directory;
+    bool inject_rule_publication_failure;
+    bool inject_response_rollback_failure;
     const struct input_proxy_deployment_environment *deployment;
 };
 

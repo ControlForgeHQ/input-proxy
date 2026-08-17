@@ -8,6 +8,8 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 
+#include "device_inspection_internal.h"
+
 typedef int (*input_proxy_deployment_stat_fn)(
     const char *path,
     struct stat *status,
@@ -51,6 +53,7 @@ struct input_proxy_deployment_readiness {
     enum input_proxy_permission_remediation source_permission_remediation;
     enum input_proxy_libinput_status libinput_status;
     bool libinput_ignore_rule_available;
+    struct input_proxy_device_rule_identity rule_identity;
     unsigned int blockers;
 };
 
