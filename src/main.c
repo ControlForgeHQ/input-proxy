@@ -6,6 +6,7 @@
 
 #include "device_discovery_internal.h"
 #include "device_inspection_internal.h"
+#include "install_command_internal.h"
 #include "runtime_discovery_internal.h"
 #include "runtime_policy_internal.h"
 
@@ -75,6 +76,7 @@ static void print_top_level_help(FILE *stream)
         "  run      Proxy one physical input device.\n"
         "  list     List available physical input devices concisely.\n"
         "  inspect  Inspect one input device with read-only diagnostics.\n"
+        "  install  Plan installation of a persistent proxy instance.\n"
         "\n"
         "Global options:\n"
         "  --help     Show this help and exit.\n"
@@ -84,6 +86,7 @@ static void print_top_level_help(FILE *stream)
         "  input-proxy run --source /dev/input/event0 --name touchscreen\n"
         "  input-proxy list\n"
         "  input-proxy inspect /dev/input/event0\n"
+        "  sudo input-proxy install --source /dev/input/event0 --name touchscreen\n"
         "\n"
         "Report bugs and find the project at:\n"
         "  https://github.com/ControlForgeHQ/input-proxy\n\n",
@@ -637,6 +640,14 @@ int main(int argc, char *argv[])
         }
 
         return list_devices(argc);
+    }
+
+    if (strcmp(command, "install") == 0) {
+        if (argc == 3 && strcmp(argv[2], "--help") == 0) {
+            input_proxy_install_print_help(stdout);
+            return EXIT_SUCCESS;
+        }
+        return input_proxy_install_command(argc, argv);
     }
 
     if (strcmp(command, "inspect") == 0) {

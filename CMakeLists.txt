@@ -25,6 +25,7 @@ add_executable(
     src/device_discovery.c
     src/device_inspection.c
     src/installed_instance.c
+    src/install_command.c
     src/installation_planner.c
     src/instance_name.c
     src/libinput_status.c
