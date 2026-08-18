@@ -26,6 +26,7 @@ add_executable(
     src/device_inspection.c
     src/installed_instance.c
     src/install_command.c
+    src/installation_application.c
     src/installation_planner.c
     src/instance_name.c
     src/libinput_status.c
@@ -235,6 +236,7 @@ if(BUILD_TESTING)
         install-command-test
         tests/install_command_test.c
         src/install_command.c
+        src/installation_application.c
         src/installation_planner.c
         src/installed_instance.c
         src/instance_name.c

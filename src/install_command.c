@@ -4,6 +4,7 @@
 #include "install_command_internal.h"
 
 #include "installation_planner_internal.h"
+#include "installation_application_internal.h"
 #include "runtime_policy_internal.h"
 
 #include <grp.h>
@@ -20,11 +21,11 @@
 void input_proxy_install_print_help(FILE *stream)
 {
     fputs(
-        "Plan installation of one persistent input-proxy instance.\n\n"
+        "Plan installation and apply one persistent input-proxy instance.\n\n"
         "Usage:\n"
         "  input-proxy install [OPTIONS]\n\n"
         "Required values may be entered interactively when omitted. This\n"
-        "command only produces a plan; it makes no persistent changes.\n\n"
+        "command plans and applies the instance's persistent artifacts.\n\n"
         "Runtime policy options:\n"
         "  --source PATH\n"
         "  --name INSTANCE_NAME\n"
@@ -270,6 +271,9 @@ int input_proxy_install_command_with_environment(int argc, char *argv[],
     const struct input_proxy_deployment_readiness *readiness;
     const struct input_proxy_deployment_resolution *resolution;
     enum input_proxy_installation_plan_result result;
+    enum input_proxy_installation_application_result application_result;
+    struct input_proxy_installation_application_failure application_failure;
+    struct input_proxy_installation_application_environment application_environment;
     gid_t *groups = NULL;
     char *prompted_source = NULL, *prompted_name = NULL;
     bool answer;
@@ -348,7 +352,30 @@ int input_proxy_install_command_with_environment(int argc, char *argv[],
         if (readiness->blockers & INPUT_PROXY_DEPLOYMENT_BLOCKER_UINPUT) fprintf(command_environment->error, "input-proxy: /dev/uinput is not ready for the service identity; install or repair package integration\n");
         goto cleanup;
     }
-    fprintf(command_environment->output, "\nThe plan is application-ready. No persistent changes have been applied.\n\n");
+    application_environment = (struct input_proxy_installation_application_environment) {
+        .udev_rule_directory = command_environment->udev_rule_directory,
+        .inject_rule_publication_failure =
+            command_environment->inject_rule_publication_failure,
+        .inject_response_rollback_failure =
+            command_environment->inject_response_rollback_failure
+    };
+    application_result = input_proxy_installation_plan_apply(plan, store,
+        &application_environment, &application_failure);
+    if (application_result != INPUT_PROXY_INSTALLATION_APPLICATION_SUCCESS) {
+        if (application_result == INPUT_PROXY_INSTALLATION_APPLICATION_RESPONSE_FAILED)
+            fprintf(command_environment->error, "input-proxy: failed to create the Installed Instance response artifact\n");
+        else if (application_result == INPUT_PROXY_INSTALLATION_APPLICATION_RULE_GENERATION_FAILED)
+            fprintf(command_environment->error, "input-proxy: failed to generate a safe instance-owned udev rule\n");
+        else if (application_result == INPUT_PROXY_INSTALLATION_APPLICATION_RULE_PUBLICATION_FAILED)
+            fprintf(command_environment->error, "input-proxy: failed to publish the instance-owned udev rule; newly created artifacts were rolled back\n");
+        else if (application_result == INPUT_PROXY_INSTALLATION_APPLICATION_ROLLBACK_FAILED)
+            fprintf(command_environment->error, "input-proxy: persistent application failed and rollback could not remove %s\n", application_failure.rollback_path);
+        else
+            fprintf(command_environment->error, "input-proxy: refused to apply an invalid or non-ready installation plan\n");
+        goto cleanup;
+    }
+    fprintf(command_environment->output,
+        "\nPlanning completed.\nPersistent artifacts applied.\nService activation not yet performed.\n\n");
     exit_status = EXIT_SUCCESS;
 cleanup:
     free(groups); input_proxy_installation_plan_destroy(plan);

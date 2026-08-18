@@ -57,6 +57,24 @@ static bool write_text(const char *path, const char *text)
     return success;
 }
 
+static bool path_exists(const char *path)
+{
+    struct stat status;
+    return lstat(path, &status) == 0;
+}
+
+static bool file_contains(const char *path, const char *text)
+{
+    char buffer[4096];
+    FILE *file = fopen(path, "r");
+    size_t size;
+    if (file == NULL) return false;
+    size = fread(buffer, 1, sizeof(buffer) - 1, file);
+    buffer[size] = '\0';
+    fclose(file);
+    return strstr(buffer, text) != NULL;
+}
+
 static int run_command(char *argv[], int argc,
     struct input_proxy_install_command_environment *environment,
     char **output, char **error)
@@ -155,7 +173,8 @@ int main(void)
     };
     environment = (struct input_proxy_install_command_environment) {
         .effective_uid = 0, .interactive = false, .input = empty_input,
-        .installed_instance_directory = directory, .deployment = &deployment
+        .installed_instance_directory = directory,
+        .udev_rule_directory = directory, .deployment = &deployment
     };
 
     {
@@ -180,6 +199,11 @@ int main(void)
         snprintf(expected, sizeof(expected), "Physical Source: %s", alias);
         check_command(args, 10, &environment, true, expected,
             NULL, "explicit preferred and ignore choices produce ready plan");
+        snprintf(path, sizeof(path), "%s/ExplicitPreferred.args", directory);
+        expect(file_contains(path, alias), "response artifact uses resolved source");
+        snprintf(path, sizeof(path), "%s/90-input-proxy-ExplicitPreferred.rules", directory);
+        expect(file_contains(path, "ENV{LIBINPUT_IGNORE_DEVICE}=\"1\"") &&
+            file_contains(path, "ID_VENDOR_ID"), "ignore rule uses narrow udev identity");
     }
     {
         char *args[] = {"input-proxy", "install", "--source", source,
@@ -188,6 +212,10 @@ int main(void)
         check_command(args, 10, &environment, true,
             "Libinput-ignore rule: no", NULL,
             "explicit retain and ignore decline produce ready plan");
+        snprintf(path, sizeof(path), "%s/RetainSource.args", directory);
+        expect(path_exists(path), "no-action plan creates response artifact");
+        snprintf(path, sizeof(path), "%s/90-input-proxy-RetainSource.rules", directory);
+        expect(!path_exists(path), "no-action plan creates no udev rule");
     }
     {
         char *args[] = {"input-proxy", "install", "--source", source,
@@ -207,6 +235,47 @@ int main(void)
         check_command(args, 12, &environment, true,
             "Source-permission rule: yes", NULL,
             "required permission remediation is planned");
+        snprintf(path, sizeof(path), "%s/90-input-proxy-PermissionAccepted.rules", directory);
+        expect(file_contains(path, "GROUP=\"input-proxy\"") &&
+            file_contains(path, "MODE=\"0640\""),
+            "permission plan creates service access rule");
+    }
+    {
+        char *args[] = {"input-proxy", "install", "--source", source,
+            "--name", "BothActions", "--use-preferred-run-source", "no",
+            "--add-source-permission-rule", "yes",
+            "--add-libinput-ignore-rule", "yes"};
+        check_command(args, 12, &environment, true,
+            "Persistent artifacts applied", NULL,
+            "both remediation actions apply successfully");
+        snprintf(path, sizeof(path), "%s/90-input-proxy-BothActions.rules", directory);
+        expect(file_contains(path, "GROUP=\"input-proxy\"") &&
+            file_contains(path, "LIBINPUT_IGNORE_DEVICE"),
+            "both actions share one udev rule");
+    }
+    {
+        char *args[] = {"input-proxy", "install", "--source", source,
+            "--name", "PublishFailure", "--use-preferred-run-source", "no",
+            "--add-source-permission-rule", "yes",
+            "--add-libinput-ignore-rule", "no"};
+        environment.inject_rule_publication_failure = true;
+        check_command(args, 12, &environment, false, NULL, "rolled back",
+            "udev publication failure is reported");
+        environment.inject_rule_publication_failure = false;
+        snprintf(path, sizeof(path), "%s/PublishFailure.args", directory);
+        expect(!path_exists(path), "publication failure rolls back response artifact");
+    }
+    {
+        char *args[] = {"input-proxy", "install", "--source", source,
+            "--name", "RollbackFailure", "--use-preferred-run-source", "no",
+            "--add-source-permission-rule", "yes",
+            "--add-libinput-ignore-rule", "no"};
+        environment.inject_rule_publication_failure = true;
+        environment.inject_response_rollback_failure = true;
+        check_command(args, 12, &environment, false, NULL,
+            "rollback could not remove", "rollback failure identifies partial state");
+        environment.inject_rule_publication_failure = false;
+        environment.inject_response_rollback_failure = false;
     }
     {
         char *args[] = {"input-proxy", "install", "--source", source,
@@ -245,9 +314,45 @@ int main(void)
             "Libinput-ignore rule: unavailable", NULL,
             "unsafe libinput remediation is reported as unavailable");
     }
+    snprintf(path, sizeof(path), "%s/id/vendor", device);
+    expect(write_text(path, "27c6\n"), "write kernel vendor identity");
+    snprintf(path, sizeof(path), "%s/id/product", device);
+    expect(write_text(path, "0113\n"), "write kernel product identity");
+    expect(write_text(udev_record, "E:ID_PATH=platform-test-i2c\n"),
+        "write Goodix-style path identity");
+    fixture.source_mode = 0600;
+    {
+        char *args[] = {"input-proxy", "install", "--source", source,
+            "--name", "GoodixStyle", "--use-preferred-run-source", "no",
+            "--add-source-permission-rule", "yes",
+            "--add-libinput-ignore-rule", "no"};
+        check_command(args, 12, &environment, true,
+            "Persistent artifacts applied", NULL,
+            "kernel input identity can apply a permission rule");
+        snprintf(path, sizeof(path), "%s/90-input-proxy-GoodixStyle.rules", directory);
+        expect(file_contains(path, "ATTRS{id/bustype}==\"0003\"") &&
+            file_contains(path, "ATTRS{id/vendor}==\"27c6\"") &&
+            file_contains(path, "ATTRS{id/product}==\"0113\""),
+            "Goodix-style rule uses kernel identity plus path");
+    }
     expect(write_text(udev_record,
         "E:ID_VENDOR_ID=1234\nE:ID_MODEL_ID=5678\nE:ID_PATH=platform-test\n"),
         "restore narrow remediation identity");
+    {
+        char rule[512];
+        char *args[] = {"input-proxy", "install", "--source", source,
+            "--name", "ExistingRule", "--use-preferred-run-source", "no",
+            "--add-source-permission-rule", "yes",
+            "--add-libinput-ignore-rule", "no"};
+        snprintf(rule, sizeof(rule), "%s/90-input-proxy-ExistingRule.rules", directory);
+        expect(write_text(rule, "pre-existing\n"), "create pre-existing udev rule");
+        check_command(args, 12, &environment, false, NULL,
+            "failed to publish", "existing udev rule prevents application");
+        expect(file_contains(rule, "pre-existing"), "existing udev rule is preserved");
+        snprintf(path, sizeof(path), "%s/ExistingRule.args", directory);
+        expect(!path_exists(path), "existing udev rule leaves no response artifact");
+    }
+    fixture.source_mode = 0640;
     expect(input_proxy_installed_instance_store_create_for_directory(
         &store, directory) == INPUT_PROXY_INSTALLED_INSTANCE_SUCCESS,
         "open fixture Installed Instance store");

@@ -381,6 +381,7 @@ input_proxy_installed_instance_create(
             : INPUT_PROXY_INSTALLED_INSTANCE_CREATE_FAILED;
         goto cleanup;
     }
+    /* The package-owned setgid root:input-proxy directory supplies the group. */
     if (fchmod(descriptor, S_IRUSR | S_IWUSR | S_IRGRP) != 0) {
         result = INPUT_PROXY_INSTALLED_INSTANCE_CREATE_FAILED;
         goto cleanup;
