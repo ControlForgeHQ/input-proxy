@@ -1346,6 +1346,22 @@ Debian package installation prepares the host to run proxy instances. It owns:
 
 Package installation creates, enables, and starts zero proxy instances.
 
+The package owns the Installed Instance response-artifact directory and creates
+it with this identity and mode:
+
+```text
+/etc/input-proxy/instances
+    owner: root
+    group: input-proxy
+    mode: 2750
+```
+
+The setgid directory is a package-owned runtime invariant. It causes response
+artifacts created by root-running `input-proxy install` to inherit the
+`input-proxy` group and therefore be readable by the unprivileged service as
+`root:input-proxy 0640`. Instance installation consumes this prepared directory;
+it does not create, repair, or change its ownership or mode.
+
 Package removal and purge follow Debian semantics and remain distinct from
 instance removal. Normal removal preserves locally generated instance artifacts
 conservatively. Purge may remove package-owned configuration, but locally
