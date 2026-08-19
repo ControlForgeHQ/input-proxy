@@ -7,13 +7,14 @@
 #include "device_discovery_internal.h"
 #include "device_inspection_internal.h"
 #include "install_command_internal.h"
+#include "response_file_internal.h"
 #include "runtime_discovery_internal.h"
 #include "runtime_policy_internal.h"
+#include "uninstall_command_internal.h"
 
 #include <stdbool.h>
 #include <errno.h>
 #include <inttypes.h>
-#include <limits.h>
 #include <stdint.h>
 #include <signal.h>
 #include <stdio.h>
@@ -77,6 +78,7 @@ static void print_top_level_help(FILE *stream)
         "  list     List available physical input devices concisely.\n"
         "  inspect  Inspect one input device with read-only diagnostics.\n"
         "  install  Plan installation of a persistent proxy instance.\n"
+        "  uninstall Remove one persistent proxy instance.\n"
         "\n"
         "Global options:\n"
         "  --help     Show this help and exit.\n"
@@ -87,6 +89,7 @@ static void print_top_level_help(FILE *stream)
         "  input-proxy list\n"
         "  input-proxy inspect /dev/input/event0\n"
         "  sudo input-proxy install --source /dev/input/event0 --name touchscreen\n"
+        "  sudo input-proxy uninstall touchscreen\n"
         "\n"
         "Report bugs and find the project at:\n"
         "  https://github.com/ControlForgeHQ/input-proxy\n\n",
@@ -335,131 +338,6 @@ static enum input_proxy_result parse_run_config(
     return INPUT_PROXY_SUCCESS;
 }
 
-static void free_response_argv(int argc, char **argv)
-{
-    int index;
-
-    if (argv == NULL) {
-        return;
-    }
-    for (index = 2; index < argc; ++index) {
-        free(argv[index]);
-    }
-    free(argv);
-}
-
-static bool append_response_argument(
-    char ***argv,
-    int *argc,
-    const char *line,
-    size_t length)
-{
-    char **resized_argv;
-    char *argument;
-
-    if (*argc == INT_MAX) {
-        return false;
-    }
-    argument = malloc(length + 1);
-    if (argument == NULL) {
-        return false;
-    }
-    memcpy(argument, line, length);
-    argument[length] = '\0';
-
-    resized_argv = realloc(*argv, ((size_t)*argc + 1) * sizeof(**argv));
-    if (resized_argv == NULL) {
-        free(argument);
-        return false;
-    }
-    *argv = resized_argv;
-    (*argv)[*argc] = argument;
-    (*argc)++;
-    return true;
-}
-
-static bool read_response_argv(
-    const char *path,
-    char *program_name,
-    char ***response_argv,
-    int *response_argc)
-{
-    FILE *file;
-    char *line = NULL;
-    size_t capacity = 0;
-    ssize_t length;
-    bool success = false;
-    char **argv = NULL;
-    int argc = 2;
-
-    if (path[0] == '\0') {
-        fprintf(stderr, "input-proxy: response-file path after '@' is empty\n");
-        return false;
-    }
-
-    file = fopen(path, "rb");
-    if (file == NULL) {
-        fprintf(stderr, "input-proxy: cannot open response file '%s': %s\n",
-            path, strerror(errno));
-        return false;
-    }
-
-    argv = malloc(2 * sizeof(*argv));
-    if (argv == NULL) {
-        fprintf(stderr, "input-proxy: cannot allocate response-file arguments\n");
-        goto cleanup;
-    }
-    argv[0] = program_name;
-    argv[1] = "run";
-
-    errno = 0;
-    while ((length = getline(&line, &capacity, file)) >= 0) {
-        size_t argument_length = (size_t)length;
-
-        if (memchr(line, '\0', argument_length) != NULL) {
-            fprintf(stderr,
-                "input-proxy: response file '%s' contains an embedded NUL byte\n",
-                path);
-            goto cleanup;
-        }
-        if (argument_length > 0 && line[argument_length - 1] == '\n') {
-            argument_length--;
-        }
-        if (!append_response_argument(
-                &argv, &argc, line, argument_length)) {
-            fprintf(stderr,
-                "input-proxy: cannot allocate response-file arguments\n");
-            goto cleanup;
-        }
-        errno = 0;
-    }
-    if (ferror(file)) {
-        fprintf(stderr, "input-proxy: cannot read response file '%s': %s\n",
-            path, errno != 0 ? strerror(errno) : "input/output error");
-        goto cleanup;
-    }
-    if (fclose(file) != 0) {
-        file = NULL;
-        fprintf(stderr, "input-proxy: cannot finish reading response file '%s': %s\n",
-            path, strerror(errno));
-        goto cleanup;
-    }
-    file = NULL;
-
-    *response_argv = argv;
-    *response_argc = argc;
-    argv = NULL;
-    success = true;
-
-cleanup:
-    if (file != NULL) {
-        (void)fclose(file);
-    }
-    free(line);
-    free_response_argv(argc, argv);
-    return success;
-}
-
 static int run_proxy(int argc, char *argv[])
 {
     struct input_proxy_session_config config;
@@ -620,13 +498,13 @@ int main(int argc, char *argv[])
         }
 
         if (argc == 3 && argv[2][0] == '@') {
-            if (!read_response_argv(
+            if (!input_proxy_response_file_read(
                     argv[2] + 1, argv[0], &response_argv, &response_argc)) {
                 fputc('\n', stderr);
                 return EXIT_FAILURE;
             }
             result = run_proxy(response_argc, response_argv);
-            free_response_argv(response_argc, response_argv);
+            input_proxy_response_file_free(response_argc, response_argv);
             return result;
         }
 
@@ -657,6 +535,14 @@ int main(int argc, char *argv[])
         }
 
         return inspect_device(argc, argv);
+    }
+
+    if (strcmp(command, "uninstall") == 0) {
+        if (argc == 3 && strcmp(argv[2], "--help") == 0) {
+            input_proxy_uninstall_print_help(stdout);
+            return EXIT_SUCCESS;
+        }
+        return input_proxy_uninstall_command(argc, argv);
     }
 
     fprintf(stderr, "input-proxy: unknown command '%s'\n", command);

@@ -33,12 +33,14 @@ add_executable(
     src/libinput_status.c
     src/main.c
     src/proxy_session.c
+    src/response_file.c
     src/runtime_control.c
     src/runtime_discovery.c
     src/runtime_policy.c
     src/result.c
     src/source_device.c
     src/virtual_device.c
+    src/uninstall_command.c
 )
 
 target_include_directories(
@@ -254,6 +256,19 @@ if(BUILD_TESTING)
     target_link_libraries(install-command-test PRIVATE
         PkgConfig::LIBEVDEV PkgConfig::LIBSYSTEMD)
     add_test(NAME install-command-test COMMAND install-command-test)
+
+    add_executable(
+        uninstall-command-test
+        tests/uninstall_command_test.c
+        src/uninstall_command.c
+        src/response_file.c
+        src/installed_instance.c
+        src/instance_name.c
+        src/result.c
+    )
+    target_include_directories(uninstall-command-test PRIVATE
+        ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/src)
+    add_test(NAME uninstall-command-test COMMAND uninstall-command-test)
 
     add_executable(
         runtime-control-test
