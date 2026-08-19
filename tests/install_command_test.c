@@ -420,9 +420,9 @@ int main(void)
             "Source-permission rule: yes", NULL,
             "required permission remediation is planned");
         snprintf(path, sizeof(path), "%s/90-input-proxy-PermissionAccepted.rules", directory);
-        expect(file_contains(path, "GROUP=\"input-proxy\"") &&
-            file_contains(path, "MODE=\"0640\""),
-            "permission plan creates service access rule");
+        expect(file_contains(path, "GROUP:=\"input-proxy\"") &&
+            file_contains(path, "MODE:=\"0640\""),
+            "permission rule makes device-node assignments final");
     }
     {
         char *args[] = {"input-proxy", "install", "--source", source,
@@ -433,9 +433,11 @@ int main(void)
             "Persistent artifacts applied", NULL,
             "both remediation actions apply successfully");
         snprintf(path, sizeof(path), "%s/90-input-proxy-BothActions.rules", directory);
-        expect(file_contains(path, "GROUP=\"input-proxy\"") &&
-            file_contains(path, "LIBINPUT_IGNORE_DEVICE"),
-            "both actions share one udev rule");
+        expect(file_contains(path, "GROUP:=\"input-proxy\"") &&
+            file_contains(path, "MODE:=\"0640\"") &&
+            file_contains(path, "ENV{LIBINPUT_IGNORE_DEVICE}=\"1\"") &&
+            !file_contains(path, "ENV{LIBINPUT_IGNORE_DEVICE}:=\"1\""),
+            "combined rule finalizes only device-node permissions");
     }
     {
         char *args[] = {"input-proxy", "install", "--source", source,

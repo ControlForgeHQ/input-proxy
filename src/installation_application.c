@@ -58,7 +58,7 @@ static char *render_rule(const struct input_proxy_device_rule_identity *identity
     size = snprintf(NULL, 0,
         "ACTION==\"add|change\", SUBSYSTEM==\"input\", KERNEL==\"event*\", "
         "%s, ENV{ID_PATH}==\"%s\"%s%s\n", identity_match,
-        identity->path, permission ? ", GROUP=\"input-proxy\", MODE=\"0640\"" : "",
+        identity->path, permission ? ", GROUP:=\"input-proxy\", MODE:=\"0640\"" : "",
         ignore ? ", ENV{LIBINPUT_IGNORE_DEVICE}=\"1\"" : "");
     if (size < 0) return NULL;
     content = malloc((size_t)size + 1);
@@ -66,7 +66,7 @@ static char *render_rule(const struct input_proxy_device_rule_identity *identity
     (void)snprintf(content, (size_t)size + 1,
         "ACTION==\"add|change\", SUBSYSTEM==\"input\", KERNEL==\"event*\", "
         "%s, ENV{ID_PATH}==\"%s\"%s%s\n", identity_match, identity->path,
-        permission ? ", GROUP=\"input-proxy\", MODE=\"0640\"" : "",
+        permission ? ", GROUP:=\"input-proxy\", MODE:=\"0640\"" : "",
         ignore ? ", ENV{LIBINPUT_IGNORE_DEVICE}=\"1\"" : "");
     return content;
 }
