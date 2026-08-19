@@ -100,6 +100,10 @@ input_proxy_installation_plan_resolution(
     const struct input_proxy_installation_plan *plan
 );
 
+void input_proxy_installation_plan_release_runtime_name(
+    struct input_proxy_installation_plan *plan
+);
+
 void input_proxy_installation_plan_destroy(
     struct input_proxy_installation_plan *plan
 );

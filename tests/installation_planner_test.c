@@ -437,6 +437,18 @@ int main(void)
         "PlanDefaults"
     ) == INPUT_PROXY_ERROR_INSTANCE_NAME_OWNED,
         "successful plan retains runtime name reservation");
+    input_proxy_installation_plan_release_runtime_name(plan);
+    input_proxy_installation_plan_release_runtime_name(plan);
+    expect(input_proxy_installation_plan_config(plan) == config &&
+        strcmp(config->instance_name, "PlanDefaults") == 0,
+        "reservation release is idempotent and preserves the resolved plan");
+    expect(input_proxy_instance_name_acquire(
+        &ownership,
+        "PlanDefaults"
+    ) == INPUT_PROXY_SUCCESS,
+        "explicit activation-boundary operation releases reservation");
+    input_proxy_instance_name_release(ownership);
+    ownership = NULL;
     input_proxy_installation_plan_destroy(plan);
     plan = NULL;
     expect(input_proxy_instance_name_acquire(

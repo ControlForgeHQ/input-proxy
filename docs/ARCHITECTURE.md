@@ -843,9 +843,9 @@ It requires:
 - sufficient access to read the configured physical evdev source;
 - sufficient access to `/dev/uinput`.
 
-The Debian package creates a dedicated, non-login service identity and provides
-that identity dedicated access to `/dev/uinput` through package-owned
-integration.
+The Debian package creates a dedicated, non-login `input-proxy` service user
+whose primary group is the dedicated `input-proxy` group, and provides that
+identity dedicated access to `/dev/uinput` through package-owned integration.
 
 Physical-source access is a separate policy decision. At package configuration
 time, debconf determines whether the service identity joins the existing
@@ -1346,6 +1346,12 @@ Debian package installation prepares the host to run proxy instances. It owns:
 
 Package installation creates, enables, and starts zero proxy instances.
 
+Instance installation validates that both parts of the package-owned service
+identity exist and that the dedicated group is the service user's primary group
+before persistent artifact application. Missing or unusable identity
+infrastructure is a pre-commit readiness failure; `install` reports it but does
+not create or repair package-owned users or groups.
+
 The package owns the Installed Instance response-artifact directory and creates
 it with this identity and mode:
 
@@ -1439,6 +1445,34 @@ used to inspect consistency, but none defines whether an instance is installed.
 A package-owned systemd template derives its service instance from the same
 validated Instance Name and invokes one `input-proxy run` process with that
 instance's response artifact.
+
+### Installation activation
+
+Persistent artifact application and runtime activation are separate phases.
+Successful creation of the response artifact and any selected instance-owned
+udev rule is the commit boundary: the Installed Instance exists from that point,
+and a later activation failure does not remove or regenerate those artifacts.
+
+When installation created an instance-owned udev rule, activation reloads the
+ruleset, targets the selected Physical Source with a change event, waits for udev
+to settle, and verifies every selected remediation. Source-permission
+remediation is verified against the service identity, and libinput remediation
+requires the resulting udev state to contain `LIBINPUT_IGNORE_DEVICE=1`. No udev
+operation runs when installation created no rule.
+
+After required udev activation succeeds, installation enables the corresponding
+systemd service instance. It then releases its temporary runtime Instance Name
+reservation before starting the service. The ordinary `input-proxy run` process
+acquires the same authoritative abstract-socket ownership used by manual
+runtime invocation; no ownership descriptor is transferred. The small
+release/start interval is intentional, and an ownership collision during it
+causes the normal service-start failure.
+
+Installation inspects the resulting service state and reports success only when
+the unit is active and running. A proxy process waiting for an unavailable
+Physical Source remains active and running and is therefore a successful
+activation. If enablement succeeds but startup or state verification fails, the
+unit remains enabled and the committed Installed Instance remains installed.
 
 ### Instance-owned artifacts and removal
 

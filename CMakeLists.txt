@@ -26,6 +26,7 @@ add_executable(
     src/device_inspection.c
     src/installed_instance.c
     src/install_command.c
+    src/installation_activation.c
     src/installation_application.c
     src/installation_planner.c
     src/instance_name.c
@@ -236,6 +237,7 @@ if(BUILD_TESTING)
         install-command-test
         tests/install_command_test.c
         src/install_command.c
+        src/installation_activation.c
         src/installation_application.c
         src/installation_planner.c
         src/installed_instance.c
@@ -291,6 +293,14 @@ if(BUILD_TESTING)
     )
     target_link_libraries(runtime-discovery-test PRIVATE PkgConfig::LIBSYSTEMD)
     add_test(NAME runtime-discovery-test COMMAND runtime-discovery-test)
+
+    add_test(
+        NAME systemd-template-test
+        COMMAND
+            ${CMAKE_COMMAND}
+            -DINPUT_PROXY_SYSTEMD_TEMPLATE=${PROJECT_SOURCE_DIR}/systemd/input-proxy@.service
+            -P ${PROJECT_SOURCE_DIR}/tests/systemd_template_test.cmake
+    )
 
     add_test(
         NAME cli-test

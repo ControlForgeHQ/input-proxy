@@ -357,13 +357,23 @@ input_proxy_installation_plan_resolution(
         ? &plan->resolution : NULL;
 }
 
-void input_proxy_installation_plan_destroy(
+void input_proxy_installation_plan_release_runtime_name(
     struct input_proxy_installation_plan *plan)
 {
     if (plan == NULL) {
         return;
     }
     input_proxy_instance_name_release(plan->name_ownership);
+    plan->name_ownership = NULL;
+}
+
+void input_proxy_installation_plan_destroy(
+    struct input_proxy_installation_plan *plan)
+{
+    if (plan == NULL) {
+        return;
+    }
+    input_proxy_installation_plan_release_runtime_name(plan);
     free(plan->source_path);
     free(plan->instance_name);
     free(plan);
