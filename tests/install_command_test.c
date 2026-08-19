@@ -22,6 +22,9 @@ struct activation_fixture {
     enum input_proxy_installation_service_state state;
     bool collide_on_start;
     struct input_proxy_instance_name *collision;
+    char trigger_source[512];
+    char permission_source[512];
+    char ignore_source[512];
 };
 
 static void record_activation(struct activation_fixture *fixture, char code)
@@ -41,7 +44,8 @@ static bool activation_reload(void *userdata)
 static bool activation_trigger(const char *value, void *userdata)
 {
     struct activation_fixture *fixture = userdata;
-    (void)value;
+    (void)snprintf(fixture->trigger_source,
+        sizeof(fixture->trigger_source), "%s", value);
     record_activation(fixture, 'T');
     return fixture->failure != INPUT_PROXY_INSTALLATION_ACTIVATION_UDEV_TRIGGER_FAILED;
 }
@@ -80,7 +84,13 @@ static bool activation_verify_success(const char *value,
 {
     struct activation_fixture *fixture = userdata;
     char code = strchr(fixture->sequence, 'P') == NULL ? 'P' : 'I';
-    (void)value; (void)deployment;
+    (void)deployment;
+    if (code == 'P')
+        (void)snprintf(fixture->permission_source,
+            sizeof(fixture->permission_source), "%s", value);
+    else
+        (void)snprintf(fixture->ignore_source,
+            sizeof(fixture->ignore_source), "%s", value);
     record_activation(fixture, code);
     return fixture->failure != (code == 'P'
         ? INPUT_PROXY_INSTALLATION_ACTIVATION_PERMISSION_VERIFICATION_FAILED
@@ -303,6 +313,29 @@ int main(void)
         expect(file_contains(path, "ENV{LIBINPUT_IGNORE_DEVICE}=\"1\"") &&
             file_contains(path, "ID_VENDOR_ID"), "ignore rule uses narrow udev identity");
     }
+    fixture.source_mode = 0600;
+    memset(&activation, 0, sizeof(activation));
+    activation.state = INPUT_PROXY_INSTALLATION_SERVICE_RUNNING;
+    {
+        char *args[] = {"input-proxy", "install", "--source", source,
+            "--name", "PreferredActivationSource",
+            "--use-preferred-run-source", "yes",
+            "--add-source-permission-rule", "yes",
+            "--add-libinput-ignore-rule", "yes"};
+        check_command(args, 12, &environment, true, NULL, NULL,
+            "preferred runtime source activates the assessed Physical Source");
+        snprintf(path, sizeof(path), "%s/PreferredActivationSource.args",
+            directory);
+        expect(file_contains(path, alias),
+            "preferred source remains the persisted runtime policy");
+        expect(strcmp(activation.trigger_source, source) == 0 &&
+            strcmp(activation.permission_source, source) == 0 &&
+            strcmp(activation.ignore_source, source) == 0,
+            "udev activation and verification use the assessed Physical Source");
+    }
+    fixture.source_mode = 0640;
+    memset(&activation, 0, sizeof(activation));
+    activation.state = INPUT_PROXY_INSTALLATION_SERVICE_RUNNING;
     {
         char *args[] = {"input-proxy", "install", "--source", source,
             "--name", "RetainSource", "--use-preferred-run-source", "no",

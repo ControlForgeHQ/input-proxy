@@ -189,13 +189,17 @@ input_proxy_installation_plan_activate(struct input_proxy_installation_plan *pla
         environment == NULL ? NULL : environment->deployment;
     const struct input_proxy_deployment_resolution *resolution =
         input_proxy_installation_plan_resolution(plan);
+    const struct input_proxy_deployment_readiness *readiness =
+        input_proxy_installation_plan_readiness(plan);
     const struct input_proxy_session_config *config =
         input_proxy_installation_plan_config(plan);
     char unit[256];
     enum input_proxy_installation_service_state state;
     bool has_rule;
 
-    if (resolution == NULL || config == NULL || !resolution->application_ready ||
+    if (resolution == NULL || readiness == NULL ||
+        readiness->supplied_source_path == NULL || config == NULL ||
+        !resolution->application_ready ||
         operations->enable_service == NULL || operations->start_service == NULL ||
         operations->service_state == NULL)
         return INPUT_PROXY_INSTALLATION_ACTIVATION_INVALID_PLAN;
@@ -206,19 +210,22 @@ input_proxy_installation_plan_activate(struct input_proxy_installation_plan *pla
             !operations->reload_udev(operations->userdata))
             return INPUT_PROXY_INSTALLATION_ACTIVATION_UDEV_RELOAD_FAILED;
         if (operations->trigger_source == NULL ||
-            !operations->trigger_source(config->source_path, operations->userdata))
+            !operations->trigger_source(readiness->supplied_source_path,
+                operations->userdata))
             return INPUT_PROXY_INSTALLATION_ACTIVATION_UDEV_TRIGGER_FAILED;
         if (operations->settle_udev == NULL ||
             !operations->settle_udev(operations->userdata))
             return INPUT_PROXY_INSTALLATION_ACTIVATION_UDEV_SETTLE_FAILED;
         if (resolution->source_permission_action &&
             (operations->verify_source_permission == NULL ||
-             !operations->verify_source_permission(config->source_path,
+             !operations->verify_source_permission(
+                 readiness->supplied_source_path,
                  deployment, operations->userdata)))
             return INPUT_PROXY_INSTALLATION_ACTIVATION_PERMISSION_VERIFICATION_FAILED;
         if (resolution->libinput_ignore_action &&
             (operations->verify_libinput_ignore == NULL ||
-             !operations->verify_libinput_ignore(config->source_path,
+             !operations->verify_libinput_ignore(
+                 readiness->supplied_source_path,
                  deployment, operations->userdata)))
             return INPUT_PROXY_INSTALLATION_ACTIVATION_LIBINPUT_VERIFICATION_FAILED;
     }
