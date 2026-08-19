@@ -295,6 +295,14 @@ if(BUILD_TESTING)
     add_test(NAME runtime-discovery-test COMMAND runtime-discovery-test)
 
     add_test(
+        NAME systemd-template-test
+        COMMAND
+            ${CMAKE_COMMAND}
+            -DINPUT_PROXY_SYSTEMD_TEMPLATE=${PROJECT_SOURCE_DIR}/systemd/input-proxy@.service
+            -P ${PROJECT_SOURCE_DIR}/tests/systemd_template_test.cmake
+    )
+
+    add_test(
         NAME cli-test
         COMMAND
             ${CMAKE_COMMAND}

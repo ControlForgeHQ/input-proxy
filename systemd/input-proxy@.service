@@ -1,0 +1,12 @@
+[Unit]
+Description=input-proxy instance %i
+
+[Service]
+Type=simple
+User=input-proxy
+Group=input-proxy
+ExecStart=/usr/bin/input-proxy run @/etc/input-proxy/instances/%i.args
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
