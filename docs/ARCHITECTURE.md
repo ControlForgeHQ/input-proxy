@@ -843,9 +843,9 @@ It requires:
 - sufficient access to read the configured physical evdev source;
 - sufficient access to `/dev/uinput`.
 
-The Debian package creates a dedicated, non-login service identity and provides
-that identity dedicated access to `/dev/uinput` through package-owned
-integration.
+The Debian package creates a dedicated, non-login `input-proxy` service user
+whose primary group is the dedicated `input-proxy` group, and provides that
+identity dedicated access to `/dev/uinput` through package-owned integration.
 
 Physical-source access is a separate policy decision. At package configuration
 time, debconf determines whether the service identity joins the existing
@@ -1345,6 +1345,12 @@ Debian package installation prepares the host to run proxy instances. It owns:
   existing `input` group.
 
 Package installation creates, enables, and starts zero proxy instances.
+
+Instance installation validates that both parts of the package-owned service
+identity exist and that the dedicated group is the service user's primary group
+before persistent artifact application. Missing or unusable identity
+infrastructure is a pre-commit readiness failure; `install` reports it but does
+not create or repair package-owned users or groups.
 
 The package owns the Installed Instance response-artifact directory and creates
 it with this identity and mode:

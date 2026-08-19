@@ -124,6 +124,15 @@ struct fixture {
     mode_t source_mode;
 };
 
+static enum input_proxy_install_service_identity_result service_identity_result;
+
+static enum input_proxy_install_service_identity_result check_service_identity(
+    void *userdata)
+{
+    (void)userdata;
+    return service_identity_result;
+}
+
 static void expect(bool condition, const char *description)
 {
     if (!condition) {
@@ -281,7 +290,8 @@ int main(void)
         .effective_uid = 0, .interactive = false, .input = empty_input,
         .installed_instance_directory = directory,
         .udev_rule_directory = directory, .deployment = &deployment,
-        .activation_operations = &activation_operations
+        .activation_operations = &activation_operations,
+        .check_service_identity = check_service_identity
     };
     activation_operations.userdata = &activation;
 
@@ -299,6 +309,49 @@ int main(void)
             "standard input is not interactive",
             "missing required value fails without interaction");
     }
+    {
+        char *args[] = {"input-proxy", "install", "--source", source,
+            "--name", "MissingServiceUser"};
+        service_identity_result = INPUT_PROXY_INSTALL_SERVICE_USER_MISSING;
+        check_command(args, 6, &environment, false, NULL,
+            "required service user 'input-proxy' is missing",
+            "missing package service user blocks installation");
+        snprintf(path, sizeof(path), "%s/MissingServiceUser.args", directory);
+        expect(!path_exists(path),
+            "missing service user fails before persistent application");
+    }
+    fixture.source_mode = 0600;
+    {
+        char *args[] = {"input-proxy", "install", "--source", source,
+            "--name", "MissingServiceGroup", "--use-preferred-run-source", "no",
+            "--add-source-permission-rule", "yes",
+            "--add-libinput-ignore-rule", "no"};
+        service_identity_result = INPUT_PROXY_INSTALL_SERVICE_GROUP_MISSING;
+        check_command(args, 12, &environment, false, NULL,
+            "required service group 'input-proxy' is missing",
+            "missing package service group blocks installation");
+        snprintf(path, sizeof(path), "%s/MissingServiceGroup.args", directory);
+        expect(!path_exists(path),
+            "missing service group fails before persistent application");
+        snprintf(path, sizeof(path),
+            "%s/90-input-proxy-MissingServiceGroup.rules", directory);
+        expect(!path_exists(path),
+            "missing service group prevents permission-rule publication");
+    }
+    fixture.source_mode = 0640;
+    {
+        char *args[] = {"input-proxy", "install", "--source", source,
+            "--name", "MismatchedServiceGroup"};
+        service_identity_result =
+            INPUT_PROXY_INSTALL_SERVICE_PRIMARY_GROUP_MISMATCH;
+        check_command(args, 6, &environment, false, NULL,
+            "must have the dedicated 'input-proxy' group as its primary group",
+            "mismatched package service primary group blocks installation");
+        snprintf(path, sizeof(path), "%s/MismatchedServiceGroup.args", directory);
+        expect(!path_exists(path),
+            "primary-group mismatch fails before persistent application");
+    }
+    service_identity_result = INPUT_PROXY_INSTALL_SERVICE_IDENTITY_VALID;
     {
         char *args[] = {"input-proxy", "install", "--source", source,
             "--name", "ExplicitPreferred", "--use-preferred-run-source", "yes",

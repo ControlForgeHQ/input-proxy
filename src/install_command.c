@@ -8,6 +8,7 @@
 #include "installation_activation_internal.h"
 #include "runtime_policy_internal.h"
 
+#include <errno.h>
 #include <grp.h>
 #include <inttypes.h>
 #include <pwd.h>
@@ -166,32 +167,58 @@ static bool parse_arguments(int argc, char *argv[],
     return true;
 }
 
-static bool service_environment(struct input_proxy_deployment_environment *env,
-    gid_t **groups, FILE *error)
+static enum input_proxy_install_service_identity_result service_environment(
+    struct input_proxy_deployment_environment *env, gid_t **groups)
 {
-    struct passwd *account = getpwnam(SERVICE_IDENTITY);
+    struct passwd *account;
+    struct group *group;
+    uid_t service_uid;
+    gid_t service_gid;
     int count = 0;
 
-    if (account == NULL) {
-        fprintf(error, "input-proxy: required service identity '%s' is missing; install or repair the package first\n", SERVICE_IDENTITY);
-        return false;
-    }
-    (void)getgrouplist(account->pw_name, account->pw_gid, NULL, &count);
+    errno = 0;
+    account = getpwnam(SERVICE_IDENTITY);
+    if (account == NULL)
+        return errno == 0 ? INPUT_PROXY_INSTALL_SERVICE_USER_MISSING
+                          : INPUT_PROXY_INSTALL_SERVICE_IDENTITY_UNUSABLE;
+    service_uid = account->pw_uid;
+    service_gid = account->pw_gid;
+    errno = 0;
+    group = getgrnam(SERVICE_IDENTITY);
+    if (group == NULL)
+        return errno == 0 ? INPUT_PROXY_INSTALL_SERVICE_GROUP_MISSING
+                          : INPUT_PROXY_INSTALL_SERVICE_IDENTITY_UNUSABLE;
+    if (service_gid != group->gr_gid)
+        return INPUT_PROXY_INSTALL_SERVICE_PRIMARY_GROUP_MISMATCH;
+    (void)getgrouplist(SERVICE_IDENTITY, service_gid, NULL, &count);
     if (count <= 0) count = 1;
     *groups = malloc((size_t)count * sizeof(**groups));
-    if (*groups == NULL) return false;
-    if (getgrouplist(account->pw_name, account->pw_gid, *groups, &count) < 0) {
+    if (*groups == NULL)
+        return INPUT_PROXY_INSTALL_SERVICE_IDENTITY_UNUSABLE;
+    if (getgrouplist(SERVICE_IDENTITY, service_gid, *groups, &count) < 0) {
         free(*groups); *groups = NULL;
-        fprintf(error, "input-proxy: failed to resolve groups for service identity '%s'\n", SERVICE_IDENTITY);
-        return false;
+        return INPUT_PROXY_INSTALL_SERVICE_IDENTITY_UNUSABLE;
     }
     *env = (struct input_proxy_deployment_environment) {
         .sysfs_input_path = "/sys/class/input", .device_input_path = "/dev/input",
         .uinput_path = "/dev/uinput", .udev_data_path = "/run/udev/data",
-        .service_uid = account->pw_uid, .service_gid = account->pw_gid,
+        .service_uid = service_uid, .service_gid = service_gid,
         .service_groups = *groups, .service_group_count = (size_t)count
     };
-    return true;
+    return INPUT_PROXY_INSTALL_SERVICE_IDENTITY_VALID;
+}
+
+static void report_service_identity_error(
+    enum input_proxy_install_service_identity_result result, FILE *error)
+{
+    if (result == INPUT_PROXY_INSTALL_SERVICE_USER_MISSING)
+        fprintf(error, "input-proxy: required service user '%s' is missing; install or repair the package first\n", SERVICE_IDENTITY);
+    else if (result == INPUT_PROXY_INSTALL_SERVICE_GROUP_MISSING)
+        fprintf(error, "input-proxy: required service group '%s' is missing; install or repair the package first\n", SERVICE_IDENTITY);
+    else if (result == INPUT_PROXY_INSTALL_SERVICE_PRIMARY_GROUP_MISMATCH)
+        fprintf(error, "input-proxy: service user '%s' must have the dedicated '%s' group as its primary group; install or repair the package first\n", SERVICE_IDENTITY, SERVICE_IDENTITY);
+    else
+        fprintf(error, "input-proxy: required service identity '%s' is unusable; install or repair the package first\n", SERVICE_IDENTITY);
 }
 
 static void print_plan(const struct input_proxy_session_config *config,
@@ -277,6 +304,7 @@ int input_proxy_install_command_with_environment(int argc, char *argv[],
     struct input_proxy_installation_application_environment application_environment;
     struct input_proxy_installation_activation_environment activation_environment;
     enum input_proxy_installation_activation_result activation_result;
+    enum input_proxy_install_service_identity_result identity_result;
     gid_t *groups = NULL;
     char *prompted_source = NULL, *prompted_name = NULL;
     bool answer;
@@ -314,9 +342,21 @@ int input_proxy_install_command_with_environment(int argc, char *argv[],
     if (result != INPUT_PROXY_INSTALLATION_PLAN_SUCCESS) { report_plan_error(result, request.instance_name, command_environment->error); goto cleanup; }
     deployment = command_environment->deployment;
     if (deployment == NULL) {
-        if (!service_environment(&resolved_deployment, &groups,
-                command_environment->error)) goto cleanup;
+        identity_result = service_environment(&resolved_deployment, &groups);
+        if (identity_result != INPUT_PROXY_INSTALL_SERVICE_IDENTITY_VALID) {
+            report_service_identity_error(identity_result,
+                command_environment->error);
+            goto cleanup;
+        }
         deployment = &resolved_deployment;
+    } else if (command_environment->check_service_identity != NULL) {
+        identity_result = command_environment->check_service_identity(
+            command_environment->service_identity_userdata);
+        if (identity_result != INPUT_PROXY_INSTALL_SERVICE_IDENTITY_VALID) {
+            report_service_identity_error(identity_result,
+                command_environment->error);
+            goto cleanup;
+        }
     }
     result = input_proxy_installation_plan_assess(plan, deployment);
     if (result != INPUT_PROXY_INSTALLATION_PLAN_SUCCESS) { report_plan_error(result, request.instance_name, command_environment->error); goto cleanup; }
