@@ -14,6 +14,99 @@
 #include <unistd.h>
 
 static int failures;
+static void expect(bool condition, const char *description);
+
+struct activation_fixture {
+    char sequence[64];
+    enum input_proxy_installation_activation_result failure;
+    enum input_proxy_installation_service_state state;
+    bool collide_on_start;
+    struct input_proxy_instance_name *collision;
+};
+
+static void record_activation(struct activation_fixture *fixture, char code)
+{
+    size_t length = strlen(fixture->sequence);
+    fixture->sequence[length] = code;
+    fixture->sequence[length + 1] = '\0';
+}
+
+static bool activation_reload(void *userdata)
+{
+    struct activation_fixture *fixture = userdata;
+    record_activation(fixture, 'R');
+    return fixture->failure != INPUT_PROXY_INSTALLATION_ACTIVATION_UDEV_RELOAD_FAILED;
+}
+
+static bool activation_trigger(const char *value, void *userdata)
+{
+    struct activation_fixture *fixture = userdata;
+    (void)value;
+    record_activation(fixture, 'T');
+    return fixture->failure != INPUT_PROXY_INSTALLATION_ACTIVATION_UDEV_TRIGGER_FAILED;
+}
+
+static bool activation_settle(void *userdata)
+{
+    struct activation_fixture *fixture = userdata;
+    record_activation(fixture, 'S');
+    return fixture->failure != INPUT_PROXY_INSTALLATION_ACTIVATION_UDEV_SETTLE_FAILED;
+}
+
+static bool activation_enable(const char *value, void *userdata)
+{
+    struct activation_fixture *fixture = userdata;
+    (void)value;
+    record_activation(fixture, 'E');
+    return fixture->failure != INPUT_PROXY_INSTALLATION_ACTIVATION_ENABLE_FAILED;
+}
+
+static bool activation_start(const char *value, void *userdata)
+{
+    struct activation_fixture *fixture = userdata;
+    (void)value;
+    record_activation(fixture, 'A');
+    if (fixture->collide_on_start) {
+        expect(input_proxy_instance_name_acquire(&fixture->collision,
+            "ActivationCollision") == INPUT_PROXY_SUCCESS,
+            "runtime collision can acquire released reservation");
+        return false;
+    }
+    return fixture->failure != INPUT_PROXY_INSTALLATION_ACTIVATION_START_FAILED;
+}
+
+static bool activation_verify_success(const char *value,
+    const struct input_proxy_deployment_environment *deployment, void *userdata)
+{
+    struct activation_fixture *fixture = userdata;
+    char code = strchr(fixture->sequence, 'P') == NULL ? 'P' : 'I';
+    (void)value; (void)deployment;
+    record_activation(fixture, code);
+    return fixture->failure != (code == 'P'
+        ? INPUT_PROXY_INSTALLATION_ACTIVATION_PERMISSION_VERIFICATION_FAILED
+        : INPUT_PROXY_INSTALLATION_ACTIVATION_LIBINPUT_VERIFICATION_FAILED);
+}
+
+static enum input_proxy_installation_service_state activation_running(
+    const char *unit, void *userdata)
+{
+    struct activation_fixture *fixture = userdata;
+    (void)unit;
+    record_activation(fixture, 'Q');
+    return fixture->state;
+}
+
+static struct input_proxy_installation_activation_operations
+activation_operations = {
+    .reload_udev = activation_reload,
+    .trigger_source = activation_trigger,
+    .settle_udev = activation_settle,
+    .verify_source_permission = activation_verify_success,
+    .verify_libinput_ignore = activation_verify_success,
+    .enable_service = activation_enable,
+    .start_service = activation_start,
+    .service_state = activation_running
+};
 
 struct fixture {
     const char *source;
@@ -125,6 +218,9 @@ int main(void)
     struct input_proxy_instance_name *ownership = NULL;
     struct input_proxy_session_config installed = {0};
     FILE *empty_input = tmpfile();
+    struct activation_fixture activation = {
+        .state = INPUT_PROXY_INSTALLATION_SERVICE_RUNNING
+    };
 
     expect(mkdtemp(directory) != NULL, "create fixture directory");
     snprintf(sysfs, sizeof(sysfs), "%s/sys", directory);
@@ -174,8 +270,10 @@ int main(void)
     environment = (struct input_proxy_install_command_environment) {
         .effective_uid = 0, .interactive = false, .input = empty_input,
         .installed_instance_directory = directory,
-        .udev_rule_directory = directory, .deployment = &deployment
+        .udev_rule_directory = directory, .deployment = &deployment,
+        .activation_operations = &activation_operations
     };
+    activation_operations.userdata = &activation;
 
     {
         char *args[] = {"input-proxy", "install", "--source", source,
@@ -363,6 +461,115 @@ int main(void)
     };
     expect(input_proxy_installed_instance_create(store, &installed) ==
         INPUT_PROXY_INSTALLED_INSTANCE_SUCCESS, "create installed collision");
+
+    memset(&activation, 0, sizeof(activation));
+    activation.state = INPUT_PROXY_INSTALLATION_SERVICE_RUNNING;
+    {
+        char *args[] = {"input-proxy", "install", "--source", source,
+            "--name", "ActivationNoRule", "--use-preferred-run-source", "no",
+            "--add-libinput-ignore-rule", "no"};
+        check_command(args, 10, &environment, true, "installed, enabled, and running",
+            NULL, "activation without a udev rule succeeds");
+        expect(strcmp(activation.sequence, "EAQ") == 0,
+            "activation without a rule skips all udev operations");
+    }
+    memset(&activation, 0, sizeof(activation));
+    activation.state = INPUT_PROXY_INSTALLATION_SERVICE_RUNNING;
+    fixture.source_mode = 0600;
+    {
+        char *args[] = {"input-proxy", "install", "--source", source,
+            "--name", "ActivationWithRule", "--use-preferred-run-source", "no",
+            "--add-source-permission-rule", "yes",
+            "--add-libinput-ignore-rule", "yes"};
+        check_command(args, 12, &environment, true, "installed, enabled, and running",
+            NULL, "activation with a udev rule succeeds");
+        expect(strcmp(activation.sequence, "RTSPIEAQ") == 0,
+            "udev activation and verification precede systemd activation");
+    }
+    memset(&activation, 0, sizeof(activation));
+    activation.state = INPUT_PROXY_INSTALLATION_SERVICE_RUNNING;
+    activation.failure = INPUT_PROXY_INSTALLATION_ACTIVATION_UDEV_RELOAD_FAILED;
+    {
+        char *args[] = {"input-proxy", "install", "--source", source,
+            "--name", "ActivationReloadFailure", "--use-preferred-run-source", "no",
+            "--add-source-permission-rule", "yes",
+            "--add-libinput-ignore-rule", "no"};
+        check_command(args, 12, &environment, false, NULL,
+            "exists, but activation failed: failed to reload udev rules",
+            "udev reload failure is a distinct post-commit failure");
+        snprintf(path, sizeof(path), "%s/ActivationReloadFailure.args", directory);
+        expect(path_exists(path) && strcmp(activation.sequence, "R") == 0,
+            "udev reload failure preserves installation and skips systemd");
+    }
+    memset(&activation, 0, sizeof(activation));
+    activation.state = INPUT_PROXY_INSTALLATION_SERVICE_RUNNING;
+    activation.failure = INPUT_PROXY_INSTALLATION_ACTIVATION_PERMISSION_VERIFICATION_FAILED;
+    {
+        char *args[] = {"input-proxy", "install", "--source", source,
+            "--name", "ActivationVerifyFailure", "--use-preferred-run-source", "no",
+            "--add-source-permission-rule", "yes",
+            "--add-libinput-ignore-rule", "no"};
+        check_command(args, 12, &environment, false, NULL,
+            "service identity still cannot read",
+            "udev remediation verification failure is reported");
+        snprintf(path, sizeof(path), "%s/ActivationVerifyFailure.args", directory);
+        expect(path_exists(path) && strcmp(activation.sequence, "RTSP") == 0,
+            "verification failure preserves installation and skips systemd");
+    }
+    fixture.source_mode = 0640;
+    memset(&activation, 0, sizeof(activation));
+    activation.state = INPUT_PROXY_INSTALLATION_SERVICE_RUNNING;
+    activation.failure = INPUT_PROXY_INSTALLATION_ACTIVATION_ENABLE_FAILED;
+    {
+        char *args[] = {"input-proxy", "install", "--source", source,
+            "--name", "ActivationEnableFailure", "--use-preferred-run-source", "no",
+            "--add-libinput-ignore-rule", "no"};
+        check_command(args, 10, &environment, false, NULL, "failed to enable",
+            "systemd enable failure is reported after commit");
+        snprintf(path, sizeof(path), "%s/ActivationEnableFailure.args", directory);
+        expect(path_exists(path) && strcmp(activation.sequence, "E") == 0,
+            "enable failure preserves installation and does not start");
+    }
+    memset(&activation, 0, sizeof(activation));
+    activation.state = INPUT_PROXY_INSTALLATION_SERVICE_RUNNING;
+    activation.failure = INPUT_PROXY_INSTALLATION_ACTIVATION_START_FAILED;
+    {
+        char *args[] = {"input-proxy", "install", "--source", source,
+            "--name", "ActivationStartFailure", "--use-preferred-run-source", "no",
+            "--add-libinput-ignore-rule", "no"};
+        check_command(args, 10, &environment, false, NULL, "failed to start the enabled",
+            "systemd start failure is reported after enablement");
+        expect(strcmp(activation.sequence, "EA") == 0,
+            "start failure leaves prior enablement intact");
+    }
+    memset(&activation, 0, sizeof(activation));
+    activation.state = INPUT_PROXY_INSTALLATION_SERVICE_FAILED;
+    {
+        char *args[] = {"input-proxy", "install", "--source", source,
+            "--name", "ActivationServiceFailed", "--use-preferred-run-source", "no",
+            "--add-libinput-ignore-rule", "no"};
+        check_command(args, 10, &environment, false, NULL, "entered the failed state",
+            "immediate service failure is not reported as success");
+        expect(strcmp(activation.sequence, "EAQ") == 0,
+            "service state is inspected after successful start invocation");
+    }
+    memset(&activation, 0, sizeof(activation));
+    activation.state = INPUT_PROXY_INSTALLATION_SERVICE_RUNNING;
+    activation.collide_on_start = true;
+    {
+        char *args[] = {"input-proxy", "install", "--source", source,
+            "--name", "ActivationCollision", "--use-preferred-run-source", "no",
+            "--add-libinput-ignore-rule", "no"};
+        check_command(args, 10, &environment, false, NULL, "failed to start the enabled",
+            "runtime collision after release follows ordinary start failure path");
+        snprintf(path, sizeof(path), "%s/ActivationCollision.args", directory);
+        expect(path_exists(path) && activation.collision != NULL,
+            "runtime collision preserves Installed Instance artifacts");
+        input_proxy_instance_name_release(activation.collision);
+        activation.collision = NULL;
+    }
+    memset(&activation, 0, sizeof(activation));
+    activation.state = INPUT_PROXY_INSTALLATION_SERVICE_RUNNING;
     {
         char *args[] = {"input-proxy", "install", "--source", source,
             "--name", "InstalledCollision"};

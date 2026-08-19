@@ -6,6 +6,7 @@
 #include <sys/types.h>
 
 #include "deployment_readiness_internal.h"
+#include "installation_activation_internal.h"
 
 struct input_proxy_install_command_environment {
     uid_t effective_uid;
@@ -18,6 +19,7 @@ struct input_proxy_install_command_environment {
     bool inject_rule_publication_failure;
     bool inject_response_rollback_failure;
     const struct input_proxy_deployment_environment *deployment;
+    const struct input_proxy_installation_activation_operations *activation_operations;
 };
 
 void input_proxy_install_print_help(FILE *stream);

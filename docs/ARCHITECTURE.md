@@ -1440,6 +1440,34 @@ A package-owned systemd template derives its service instance from the same
 validated Instance Name and invokes one `input-proxy run` process with that
 instance's response artifact.
 
+### Installation activation
+
+Persistent artifact application and runtime activation are separate phases.
+Successful creation of the response artifact and any selected instance-owned
+udev rule is the commit boundary: the Installed Instance exists from that point,
+and a later activation failure does not remove or regenerate those artifacts.
+
+When installation created an instance-owned udev rule, activation reloads the
+ruleset, targets the selected Physical Source with a change event, waits for udev
+to settle, and verifies every selected remediation. Source-permission
+remediation is verified against the service identity, and libinput remediation
+requires the resulting udev state to contain `LIBINPUT_IGNORE_DEVICE=1`. No udev
+operation runs when installation created no rule.
+
+After required udev activation succeeds, installation enables the corresponding
+systemd service instance. It then releases its temporary runtime Instance Name
+reservation before starting the service. The ordinary `input-proxy run` process
+acquires the same authoritative abstract-socket ownership used by manual
+runtime invocation; no ownership descriptor is transferred. The small
+release/start interval is intentional, and an ownership collision during it
+causes the normal service-start failure.
+
+Installation inspects the resulting service state and reports success only when
+the unit is active and running. A proxy process waiting for an unavailable
+Physical Source remains active and running and is therefore a successful
+activation. If enablement succeeds but startup or state verification fails, the
+unit remains enabled and the committed Installed Instance remains installed.
+
 ### Instance-owned artifacts and removal
 
 An Installed Instance owns:
