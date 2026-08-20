@@ -91,6 +91,14 @@ static bool write_text(const char *path, const char *text)
 
 static bool exists(const char *path) { return access(path, F_OK) == 0; }
 
+static bool has_one_terminating_blank_line(const char *text)
+{
+    size_t length = strlen(text);
+
+    return length >= 2 && strcmp(text + length - 2, "\n\n") == 0 &&
+        (length < 3 || text[length - 3] != '\n');
+}
+
 static int invoke(const char *directory, struct fixture *fixture,
     bool interactive, FILE *input, const char *name, char **output_text,
     char **error_text)
@@ -139,6 +147,29 @@ int main(void)
     char *output = NULL, *error = NULL;
     FILE *selection;
 
+    {
+        char *arguments[] = { "input-proxy", "uninstall" };
+        size_t output_size = 0, error_size = 0;
+        FILE *captured_output = open_memstream(&output, &output_size);
+        FILE *captured_error = open_memstream(&error, &error_size);
+        const struct input_proxy_uninstall_command_environment environment = {
+            .effective_uid = 1000, .interactive = false, .input = stdin,
+            .output = captured_output, .error = captured_error
+        };
+
+        expect(input_proxy_uninstall_command_with_environment(
+            2, arguments, &environment) == EXIT_FAILURE,
+            "unprivileged uninstall fails");
+        fclose(captured_output);
+        fclose(captured_error);
+        expect(output[0] == '\0' && strstr(error,
+            "input-proxy: uninstall requires root privileges; rerun this command with sudo") != NULL,
+            "unprivileged uninstall reports actionable wording on stderr");
+        expect(has_one_terminating_blank_line(error),
+            "unprivileged uninstall leaves one terminating blank line");
+        free(output); free(error); output = error = NULL;
+    }
+
     expect(mkdtemp(directory) != NULL, "create fixture directory");
     snprintf(response, sizeof(response), "%s/Test-One.args", directory);
     snprintf(rule, sizeof(rule), "%s/90-input-proxy-Test-One.rules", directory);
@@ -158,6 +189,8 @@ int main(void)
         fixture.triggers == 1 && fixture.settles == 1, "run complete teardown sequence");
     expect(strstr(output, "has been uninstalled") != NULL && error[0] == '\0',
         "report successful uninstall");
+    expect(has_one_terminating_blank_line(output),
+        "successful uninstall leaves one terminating blank line");
     free(output); free(error); output = error = NULL;
 
     fixture = (struct fixture) {
@@ -233,6 +266,8 @@ int main(void)
     expect(invoke(directory, &fixture, false, stdin, NULL, &output, &error)
         == EXIT_SUCCESS && strstr(output, "No Installed Instances") != NULL,
         "empty store exits without mutation");
+    expect(has_one_terminating_blank_line(output),
+        "empty store leaves one terminating blank line");
     free(output); free(error);
     rmdir(directory);
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;

@@ -193,7 +193,7 @@ int input_proxy_uninstall_command_with_environment(int argc, char *argv[],
     if (environment == NULL || environment->input == NULL ||
         environment->output == NULL || environment->error == NULL) return EXIT_FAILURE;
     if (environment->effective_uid != 0) {
-        fputs("input-proxy: uninstall must be run as root; normally use sudo input-proxy uninstall ...\n\n", environment->error);
+        fputs("input-proxy: uninstall requires root privileges; rerun this command with sudo\n\n", environment->error);
         return EXIT_FAILURE;
     }
     if (argc > 3 || (argc == 3 && strcmp(argv[2], "--help") == 0)) {
@@ -207,7 +207,7 @@ int input_proxy_uninstall_command_with_environment(int argc, char *argv[],
             environment->installed_instance_directory);
     if (store_result != INPUT_PROXY_INSTALLED_INSTANCE_SUCCESS) {
         fputs("input-proxy: failed to initialize the Installed Instance store\n", environment->error);
-        goto cleanup;
+        goto cleanup_with_spacing;
     }
     if (argc == 3) {
         name = strdup(argv[2]);
@@ -215,30 +215,30 @@ int input_proxy_uninstall_command_with_environment(int argc, char *argv[],
         store_result = input_proxy_installed_instance_exists(store, name, &exists);
         if (store_result == INPUT_PROXY_INSTALLED_INSTANCE_INVALID_NAME) {
             fprintf(environment->error, "input-proxy: invalid Instance Name '%s'\n", name);
-            goto cleanup;
+            goto cleanup_with_spacing;
         }
         if (store_result != INPUT_PROXY_INSTALLED_INSTANCE_SUCCESS) {
             fputs("input-proxy: failed to inspect the Installed Instance store\n", environment->error);
-            goto cleanup;
+            goto cleanup_with_spacing;
         }
         if (!exists) {
             fprintf(environment->error, "input-proxy: Installed Instance '%s' does not exist\n", name);
-            goto cleanup;
+            goto cleanup_with_spacing;
         }
     } else {
         store_result = input_proxy_installed_instance_enumerate(store, &list);
         if (store_result != INPUT_PROXY_INSTALLED_INSTANCE_SUCCESS) {
             fputs("input-proxy: failed to enumerate Installed Instances\n", environment->error);
-            goto cleanup;
+            goto cleanup_with_spacing;
         }
         if (list.count == 0) {
-            fputs("No Installed Instances are present.\n", environment->output);
+            fputs("No Installed Instances are present.\n\n", environment->output);
             input_proxy_installed_instance_list_destroy(&list);
             input_proxy_installed_instance_store_destroy(store);
             return EXIT_SUCCESS;
         }
         name = select_instance(&list, environment);
-        if (name == NULL) goto cleanup;
+        if (name == NULL) goto cleanup_with_spacing;
     }
     if (input_proxy_installed_instance_path(store, name, &response_path) !=
         INPUT_PROXY_INSTALLED_INSTANCE_SUCCESS) goto cleanup;
@@ -291,23 +291,25 @@ int input_proxy_uninstall_command_with_environment(int argc, char *argv[],
     if (failed) {
         fputs("  Response artifact removal: retained for retry\n", environment->output);
         fprintf(environment->error, "input-proxy: uninstall of '%s' is incomplete; the response artifact remains authoritative and the command can be retried\n", name);
-        goto cleanup;
+        goto cleanup_with_spacing;
     }
     response_result = ops->remove_file(response_path, ops->userdata);
     if (response_result != INPUT_PROXY_UNINSTALL_STAGE_SUCCESS) {
         report_stage(environment->output, environment->error,
             "Response artifact removal", response_result, "not present");
-        goto cleanup;
+        goto cleanup_with_spacing;
     }
     report_stage(environment->output, environment->error,
         "Response artifact removal", response_result, "not present");
-    fprintf(environment->output, "Installed Instance '%s' has been uninstalled.\n", name);
+    fprintf(environment->output, "Installed Instance '%s' has been uninstalled.\n\n", name);
     input_proxy_response_file_free(response_argc, response_argv);
     free(rule_path); free(response_path); free(name);
     input_proxy_installed_instance_list_destroy(&list);
     input_proxy_installed_instance_store_destroy(store);
     return EXIT_SUCCESS;
 
+cleanup_with_spacing:
+    fputc('\n', environment->error);
 cleanup:
     input_proxy_response_file_free(response_argc, response_argv);
     free(rule_path); free(response_path); free(name);
