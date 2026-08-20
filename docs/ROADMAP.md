@@ -375,6 +375,8 @@ minimal and ownership boundaries explicit.
   - documentation;
   - a systemd template unit;
   - package-owned `/dev/uinput` access;
+  - persistent loading of the `uinput` kernel module before Installed Instances
+    are expected to run;
   - D-Bus policy and service metadata;
   - the persistent-instance artifact location;
   - other required deployment files.
@@ -400,14 +402,10 @@ input-proxy install
   to supply the same complete installation request.
 - Provide an explicit command-line equivalent for every interactive decision so
   the full workflow can run without prompting.
-- Use the existing discovery and inspection capabilities to validate the
-  requested deployment before persistent configuration is created.
-- Enumerate available input devices.
-- Allow source selection.
-- Optionally identify a source through observed activity.
-- Recommend a more stable source path when one can be determined reliably,
-  explain the recommendation, and allow the operator to retain the supplied
-  path.
+- Accept or interactively request one Physical Source, then inspect and validate
+  it before persistent configuration is created.
+- Recommend a Preferred run source when one can be determined reliably, explain
+  the recommendation, and allow the operator to retain the supplied source.
 - Propose or request a validated Instance Name.
 - Refuse to overwrite an already installed Instance Name.
 - Capture a complete runtime-policy snapshot containing:
@@ -418,12 +416,14 @@ input-proxy install
   - `--running-motion-activity`;
   - `--paused-motion-activity`;
   - `--start-paused on|off`.
-- Configure a narrowly matched per-device udev permission rule only when the
-  service identity otherwise cannot read the selected source.
-- Optionally configure a narrowly matched per-device
-  `LIBINPUT_IGNORE_DEVICE=1` rule.
-- Do not emit a device rule when the source cannot be identified narrowly
-  enough.
+- Create a deterministic per-instance udev rule that grants the service identity
+  read access to the Installed Instance's virtual event device.
+- When needed, add narrowly matched Physical Source permission remediation to
+  that rule.
+- Optionally add narrowly matched Physical Source
+  `LIBINPUT_IGNORE_DEVICE=1` remediation to that rule.
+- Do not add Physical Source remediation when the source cannot be identified
+  narrowly enough.
 - Create the persistent instance artifact.
 - Configure the corresponding systemd service instance.
 - Reload affected system services where required.
@@ -471,8 +471,9 @@ Package configuration owns host-level service identity and physical-input group
 membership. Package-owned integration provides dedicated access to
 `/dev/uinput`.
 
-Instance installation owns only the selected source's targeted permission rule,
-when one is required, and any optional libinput-ignore rule.
+Every Installed Instance owns its deterministic per-instance udev rule. The rule
+always provides virtual-output read permission and may additionally contain
+narrowly matched Physical Source permission or libinput-ignore remediation.
 
 The deployment must not require:
 
@@ -493,8 +494,8 @@ input-proxy uninstall [INSTANCE_NAME]
   authoritative response artifacts and allow interactive selection.
 - When no installed instances exist, report that fact without consulting
   runtime D-Bus discovery.
-- Provide a fully non-interactive equivalent when the Instance Name and
-  destructive confirmation are supplied explicitly.
+- Treat `input-proxy uninstall INSTANCE_NAME` as the complete non-interactive
+  removal form.
 - Stop and disable the selected systemd service instance.
 - Remove only artifacts owned by that installed instance:
   - its response artifact;
