@@ -17,7 +17,11 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
+
+#define VIRTUAL_OUTPUT_ATTEMPTS 50
+#define VIRTUAL_OUTPUT_RETRY_NANOSECONDS 100000000L
 
 static bool run_command(char *const arguments[])
 {
@@ -173,14 +177,37 @@ static bool find_virtual_event_node(const char *instance_name,
     return found;
 }
 
-static bool default_verify_virtual_permission(const char *instance_name,
+static bool default_source_available(const char *source_path,
+    const struct input_proxy_deployment_environment *deployment, void *userdata)
+{
+    struct stat status;
+    (void)userdata;
+    return deployment != NULL &&
+        deployment_stat(deployment, source_path, &status) == 0 &&
+        S_ISCHR(status.st_mode);
+}
+
+static enum input_proxy_virtual_output_status
+default_verify_virtual_permission(const char *instance_name,
     const struct input_proxy_deployment_environment *deployment, void *userdata)
 {
     char event_node[4096];
     (void)userdata;
-    return find_virtual_event_node(instance_name, deployment, event_node,
-        sizeof(event_node)) &&
-        default_verify_source_permission(event_node, deployment, NULL);
+    if (!find_virtual_event_node(instance_name, deployment, event_node,
+            sizeof(event_node)))
+        return INPUT_PROXY_VIRTUAL_OUTPUT_NOT_FOUND;
+    return default_verify_source_permission(event_node, deployment, NULL)
+        ? INPUT_PROXY_VIRTUAL_OUTPUT_READABLE
+        : INPUT_PROXY_VIRTUAL_OUTPUT_UNREADABLE;
+}
+
+static void default_wait_virtual_output(void *userdata)
+{
+    struct timespec interval = {
+        .tv_nsec = VIRTUAL_OUTPUT_RETRY_NANOSECONDS
+    };
+    (void)userdata;
+    while (nanosleep(&interval, &interval) != 0 && errno == EINTR) {}
 }
 
 static bool default_enable_service(const char *unit, void *userdata)
@@ -240,7 +267,9 @@ static const struct input_proxy_installation_activation_operations default_opera
     .settle_udev = default_settle_udev,
     .verify_source_permission = default_verify_source_permission,
     .verify_libinput_ignore = default_verify_libinput_ignore,
+    .source_available = default_source_available,
     .verify_virtual_permission = default_verify_virtual_permission,
+    .wait_virtual_output = default_wait_virtual_output,
     .enable_service = default_enable_service,
     .start_service = default_start_service,
     .service_state = default_service_state
@@ -263,13 +292,17 @@ input_proxy_installation_plan_activate(struct input_proxy_installation_plan *pla
         input_proxy_installation_plan_config(plan);
     char unit[256];
     enum input_proxy_installation_service_state state;
+    enum input_proxy_virtual_output_status virtual_status;
+    unsigned int attempt;
     bool has_source_remediation;
 
     if (resolution == NULL || readiness == NULL ||
         readiness->supplied_source_path == NULL || config == NULL ||
         !resolution->application_ready ||
         operations->reload_udev == NULL || operations->settle_udev == NULL ||
+        operations->source_available == NULL ||
         operations->verify_virtual_permission == NULL ||
+        operations->wait_virtual_output == NULL ||
         operations->enable_service == NULL || operations->start_service == NULL ||
         operations->service_state == NULL)
         return INPUT_PROXY_INSTALLATION_ACTIVATION_INVALID_PLAN;
@@ -308,12 +341,25 @@ input_proxy_installation_plan_activate(struct input_proxy_installation_plan *pla
         return INPUT_PROXY_INSTALLATION_ACTIVATION_START_FAILED;
     state = operations->service_state(unit, operations->userdata);
     if (state == INPUT_PROXY_INSTALLATION_SERVICE_RUNNING) {
+        if (!operations->source_available(config->source_path, deployment,
+                operations->userdata))
+            return INPUT_PROXY_INSTALLATION_ACTIVATION_SUCCESS;
         if (!operations->settle_udev(operations->userdata))
             return INPUT_PROXY_INSTALLATION_ACTIVATION_UDEV_SETTLE_FAILED;
-        if (!operations->verify_virtual_permission(config->instance_name,
-                deployment, operations->userdata))
-            return INPUT_PROXY_INSTALLATION_ACTIVATION_VIRTUAL_PERMISSION_VERIFICATION_FAILED;
-        return INPUT_PROXY_INSTALLATION_ACTIVATION_SUCCESS;
+        for (attempt = 0; attempt < VIRTUAL_OUTPUT_ATTEMPTS; ++attempt) {
+            virtual_status = operations->verify_virtual_permission(
+                config->instance_name, deployment, operations->userdata);
+            if (virtual_status == INPUT_PROXY_VIRTUAL_OUTPUT_READABLE)
+                return INPUT_PROXY_INSTALLATION_ACTIVATION_SUCCESS;
+            if (virtual_status == INPUT_PROXY_VIRTUAL_OUTPUT_UNREADABLE)
+                return INPUT_PROXY_INSTALLATION_ACTIVATION_VIRTUAL_PERMISSION_VERIFICATION_FAILED;
+            if (!operations->source_available(config->source_path, deployment,
+                    operations->userdata))
+                return INPUT_PROXY_INSTALLATION_ACTIVATION_SUCCESS;
+            if (attempt + 1 < VIRTUAL_OUTPUT_ATTEMPTS)
+                operations->wait_virtual_output(operations->userdata);
+        }
+        return INPUT_PROXY_INSTALLATION_ACTIVATION_VIRTUAL_OUTPUT_NOT_FOUND;
     }
     if (state == INPUT_PROXY_INSTALLATION_SERVICE_FAILED)
         return INPUT_PROXY_INSTALLATION_ACTIVATION_SERVICE_FAILED;

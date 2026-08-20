@@ -17,9 +17,12 @@ static int failures;
 static void expect(bool condition, const char *description);
 
 struct activation_fixture {
-    char sequence[64];
+    char sequence[256];
     enum input_proxy_installation_activation_result failure;
     enum input_proxy_installation_service_state state;
+    bool source_unavailable;
+    unsigned int virtual_not_found_attempts;
+    unsigned int virtual_verification_calls;
     bool collide_on_start;
     struct input_proxy_instance_name *collision;
     char trigger_source[512];
@@ -97,15 +100,36 @@ static bool activation_verify_success(const char *value,
         : INPUT_PROXY_INSTALLATION_ACTIVATION_LIBINPUT_VERIFICATION_FAILED);
 }
 
-static bool activation_verify_virtual(const char *value,
+static bool activation_source_available(const char *value,
+    const struct input_proxy_deployment_environment *deployment, void *userdata)
+{
+    struct activation_fixture *fixture = userdata;
+    (void)value;
+    (void)deployment;
+    record_activation(fixture, 'C');
+    return !fixture->source_unavailable;
+}
+
+static enum input_proxy_virtual_output_status activation_verify_virtual(
+    const char *value,
     const struct input_proxy_deployment_environment *deployment, void *userdata)
 {
     struct activation_fixture *fixture = userdata;
     (void)value;
     (void)deployment;
     record_activation(fixture, 'V');
-    return fixture->failure !=
-        INPUT_PROXY_INSTALLATION_ACTIVATION_VIRTUAL_PERMISSION_VERIFICATION_FAILED;
+    if (fixture->failure ==
+        INPUT_PROXY_INSTALLATION_ACTIVATION_VIRTUAL_PERMISSION_VERIFICATION_FAILED)
+        return INPUT_PROXY_VIRTUAL_OUTPUT_UNREADABLE;
+    if (fixture->virtual_verification_calls++ <
+        fixture->virtual_not_found_attempts)
+        return INPUT_PROXY_VIRTUAL_OUTPUT_NOT_FOUND;
+    return INPUT_PROXY_VIRTUAL_OUTPUT_READABLE;
+}
+
+static void activation_wait_virtual(void *userdata)
+{
+    record_activation(userdata, 'W');
 }
 
 static enum input_proxy_installation_service_state activation_running(
@@ -124,7 +148,9 @@ activation_operations = {
     .settle_udev = activation_settle,
     .verify_source_permission = activation_verify_success,
     .verify_libinput_ignore = activation_verify_success,
+    .source_available = activation_source_available,
     .verify_virtual_permission = activation_verify_virtual,
+    .wait_virtual_output = activation_wait_virtual,
     .enable_service = activation_enable,
     .start_service = activation_start,
     .service_state = activation_running
@@ -588,7 +614,7 @@ int main(void)
             "--add-libinput-ignore-rule", "no"};
         check_command(args, 10, &environment, true, "installed, enabled, and running",
             NULL, "activation with only the virtual-output rule succeeds");
-        expect(strcmp(activation.sequence, "REAQSV") == 0,
+        expect(strcmp(activation.sequence, "REAQCSV") == 0,
             "virtual-only activation reloads before and verifies after startup");
     }
     memset(&activation, 0, sizeof(activation));
@@ -601,7 +627,7 @@ int main(void)
             "--add-libinput-ignore-rule", "yes"};
         check_command(args, 12, &environment, true, "installed, enabled, and running",
             NULL, "activation with a udev rule succeeds");
-        expect(strcmp(activation.sequence, "RTSPIEAQSV") == 0,
+        expect(strcmp(activation.sequence, "RTSPIEAQCSV") == 0,
             "source remediation precedes systemd and virtual verification follows startup");
     }
     memset(&activation, 0, sizeof(activation));
@@ -685,12 +711,54 @@ int main(void)
             "virtual-output verification failure is reported");
         snprintf(path, sizeof(path),
             "%s/ActivationVirtualVerifyFailure.args", directory);
-        expect(path_exists(path) && strcmp(activation.sequence, "REAQSV") == 0,
+        expect(path_exists(path) && strcmp(activation.sequence, "REAQCSV") == 0,
             "virtual verification failure preserves committed instance artifacts");
         snprintf(path, sizeof(path),
             "%s/90-input-proxy-ActivationVirtualVerifyFailure.rules", directory);
         expect(path_exists(path),
             "virtual verification failure preserves the instance-owned rule");
+    }
+    memset(&activation, 0, sizeof(activation));
+    activation.state = INPUT_PROXY_INSTALLATION_SERVICE_RUNNING;
+    activation.source_unavailable = true;
+    {
+        char *args[] = {"input-proxy", "install", "--source", source,
+            "--name", "ActivationSourceUnavailable",
+            "--use-preferred-run-source", "no",
+            "--add-libinput-ignore-rule", "no"};
+        check_command(args, 10, &environment, true, "installed, enabled, and running",
+            NULL, "running service waiting for an unavailable source succeeds");
+        expect(strcmp(activation.sequence, "REAQC") == 0,
+            "source-unavailable activation skips virtual-output verification");
+    }
+    memset(&activation, 0, sizeof(activation));
+    activation.state = INPUT_PROXY_INSTALLATION_SERVICE_RUNNING;
+    activation.virtual_not_found_attempts = 2;
+    {
+        char *args[] = {"input-proxy", "install", "--source", source,
+            "--name", "ActivationVirtualAppears",
+            "--use-preferred-run-source", "no",
+            "--add-libinput-ignore-rule", "no"};
+        check_command(args, 10, &environment, true, "installed, enabled, and running",
+            NULL, "virtual output appearing during bounded wait succeeds");
+        expect(strcmp(activation.sequence, "REAQCSVCWVCWV") == 0,
+            "activation retries absent virtual output before verifying readability");
+    }
+    memset(&activation, 0, sizeof(activation));
+    activation.state = INPUT_PROXY_INSTALLATION_SERVICE_RUNNING;
+    activation.virtual_not_found_attempts = 100;
+    {
+        char *args[] = {"input-proxy", "install", "--source", source,
+            "--name", "ActivationVirtualMissing",
+            "--use-preferred-run-source", "no",
+            "--add-libinput-ignore-rule", "no"};
+        check_command(args, 10, &environment, false, NULL,
+            "did not appear before the verification deadline",
+            "missing virtual output has a distinct bounded-wait failure");
+        snprintf(path, sizeof(path), "%s/ActivationVirtualMissing.args",
+            directory);
+        expect(path_exists(path) && activation.virtual_verification_calls == 50,
+            "missing virtual output exhausts bounded retries and preserves artifacts");
     }
     memset(&activation, 0, sizeof(activation));
     activation.state = INPUT_PROXY_INSTALLATION_SERVICE_RUNNING;

@@ -1469,16 +1469,24 @@ runtime invocation; no ownership descriptor is transferred. The small
 release/start interval is intentional, and an ownership collision during it
 causes the normal service-start failure.
 
-After the service is active and running, installation waits for udev to settle
-and verifies that the service identity can read the virtual event node whose
-input-device name exactly matches the Instance Name in the virtual input-device
-hierarchy. A failed check is a post-commit activation failure.
+After the service is active and running, installation checks whether the
+Physical Source is currently available. When it is available, installation
+waits for udev to settle, allows a bounded interval for the virtual event node
+whose input-device name exactly matches the Instance Name in the virtual input
+hierarchy to appear, and verifies that the service identity can read it. An
+unreadable node or an available source whose node does not appear before the
+deadline is a post-commit activation failure.
 
-Installation reports success only after this verification. A proxy process
-waiting for an unavailable Physical Source remains active and running and is
-therefore a successful activation. If enablement succeeds but startup or state
-verification fails, the unit remains enabled and the committed Installed
-Instance remains installed.
+When the Physical Source is unavailable, the active service is legitimately
+waiting and has not created its virtual device. Installation therefore succeeds
+without claiming that virtual-output readability was verified. The mandatory
+rule remains in place and applies when the virtual device is later created.
+
+Installation reports success only after the applicable post-start check. A
+proxy process waiting for an unavailable Physical Source remains active and
+running and is therefore a successful activation. If enablement succeeds but
+startup or required verification fails, the unit remains enabled and the
+committed Installed Instance remains installed.
 
 ### Instance-owned artifacts and removal
 

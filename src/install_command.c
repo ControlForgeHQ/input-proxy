@@ -439,6 +439,8 @@ int input_proxy_install_command_with_environment(int argc, char *argv[],
             fputs("the service identity still cannot read the Physical Source\n", command_environment->error); break;
         case INPUT_PROXY_INSTALLATION_ACTIVATION_LIBINPUT_VERIFICATION_FAILED:
             fputs("LIBINPUT_IGNORE_DEVICE=1 was not observed\n", command_environment->error); break;
+        case INPUT_PROXY_INSTALLATION_ACTIVATION_VIRTUAL_OUTPUT_NOT_FOUND:
+            fputs("the Instance's virtual event device did not appear before the verification deadline\n", command_environment->error); break;
         case INPUT_PROXY_INSTALLATION_ACTIVATION_VIRTUAL_PERMISSION_VERIFICATION_FAILED:
             fputs("the service identity cannot read the Instance's virtual event device\n", command_environment->error); break;
         case INPUT_PROXY_INSTALLATION_ACTIVATION_ENABLE_FAILED:
