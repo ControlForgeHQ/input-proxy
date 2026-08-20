@@ -250,7 +250,7 @@ static void print_plan(const struct input_proxy_session_config *config,
         libinput_ignore_state = "unavailable";
     }
 
-    fprintf(output, "\nInstallation plan (no changes applied)\n"
+    fprintf(output, "\nInstallation plan\n"
         "  Instance Name: %s\n  Physical Source: %s\n",
         config->instance_name,
         resolution->persistent_source_path);
@@ -316,7 +316,7 @@ int input_proxy_install_command_with_environment(int argc, char *argv[],
         return EXIT_FAILURE;
     }
     if (command_environment->effective_uid != 0) {
-        fprintf(command_environment->error, "input-proxy: install must be run as root; normally use sudo input-proxy install ...\n\n");
+        fprintf(command_environment->error, "input-proxy: install requires root privileges; rerun this command with sudo\n\n");
         return EXIT_FAILURE;
     }
     if (!parse_arguments(argc, argv, &request, &choices)) {
@@ -325,11 +325,11 @@ int input_proxy_install_command_with_environment(int argc, char *argv[],
         return EXIT_FAILURE;
     }
     if (!request.source_supplied) {
-        if (!prompt_line("Physical source", &prompted_source, command_environment)) goto cleanup;
+        if (!prompt_line("Physical source", &prompted_source, command_environment)) goto cleanup_with_spacing;
         request.source_path = prompted_source; request.source_supplied = true;
     }
     if (!request.instance_name_supplied) {
-        if (!prompt_line("Instance Name", &prompted_name, command_environment)) goto cleanup;
+        if (!prompt_line("Instance Name", &prompted_name, command_environment)) goto cleanup_with_spacing;
         request.instance_name = prompted_name; request.instance_name_supplied = true;
     }
     if ((command_environment->installed_instance_directory == NULL
@@ -337,17 +337,17 @@ int input_proxy_install_command_with_environment(int argc, char *argv[],
             : input_proxy_installed_instance_store_create_for_directory(
                 &store, command_environment->installed_instance_directory)) !=
         INPUT_PROXY_INSTALLED_INSTANCE_SUCCESS) {
-        fprintf(command_environment->error, "input-proxy: failed to initialize the Installed Instance store\n"); goto cleanup;
+        fprintf(command_environment->error, "input-proxy: failed to initialize the Installed Instance store\n"); goto cleanup_with_spacing;
     }
     result = input_proxy_installation_plan_create(&plan, &request, store);
-    if (result != INPUT_PROXY_INSTALLATION_PLAN_SUCCESS) { report_plan_error(result, request.instance_name, command_environment->error); goto cleanup; }
+    if (result != INPUT_PROXY_INSTALLATION_PLAN_SUCCESS) { report_plan_error(result, request.instance_name, command_environment->error); goto cleanup_with_spacing; }
     deployment = command_environment->deployment;
     if (deployment == NULL) {
         identity_result = service_environment(&resolved_deployment, &groups);
         if (identity_result != INPUT_PROXY_INSTALL_SERVICE_IDENTITY_VALID) {
             report_service_identity_error(identity_result,
                 command_environment->error);
-            goto cleanup;
+            goto cleanup_with_spacing;
         }
         deployment = &resolved_deployment;
     } else if (command_environment->check_service_identity != NULL) {
@@ -356,30 +356,30 @@ int input_proxy_install_command_with_environment(int argc, char *argv[],
         if (identity_result != INPUT_PROXY_INSTALL_SERVICE_IDENTITY_VALID) {
             report_service_identity_error(identity_result,
                 command_environment->error);
-            goto cleanup;
+            goto cleanup_with_spacing;
         }
     }
     result = input_proxy_installation_plan_assess(plan, deployment);
-    if (result != INPUT_PROXY_INSTALLATION_PLAN_SUCCESS) { report_plan_error(result, request.instance_name, command_environment->error); goto cleanup; }
+    if (result != INPUT_PROXY_INSTALLATION_PLAN_SUCCESS) { report_plan_error(result, request.instance_name, command_environment->error); goto cleanup_with_spacing; }
     readiness = input_proxy_installation_plan_readiness(plan);
     if (readiness->preferred_source_differs && choices.preferred_source == INPUT_PROXY_PREFERRED_SOURCE_UNRESOLVED) {
         fprintf(command_environment->output, "\nPreferred run source:\n  %s\n\nThe Preferred run source is more stable than the supplied source %s and is recommended for persistent execution.\n\n", readiness->preferred_source_path, readiness->supplied_source_path);
-        if (!prompt_yes_no("Use the Preferred run source?", &answer, command_environment)) goto cleanup;
+        if (!prompt_yes_no("Use the Preferred run source?", &answer, command_environment)) goto cleanup_with_spacing;
         choices.preferred_source = answer ? INPUT_PROXY_PREFERRED_SOURCE_USE_PREFERRED : INPUT_PROXY_PREFERRED_SOURCE_RETAIN_SUPPLIED;
     }
     if (!readiness->source_accessible && readiness->source_permission_remediation == INPUT_PROXY_PERMISSION_REMEDIATION_AVAILABLE && choices.source_permission == INPUT_PROXY_REMEDIATION_UNRESOLVED) {
         fprintf(command_environment->output, "\nThe input-proxy service identity cannot currently read this source.\nA narrowly matched instance-owned udev rule can grant access to this Physical Source.\n\n");
-        if (!prompt_yes_no("Install the source-permission rule?", &answer, command_environment)) goto cleanup;
+        if (!prompt_yes_no("Install the source-permission rule?", &answer, command_environment)) goto cleanup_with_spacing;
         choices.source_permission = answer ? INPUT_PROXY_REMEDIATION_INSTALL : INPUT_PROXY_REMEDIATION_DO_NOT_INSTALL;
     }
     if (readiness->libinput_ignore_rule_available && choices.libinput_ignore == INPUT_PROXY_REMEDIATION_UNRESOLVED) {
         fprintf(command_environment->output, "\nThis Physical Source may also be consumed directly by libinput.\ninput-proxy can install a narrowly matched instance-owned udev rule setting LIBINPUT_IGNORE_DEVICE=1.\n\n");
-        if (!prompt_yes_no("Install the libinput-ignore rule?", &answer, command_environment)) goto cleanup;
+        if (!prompt_yes_no("Install the libinput-ignore rule?", &answer, command_environment)) goto cleanup_with_spacing;
         choices.libinput_ignore = answer ? INPUT_PROXY_REMEDIATION_INSTALL : INPUT_PROXY_REMEDIATION_DO_NOT_INSTALL;
     }
     result = input_proxy_installation_plan_resolve(plan, &choices);
     if (result != INPUT_PROXY_INSTALLATION_PLAN_SUCCESS) {
-        fprintf(command_environment->error, "input-proxy: a deployment choice is invalid for the assessed Physical Source\n"); goto cleanup;
+        fprintf(command_environment->error, "input-proxy: a deployment choice is invalid for the assessed Physical Source\n"); goto cleanup_with_spacing;
     }
     resolution = input_proxy_installation_plan_resolution(plan);
     print_plan(input_proxy_installation_plan_config(plan), readiness, resolution,
@@ -394,7 +394,7 @@ int input_proxy_install_command_with_environment(int argc, char *argv[],
         if (readiness->blockers & INPUT_PROXY_DEPLOYMENT_BLOCKER_SOURCE) fprintf(command_environment->error, "input-proxy: Physical Source readiness failed\n");
         if (readiness->blockers & INPUT_PROXY_DEPLOYMENT_BLOCKER_SOURCE_PERMISSION) fprintf(command_environment->error, "input-proxy: service identity cannot read the source and safe targeted remediation is unavailable\n");
         if (readiness->blockers & INPUT_PROXY_DEPLOYMENT_BLOCKER_UINPUT) fprintf(command_environment->error, "input-proxy: /dev/uinput is not ready for the service identity; install or repair package integration\n");
-        goto cleanup;
+        goto cleanup_with_spacing;
     }
     application_environment = (struct input_proxy_installation_application_environment) {
         .udev_rule_directory = command_environment->udev_rule_directory,
@@ -416,7 +416,7 @@ int input_proxy_install_command_with_environment(int argc, char *argv[],
             fprintf(command_environment->error, "input-proxy: persistent application failed and rollback could not remove %s\n", application_failure.rollback_path);
         else
             fprintf(command_environment->error, "input-proxy: refused to apply an invalid or non-ready installation plan\n");
-        goto cleanup;
+        goto cleanup_with_spacing;
     }
     activation_environment = (struct input_proxy_installation_activation_environment) {
         .deployment = deployment,
@@ -456,13 +456,16 @@ int input_proxy_install_command_with_environment(int argc, char *argv[],
         default:
             fputs("invalid activation plan\n", command_environment->error); break;
         }
-        goto cleanup;
+        goto cleanup_with_spacing;
     }
     fprintf(command_environment->output,
         "\nPlanning completed.\nPersistent artifacts applied.\n"
         "Installed Instance '%s' is installed, enabled, and running.\n\n",
         request.instance_name);
     exit_status = EXIT_SUCCESS;
+    goto cleanup;
+cleanup_with_spacing:
+    fputc('\n', command_environment->error);
 cleanup:
     free(groups); input_proxy_installation_plan_destroy(plan);
     input_proxy_installed_instance_store_destroy(store);

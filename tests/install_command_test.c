@@ -237,6 +237,14 @@ static bool file_equals(const char *path, const char *text)
     return strcmp(buffer, text) == 0;
 }
 
+static bool has_one_terminating_blank_line(const char *text)
+{
+    size_t length = strlen(text);
+
+    return length >= 2 && strcmp(text + length - 2, "\n\n") == 0 &&
+        (length < 3 || text[length - 3] != '\n');
+}
+
 static int run_command(char *argv[], int argc,
     struct input_proxy_install_command_environment *environment,
     char **output, char **error)
@@ -268,6 +276,14 @@ static void check_command(char *argv[], int argc,
         expect(strstr(output, output_text) != NULL, description);
     if (error_text != NULL)
         expect(strstr(error, error_text) != NULL, description);
+    if (succeeds)
+        expect(has_one_terminating_blank_line(output), description);
+    else
+        expect(has_one_terminating_blank_line(error), description);
+    if (strstr(output, "Installation plan") != NULL) {
+        expect(strstr(output, "Installation plan\n") != NULL, description);
+        expect(strstr(output, "(no changes applied)") == NULL, description);
+    }
     free(output);
     free(error);
 }
@@ -349,7 +365,8 @@ int main(void)
         char *args[] = {"input-proxy", "install", "--source", source,
             "--name", "Unprivileged"};
         environment.effective_uid = 1000;
-        check_command(args, 6, &environment, false, NULL, "must be run as root",
+        check_command(args, 6, &environment, false, NULL,
+            "input-proxy: install requires root privileges; rerun this command with sudo",
             "unprivileged invocation fails before planning");
         environment.effective_uid = 0;
     }
