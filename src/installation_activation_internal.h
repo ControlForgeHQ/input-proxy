@@ -19,6 +19,7 @@ enum input_proxy_installation_activation_result {
     INPUT_PROXY_INSTALLATION_ACTIVATION_UDEV_SETTLE_FAILED,
     INPUT_PROXY_INSTALLATION_ACTIVATION_PERMISSION_VERIFICATION_FAILED,
     INPUT_PROXY_INSTALLATION_ACTIVATION_LIBINPUT_VERIFICATION_FAILED,
+    INPUT_PROXY_INSTALLATION_ACTIVATION_VIRTUAL_PERMISSION_VERIFICATION_FAILED,
     INPUT_PROXY_INSTALLATION_ACTIVATION_ENABLE_FAILED,
     INPUT_PROXY_INSTALLATION_ACTIVATION_START_FAILED,
     INPUT_PROXY_INSTALLATION_ACTIVATION_SERVICE_FAILED,
@@ -34,6 +35,9 @@ struct input_proxy_installation_activation_operations {
         const struct input_proxy_deployment_environment *deployment,
         void *userdata);
     bool (*verify_libinput_ignore)(const char *source_path,
+        const struct input_proxy_deployment_environment *deployment,
+        void *userdata);
+    bool (*verify_virtual_permission)(const char *instance_name,
         const struct input_proxy_deployment_environment *deployment,
         void *userdata);
     bool (*enable_service)(const char *unit, void *userdata);

@@ -6,6 +6,7 @@
 
 #include "libinput_status_internal.h"
 
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <grp.h>
@@ -116,6 +117,72 @@ static bool default_verify_libinput_ignore(const char *source_path,
             NULL, NULL) == INPUT_PROXY_LIBINPUT_STATUS_IGNORED;
 }
 
+static bool read_name(const char *path, const char *expected)
+{
+    char name[256];
+    FILE *file = fopen(path, "r");
+    size_t length;
+
+    if (file == NULL || fgets(name, sizeof(name), file) == NULL) {
+        if (file != NULL) fclose(file);
+        return false;
+    }
+    fclose(file);
+    length = strlen(name);
+    while (length > 0 && (name[length - 1] == '\n' || name[length - 1] == '\r'))
+        name[--length] = '\0';
+    return strcmp(name, expected) == 0;
+}
+
+static bool find_virtual_event_node(const char *instance_name,
+    const struct input_proxy_deployment_environment *deployment,
+    char *event_node, size_t size)
+{
+    DIR *directory;
+    struct dirent *entry;
+    bool found = false;
+
+    if (deployment == NULL || deployment->sysfs_input_path == NULL ||
+        deployment->device_input_path == NULL)
+        return false;
+    directory = opendir(deployment->sysfs_input_path);
+    if (directory == NULL) return false;
+    while ((entry = readdir(directory)) != NULL) {
+        char device_path[4096];
+        char resolved[4096];
+        char name_path[4096];
+
+        if (strncmp(entry->d_name, "event", 5) != 0) continue;
+        if (snprintf(device_path, sizeof(device_path), "%s/%s/device",
+                deployment->sysfs_input_path, entry->d_name) >=
+                (int)sizeof(device_path) ||
+            realpath(device_path, resolved) == NULL ||
+            strncmp(resolved, "/sys/devices/virtual/input/",
+                sizeof("/sys/devices/virtual/input/") - 1) != 0 ||
+            snprintf(name_path, sizeof(name_path), "%s/name", device_path) >=
+                (int)sizeof(name_path) ||
+            !read_name(name_path, instance_name))
+            continue;
+        if (snprintf(event_node, size, "%s/%s",
+                deployment->device_input_path, entry->d_name) >= (int)size)
+            continue;
+        found = true;
+        break;
+    }
+    closedir(directory);
+    return found;
+}
+
+static bool default_verify_virtual_permission(const char *instance_name,
+    const struct input_proxy_deployment_environment *deployment, void *userdata)
+{
+    char event_node[4096];
+    (void)userdata;
+    return find_virtual_event_node(instance_name, deployment, event_node,
+        sizeof(event_node)) &&
+        default_verify_source_permission(event_node, deployment, NULL);
+}
+
 static bool default_enable_service(const char *unit, void *userdata)
 {
     char *arguments[] = {"systemctl", "enable", (char *)unit, NULL};
@@ -173,6 +240,7 @@ static const struct input_proxy_installation_activation_operations default_opera
     .settle_udev = default_settle_udev,
     .verify_source_permission = default_verify_source_permission,
     .verify_libinput_ignore = default_verify_libinput_ignore,
+    .verify_virtual_permission = default_verify_virtual_permission,
     .enable_service = default_enable_service,
     .start_service = default_start_service,
     .service_state = default_service_state
@@ -195,20 +263,21 @@ input_proxy_installation_plan_activate(struct input_proxy_installation_plan *pla
         input_proxy_installation_plan_config(plan);
     char unit[256];
     enum input_proxy_installation_service_state state;
-    bool has_rule;
+    bool has_source_remediation;
 
     if (resolution == NULL || readiness == NULL ||
         readiness->supplied_source_path == NULL || config == NULL ||
         !resolution->application_ready ||
+        operations->reload_udev == NULL || operations->settle_udev == NULL ||
+        operations->verify_virtual_permission == NULL ||
         operations->enable_service == NULL || operations->start_service == NULL ||
         operations->service_state == NULL)
         return INPUT_PROXY_INSTALLATION_ACTIVATION_INVALID_PLAN;
-    has_rule = resolution->source_permission_action ||
+    has_source_remediation = resolution->source_permission_action ||
         resolution->libinput_ignore_action;
-    if (has_rule) {
-        if (operations->reload_udev == NULL ||
-            !operations->reload_udev(operations->userdata))
-            return INPUT_PROXY_INSTALLATION_ACTIVATION_UDEV_RELOAD_FAILED;
+    if (!operations->reload_udev(operations->userdata))
+        return INPUT_PROXY_INSTALLATION_ACTIVATION_UDEV_RELOAD_FAILED;
+    if (has_source_remediation) {
         if (operations->trigger_source == NULL ||
             !operations->trigger_source(readiness->supplied_source_path,
                 operations->userdata))
@@ -238,8 +307,14 @@ input_proxy_installation_plan_activate(struct input_proxy_installation_plan *pla
     if (!operations->start_service(unit, operations->userdata))
         return INPUT_PROXY_INSTALLATION_ACTIVATION_START_FAILED;
     state = operations->service_state(unit, operations->userdata);
-    if (state == INPUT_PROXY_INSTALLATION_SERVICE_RUNNING)
+    if (state == INPUT_PROXY_INSTALLATION_SERVICE_RUNNING) {
+        if (!operations->settle_udev(operations->userdata))
+            return INPUT_PROXY_INSTALLATION_ACTIVATION_UDEV_SETTLE_FAILED;
+        if (!operations->verify_virtual_permission(config->instance_name,
+                deployment, operations->userdata))
+            return INPUT_PROXY_INSTALLATION_ACTIVATION_VIRTUAL_PERMISSION_VERIFICATION_FAILED;
         return INPUT_PROXY_INSTALLATION_ACTIVATION_SUCCESS;
+    }
     if (state == INPUT_PROXY_INSTALLATION_SERVICE_FAILED)
         return INPUT_PROXY_INSTALLATION_ACTIVATION_SERVICE_FAILED;
     if (state == INPUT_PROXY_INSTALLATION_SERVICE_INACTIVE)

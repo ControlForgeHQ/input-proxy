@@ -97,6 +97,17 @@ static bool activation_verify_success(const char *value,
         : INPUT_PROXY_INSTALLATION_ACTIVATION_LIBINPUT_VERIFICATION_FAILED);
 }
 
+static bool activation_verify_virtual(const char *value,
+    const struct input_proxy_deployment_environment *deployment, void *userdata)
+{
+    struct activation_fixture *fixture = userdata;
+    (void)value;
+    (void)deployment;
+    record_activation(fixture, 'V');
+    return fixture->failure !=
+        INPUT_PROXY_INSTALLATION_ACTIVATION_VIRTUAL_PERMISSION_VERIFICATION_FAILED;
+}
+
 static enum input_proxy_installation_service_state activation_running(
     const char *unit, void *userdata)
 {
@@ -113,6 +124,7 @@ activation_operations = {
     .settle_udev = activation_settle,
     .verify_source_permission = activation_verify_success,
     .verify_libinput_ignore = activation_verify_success,
+    .verify_virtual_permission = activation_verify_virtual,
     .enable_service = activation_enable,
     .start_service = activation_start,
     .service_state = activation_running
@@ -185,6 +197,18 @@ static bool file_contains(const char *path, const char *text)
     buffer[size] = '\0';
     fclose(file);
     return strstr(buffer, text) != NULL;
+}
+
+static bool file_equals(const char *path, const char *text)
+{
+    char buffer[4096];
+    FILE *file = fopen(path, "r");
+    size_t size;
+    if (file == NULL) return false;
+    size = fread(buffer, 1, sizeof(buffer) - 1, file);
+    buffer[size] = '\0';
+    fclose(file);
+    return strcmp(buffer, text) == 0;
 }
 
 static int run_command(char *argv[], int argc,
@@ -394,12 +418,16 @@ int main(void)
             "--name", "RetainSource", "--use-preferred-run-source", "no",
             "--add-libinput-ignore-rule", "no"};
         check_command(args, 10, &environment, true,
-            "Libinput-ignore rule: no", NULL,
+            "Virtual-output permission rule: required", NULL,
             "explicit retain and ignore decline produce ready plan");
         snprintf(path, sizeof(path), "%s/RetainSource.args", directory);
-        expect(path_exists(path), "no-action plan creates response artifact");
+        expect(path_exists(path), "no-remediation plan creates response artifact");
         snprintf(path, sizeof(path), "%s/90-input-proxy-RetainSource.rules", directory);
-        expect(!path_exists(path), "no-action plan creates no udev rule");
+        expect(file_equals(path,
+            "ACTION==\"add|change\", SUBSYSTEM==\"input\", KERNEL==\"event*\", "
+            "DEVPATH==\"/devices/virtual/input/*\", ATTRS{name}==\"RetainSource\", "
+            "GROUP:=\"input-proxy\", MODE:=\"0640\"\n"),
+            "no-remediation plan creates only the exact virtual-output rule");
     }
     {
         char *args[] = {"input-proxy", "install", "--source", source,
@@ -421,8 +449,10 @@ int main(void)
             "required permission remediation is planned");
         snprintf(path, sizeof(path), "%s/90-input-proxy-PermissionAccepted.rules", directory);
         expect(file_contains(path, "GROUP:=\"input-proxy\"") &&
-            file_contains(path, "MODE:=\"0640\""),
-            "permission rule makes device-node assignments final");
+            file_contains(path, "MODE:=\"0640\"") &&
+            file_contains(path, "ATTRS{name}==\"PermissionAccepted\"") &&
+            file_contains(path, "ENV{ID_PATH}"),
+            "permission rule combines virtual and Physical Source entries");
     }
     {
         char *args[] = {"input-proxy", "install", "--source", source,
@@ -557,9 +587,9 @@ int main(void)
             "--name", "ActivationNoRule", "--use-preferred-run-source", "no",
             "--add-libinput-ignore-rule", "no"};
         check_command(args, 10, &environment, true, "installed, enabled, and running",
-            NULL, "activation without a udev rule succeeds");
-        expect(strcmp(activation.sequence, "EAQ") == 0,
-            "activation without a rule skips all udev operations");
+            NULL, "activation with only the virtual-output rule succeeds");
+        expect(strcmp(activation.sequence, "REAQSV") == 0,
+            "virtual-only activation reloads before and verifies after startup");
     }
     memset(&activation, 0, sizeof(activation));
     activation.state = INPUT_PROXY_INSTALLATION_SERVICE_RUNNING;
@@ -571,8 +601,8 @@ int main(void)
             "--add-libinput-ignore-rule", "yes"};
         check_command(args, 12, &environment, true, "installed, enabled, and running",
             NULL, "activation with a udev rule succeeds");
-        expect(strcmp(activation.sequence, "RTSPIEAQ") == 0,
-            "udev activation and verification precede systemd activation");
+        expect(strcmp(activation.sequence, "RTSPIEAQSV") == 0,
+            "source remediation precedes systemd and virtual verification follows startup");
     }
     memset(&activation, 0, sizeof(activation));
     activation.state = INPUT_PROXY_INSTALLATION_SERVICE_RUNNING;
@@ -615,7 +645,7 @@ int main(void)
         check_command(args, 10, &environment, false, NULL, "failed to enable",
             "systemd enable failure is reported after commit");
         snprintf(path, sizeof(path), "%s/ActivationEnableFailure.args", directory);
-        expect(path_exists(path) && strcmp(activation.sequence, "E") == 0,
+        expect(path_exists(path) && strcmp(activation.sequence, "RE") == 0,
             "enable failure preserves installation and does not start");
     }
     memset(&activation, 0, sizeof(activation));
@@ -627,7 +657,7 @@ int main(void)
             "--add-libinput-ignore-rule", "no"};
         check_command(args, 10, &environment, false, NULL, "failed to start the enabled",
             "systemd start failure is reported after enablement");
-        expect(strcmp(activation.sequence, "EA") == 0,
+        expect(strcmp(activation.sequence, "REA") == 0,
             "start failure leaves prior enablement intact");
     }
     memset(&activation, 0, sizeof(activation));
@@ -638,8 +668,29 @@ int main(void)
             "--add-libinput-ignore-rule", "no"};
         check_command(args, 10, &environment, false, NULL, "entered the failed state",
             "immediate service failure is not reported as success");
-        expect(strcmp(activation.sequence, "EAQ") == 0,
+        expect(strcmp(activation.sequence, "REAQ") == 0,
             "service state is inspected after successful start invocation");
+    }
+    memset(&activation, 0, sizeof(activation));
+    activation.state = INPUT_PROXY_INSTALLATION_SERVICE_RUNNING;
+    activation.failure =
+        INPUT_PROXY_INSTALLATION_ACTIVATION_VIRTUAL_PERMISSION_VERIFICATION_FAILED;
+    {
+        char *args[] = {"input-proxy", "install", "--source", source,
+            "--name", "ActivationVirtualVerifyFailure",
+            "--use-preferred-run-source", "no",
+            "--add-libinput-ignore-rule", "no"};
+        check_command(args, 10, &environment, false, NULL,
+            "cannot read the Instance's virtual event device",
+            "virtual-output verification failure is reported");
+        snprintf(path, sizeof(path),
+            "%s/ActivationVirtualVerifyFailure.args", directory);
+        expect(path_exists(path) && strcmp(activation.sequence, "REAQSV") == 0,
+            "virtual verification failure preserves committed instance artifacts");
+        snprintf(path, sizeof(path),
+            "%s/90-input-proxy-ActivationVirtualVerifyFailure.rules", directory);
+        expect(path_exists(path),
+            "virtual verification failure preserves the instance-owned rule");
     }
     memset(&activation, 0, sizeof(activation));
     activation.state = INPUT_PROXY_INSTALLATION_SERVICE_RUNNING;

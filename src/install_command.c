@@ -258,7 +258,8 @@ static void print_plan(const struct input_proxy_session_config *config,
         "  Detection throttle: %" PRIu64 " ms\n"
         "  Running-motion activity: %s\n  Paused-motion activity: %s\n"
         "  Initial paused policy: %s\n  Source-permission rule: %s\n"
-        "  Libinput-ignore rule: %s\n  /dev/uinput ready: %s\n"
+        "  Libinput-ignore rule: %s\n  Virtual-output permission rule: required\n"
+        "  /dev/uinput ready: %s\n"
         "  Application ready: %s\n",
         config->activity_timeout_ms, config->detection_throttle_ms,
         config->running_motion_activity ? "on" : "off",
@@ -438,6 +439,8 @@ int input_proxy_install_command_with_environment(int argc, char *argv[],
             fputs("the service identity still cannot read the Physical Source\n", command_environment->error); break;
         case INPUT_PROXY_INSTALLATION_ACTIVATION_LIBINPUT_VERIFICATION_FAILED:
             fputs("LIBINPUT_IGNORE_DEVICE=1 was not observed\n", command_environment->error); break;
+        case INPUT_PROXY_INSTALLATION_ACTIVATION_VIRTUAL_PERMISSION_VERIFICATION_FAILED:
+            fputs("the service identity cannot read the Instance's virtual event device\n", command_environment->error); break;
         case INPUT_PROXY_INSTALLATION_ACTIVATION_ENABLE_FAILED:
             fputs("failed to enable the systemd service instance\n", command_environment->error); break;
         case INPUT_PROXY_INSTALLATION_ACTIVATION_START_FAILED:
