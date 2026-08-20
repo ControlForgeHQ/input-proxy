@@ -1449,16 +1449,17 @@ instance's response artifact.
 ### Installation activation
 
 Persistent artifact application and runtime activation are separate phases.
-Successful creation of the response artifact and any selected instance-owned
-udev rule is the commit boundary: the Installed Instance exists from that point,
+Successful creation of the response artifact and the instance-owned udev rule
+is the commit boundary: the Installed Instance exists from that point,
 and a later activation failure does not remove or regenerate those artifacts.
 
-When installation created an instance-owned udev rule, activation reloads the
-ruleset, targets the selected Physical Source with a change event, waits for udev
-to settle, and verifies every selected remediation. Source-permission
+Activation always reloads the ruleset for the mandatory virtual-output policy.
+When Physical Source remediation was selected, activation also targets the
+selected Physical Source with a change event, waits for udev to settle, and
+verifies every selected remediation. Source-permission
 remediation is verified against the service identity, and libinput remediation
 requires the resulting udev state to contain `LIBINPUT_IGNORE_DEVICE=1`. No udev
-operation runs when installation created no rule.
+operation targets the Physical Source when no source remediation was selected.
 
 After required udev activation succeeds, installation enables the corresponding
 systemd service instance. It then releases its temporary runtime Instance Name
@@ -1468,11 +1469,24 @@ runtime invocation; no ownership descriptor is transferred. The small
 release/start interval is intentional, and an ownership collision during it
 causes the normal service-start failure.
 
-Installation inspects the resulting service state and reports success only when
-the unit is active and running. A proxy process waiting for an unavailable
-Physical Source remains active and running and is therefore a successful
-activation. If enablement succeeds but startup or state verification fails, the
-unit remains enabled and the committed Installed Instance remains installed.
+After the service is active and running, installation checks whether the
+Physical Source is currently available. When it is available, installation
+waits for udev to settle, allows a bounded interval for the virtual event node
+whose input-device name exactly matches the Instance Name in the virtual input
+hierarchy to appear, and verifies that the service identity can read it. An
+unreadable node or an available source whose node does not appear before the
+deadline is a post-commit activation failure.
+
+When the Physical Source is unavailable, the active service is legitimately
+waiting and has not created its virtual device. Installation therefore succeeds
+without claiming that virtual-output readability was verified. The mandatory
+rule remains in place and applies when the virtual device is later created.
+
+Installation reports success only after the applicable post-start check. A
+proxy process waiting for an unavailable Physical Source remains active and
+running and is therefore a successful activation. If enablement succeeds but
+startup or required verification fails, the unit remains enabled and the
+committed Installed Instance remains installed.
 
 ### Instance-owned artifacts and removal
 
@@ -1480,11 +1494,13 @@ An Installed Instance owns:
 
 - its response artifact;
 - its systemd service enablement;
-- each per-instance udev rule generated during its installation.
+- its deterministic per-instance udev rule.
 
-A per-instance udev rule may grant source read access, configure
-`LIBINPUT_IGNORE_DEVICE=1`, or perform both functions. Rules must use a
-sufficiently narrow physical-device match.
+A per-instance udev rule always grants the service identity read access to the
+Instance's own virtual event node by combining the virtual input hierarchy with
+the exact Instance Name. The same rule may also grant source read access,
+configure `LIBINPUT_IGNORE_DEVICE=1`, or perform both functions. Physical Source
+entries must use a sufficiently narrow device match.
 
 Multiple Installed Instances may refer to the same physical source and may
 therefore own duplicate, identical udev rules. This duplication is intentional.
