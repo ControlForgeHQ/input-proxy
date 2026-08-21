@@ -360,8 +360,10 @@ Version 0.3 adds a runtime control plane. Persistent deployment remains Version
 ## Goal
 
 Make package installation, persistent instance deployment, and instance removal
-straightforward on Debian-family systems while keeping runtime privileges
-minimal and ownership boundaries explicit.
+straightforward on Raspberry Pi OS 64-bit Lite (Trixie), the officially
+validated deployment target, while keeping runtime privileges minimal and
+ownership boundaries explicit. Other environments may work, but are not
+currently claimed as officially validated or tested deployment targets.
 
 ## Debian packaging
 
@@ -373,12 +375,12 @@ minimal and ownership boundaries explicit.
 - Install:
   - application binary;
   - documentation;
-  - a systemd template unit;
+  - systemd template integration;
   - package-owned `/dev/uinput` access;
   - persistent loading of the `uinput` kernel module before Installed Instances
     are expected to run;
-  - D-Bus policy and service metadata;
-  - the persistent-instance artifact location;
+  - D-Bus system integration;
+  - the Installed Instance response-artifact directory;
   - other required deployment files.
 - Add the service identity to the existing `input` group as a mandatory
   supplementary membership for access to physical and virtual evdev devices.
