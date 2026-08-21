@@ -39,36 +39,6 @@ static char *rule_path(const char *directory, const char *name)
     return path;
 }
 
-static char *render_rule(
-    const struct input_proxy_device_rule_identity *identity)
-{
-    char identity_match[512];
-    int source_size;
-    char *content;
-
-    if (!input_proxy_rule_identity_is_narrow(identity)) return NULL;
-    if (input_proxy_rule_identity_has_udev_identity(identity))
-        (void)snprintf(identity_match, sizeof(identity_match),
-            "ENV{ID_VENDOR_ID}==\"%s\", ENV{ID_MODEL_ID}==\"%s\"",
-            identity->udev_vendor, identity->udev_model);
-    else
-        (void)snprintf(identity_match, sizeof(identity_match),
-            "ATTRS{id/bustype}==\"%s\", ATTRS{id/vendor}==\"%s\", ATTRS{id/product}==\"%s\"",
-            identity->bus, identity->vendor, identity->product);
-    source_size = snprintf(NULL, 0,
-        "ACTION==\"add|change\", SUBSYSTEM==\"input\", KERNEL==\"event*\", "
-        "%s, ENV{ID_PATH}==\"%s\", ENV{LIBINPUT_IGNORE_DEVICE}=\"1\"\n",
-        identity_match, identity->path);
-    if (source_size < 0) return NULL;
-    content = malloc((size_t)source_size + 1);
-    if (content == NULL) return NULL;
-    (void)snprintf(content, (size_t)source_size + 1,
-        "ACTION==\"add|change\", SUBSYSTEM==\"input\", KERNEL==\"event*\", "
-        "%s, ENV{ID_PATH}==\"%s\", ENV{LIBINPUT_IGNORE_DEVICE}=\"1\"\n",
-        identity_match, identity->path);
-    return content;
-}
-
 static bool publish_rule(const char *directory, const char *final_path,
     const char *content, bool inject_failure)
 {
@@ -123,7 +93,7 @@ input_proxy_installation_plan_apply(const struct input_proxy_installation_plan *
             INPUT_PROXY_INSTALLED_INSTANCE_SUCCESS
             ? INPUT_PROXY_INSTALLATION_APPLICATION_SUCCESS
             : INPUT_PROXY_INSTALLATION_APPLICATION_RESPONSE_FAILED;
-    content = render_rule(&readiness->rule_identity);
+    content = input_proxy_render_libinput_ignore_rule(&readiness->rule_identity);
     if (content == NULL)
         return INPUT_PROXY_INSTALLATION_APPLICATION_RULE_GENERATION_FAILED;
     final_rule = rule_path(directory, config->instance_name);
