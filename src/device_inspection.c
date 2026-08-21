@@ -407,6 +407,8 @@ void input_proxy_print_runtime_associations(
 {
     size_t index;
     bool heading_printed = false;
+    bool registry_available = false;
+    struct input_proxy_installed_instance_list installed = {0};
 
     if (stream == NULL || snapshot == NULL || event_node == NULL) {
         return;
@@ -416,6 +418,10 @@ void input_proxy_print_runtime_associations(
             "not be queried.\n", stream);
         return;
     }
+    if (installed_instances != NULL &&
+        input_proxy_installed_instance_enumerate(installed_instances,
+            &installed) == INPUT_PROXY_INSTALLED_INSTANCE_SUCCESS)
+        registry_available = true;
     for (index = 0; index < snapshot->record_count; ++index) {
         if (!input_proxy_runtime_record_matches_device(
                 &snapshot->records[index], event_node, preferred_source)) {
@@ -426,18 +432,25 @@ void input_proxy_print_runtime_associations(
             heading_printed = true;
         }
         {
-            bool installed = false;
-            if (installed_instances != NULL)
-                (void)input_proxy_installed_instance_exists(
-                    installed_instances,
-                    snapshot->records[index].instance_name,
-                    &installed);
+            bool instance_installed = false;
+            const char *classification = "Unknown";
+            size_t installed_index;
+            for (installed_index = 0; installed_index < installed.count;
+                 ++installed_index) {
+                if (strcmp(installed.names[installed_index],
+                        snapshot->records[index].instance_name) == 0)
+                    instance_installed = true;
+            }
+            if (registry_available)
+                classification = instance_installed
+                    ? "Installed" : "Direct-run";
             fprintf(stream, "  %s [%s] [%s]\n",
                 snapshot->records[index].instance_name,
-                installed ? "Installed" : "Direct-run",
+                classification,
                 snapshot->records[index].source_path);
         }
     }
+    input_proxy_installed_instance_list_destroy(&installed);
 }
 
 static void resolve_effective_user(char *identity, size_t identity_size)

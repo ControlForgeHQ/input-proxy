@@ -1262,7 +1262,9 @@ source.
 Multiple running instances may refer to the same physical source and MUST be
 reported when present. Inspection classifies each associated runtime as an
 Installed Instance when its Instance Name exists in the authoritative response
-artifact store, and as a direct run otherwise.
+artifact store, and as a direct run when a successful registry query confirms
+that it does not. When the registry cannot be queried, inspection reports the
+classification as unknown rather than inferring runtime provenance.
 
 If D-Bus is available and no matching runtime instances exist, inspection
 SHOULD remain silent rather than emitting a "none found" section.

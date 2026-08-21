@@ -50,6 +50,7 @@ int main(void)
     };
     int failures = 0;
     struct input_proxy_installed_instance_store *installed_instances = NULL;
+    struct input_proxy_installed_instance_store *unavailable_instances = NULL;
 
     if (!input_proxy_should_suggest_run(true, true, 0) ||
         input_proxy_should_suggest_run(true, true, 1) ||
@@ -341,6 +342,27 @@ int main(void)
     }
     free(output); output = NULL; output_size = 0;
 
+    snprintf(path, sizeof(path), "%s/registry-unavailable", root);
+    failures += write_text(path, "not a directory\n");
+    if (input_proxy_installed_instance_store_create_for_directory(
+            &unavailable_instances, path) !=
+        INPUT_PROXY_INSTALLED_INSTANCE_SUCCESS) return 1;
+    snprintf(path, sizeof(path), "%s/event7", root);
+    stream = open_memstream(&output, &output_size);
+    if (stream == NULL) return 1;
+    input_proxy_print_runtime_associations(
+        stream, &runtime_snapshot, path, by_id_path, unavailable_instances);
+    fclose(stream);
+    if (strstr(output, "EventSource [Unknown] [") == NULL ||
+        strstr(output, "EventSource [Direct-run] [") != NULL ||
+        strstr(output, "PersistentSource [Unknown] [") == NULL ||
+        strstr(output, "PersistentSource [Direct-run] [") != NULL) {
+        fprintf(stderr, "unavailable registry produced a known classification:\n%s",
+                output);
+        failures++;
+    }
+    free(output); output = NULL; output_size = 0;
+
     stream = open_memstream(&output, &output_size);
     error_stream = open_memstream(&error, &error_size);
     if (failures || stream == NULL || error_stream == NULL) return 1;
@@ -372,9 +394,9 @@ int main(void)
         strstr(output, "Associated proxy instances\n") == NULL ||
         strstr(output, "Associated proxy instances:\n") != NULL ||
         strstr(output, "Running input-proxy instances") != NULL ||
-        strstr(output, "  EventSource [Direct-run] [") == NULL ||
+        strstr(output, "  EventSource [Unknown] [") == NULL ||
         strstr(output, path) == NULL ||
-        strstr(output, "  PersistentSource [Direct-run] [") == NULL ||
+        strstr(output, "  PersistentSource [Unknown] [") == NULL ||
         strstr(output, by_id_path) == NULL ||
         strstr(output, "Unrelated") != NULL ||
         strstr(output, "Proxy readiness") >
@@ -464,8 +486,8 @@ int main(void)
                 strstr(output, "Event node:") == NULL ||
                 strstr(output, path) == NULL ||
                 strstr(output, "Associated proxy instances\n") == NULL ||
-                strstr(output, "  EventSource [Direct-run] [") == NULL ||
-                strstr(output, "  PersistentSource [Direct-run] [") == NULL ||
+                strstr(output, "  EventSource [Unknown] [") == NULL ||
+                strstr(output, "  PersistentSource [Unknown] [") == NULL ||
                 strstr(output, "Unrelated") != NULL || error[0] != '\0') {
                 fprintf(stderr, "unexpected alias inspection result:\n%s%s",
                         output, error);
@@ -515,6 +537,7 @@ int main(void)
     }
     free(output); free(error);
     input_proxy_installed_instance_store_destroy(installed_instances);
+    input_proxy_installed_instance_store_destroy(unavailable_instances);
     if (nftw(root, remove_entry, 16, FTW_DEPTH | FTW_PHYS) != 0) failures++;
     return failures == 0 ? 0 : 1;
 }
