@@ -807,6 +807,14 @@ The one-process-per-source model remains unchanged.
 
 Device inspection provides detailed information about one candidate source.
 
+Runtime accessibility and readiness are reported independently for manual
+execution by the effective caller and persistent execution by the dedicated
+`input-proxy` service identity. Service-identity assessment uses the same uid,
+primary-group, supplementary-group, and filesystem-access model as deployment
+planning. Missing package identity integration is an inspectable persistent
+execution blocker and does not prevent the read-only inspection from
+completing.
+
 It may inspect:
 
 - evdev identity;
@@ -1252,7 +1260,11 @@ When D-Bus is available, inspection additionally discovers running
 source.
 
 Multiple running instances may refer to the same physical source and MUST be
-reported when present.
+reported when present. Inspection classifies each associated runtime as an
+Installed Instance when its Instance Name exists in the authoritative response
+artifact store, and as a direct run when a successful registry query confirms
+that it does not. When the registry cannot be queried, inspection reports the
+classification as unknown rather than inferring runtime provenance.
 
 If D-Bus is available and no matching runtime instances exist, inspection
 SHOULD remain silent rather than emitting a "none found" section.

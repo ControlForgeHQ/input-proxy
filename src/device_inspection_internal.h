@@ -8,8 +8,11 @@
 #include <stdbool.h>
 #include <sys/stat.h>
 
+#include "service_identity_internal.h"
+
 struct input_proxy_runtime_snapshot;
 struct input_proxy_device_identity;
+struct input_proxy_installed_instance_store;
 
 struct input_proxy_device_rule_identity {
     char udev_vendor[32];
@@ -40,9 +43,12 @@ char *input_proxy_render_libinput_ignore_rule(
     const struct input_proxy_device_rule_identity *identity);
 
 struct input_proxy_access_diagnostics {
-    bool source_ok;
+    bool current_source_ok;
+    bool current_uinput_ok;
     bool uinput_exists;
-    bool uinput_ok;
+    enum input_proxy_install_service_identity_result service_identity_result;
+    bool service_source_ok;
+    bool service_uinput_ok;
 };
 
 void input_proxy_print_wrapped_values(
@@ -67,7 +73,8 @@ void input_proxy_print_runtime_associations(
     FILE *stream,
     const struct input_proxy_runtime_snapshot *snapshot,
     const char *event_node,
-    const char *preferred_source
+    const char *preferred_source,
+    const struct input_proxy_installed_instance_store *installed_instances
 );
 
 enum input_proxy_result input_proxy_inspect_device(
@@ -79,6 +86,20 @@ enum input_proxy_result input_proxy_inspect_device(
     const char *uinput_path,
     const char *udev_data_path,
     const struct input_proxy_runtime_snapshot *runtime_snapshot
+);
+
+enum input_proxy_result input_proxy_inspect_device_with_service_environment(
+    FILE *stream,
+    FILE *error_stream,
+    const char *device_path,
+    const char *sysfs_input_path,
+    const char *device_input_path,
+    const char *uinput_path,
+    const char *udev_data_path,
+    const struct input_proxy_runtime_snapshot *runtime_snapshot,
+    enum input_proxy_install_service_identity_result service_identity_result,
+    const struct input_proxy_deployment_environment *service_environment,
+    const struct input_proxy_installed_instance_store *installed_instances
 );
 
 #endif
