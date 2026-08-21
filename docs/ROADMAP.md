@@ -380,8 +380,8 @@ minimal and ownership boundaries explicit.
   - D-Bus policy and service metadata;
   - the persistent-instance artifact location;
   - other required deployment files.
-- Use a package-time debconf choice to determine whether the service identity is
-  added to the existing `input` group for access to all physical input devices.
+- Add the service identity to the existing `input` group as a mandatory
+  supplementary membership for access to physical and virtual evdev devices.
 - Support unattended and preseeded package installation.
 - Configure, enable, and start zero proxy instances during package installation.
 
@@ -416,14 +416,10 @@ input-proxy install
   - `--running-motion-activity`;
   - `--paused-motion-activity`;
   - `--start-paused on|off`.
-- Create a deterministic per-instance udev rule that grants the service identity
-  read access to the Installed Instance's virtual event device.
-- When needed, add narrowly matched Physical Source permission remediation to
-  that rule.
 - Optionally add narrowly matched Physical Source
-  `LIBINPUT_IGNORE_DEVICE=1` remediation to that rule.
-- Do not add Physical Source remediation when the source cannot be identified
-  narrowly enough.
+  `LIBINPUT_IGNORE_DEVICE=1` policy to a deterministic per-instance udev rule.
+- Do not add optional Physical Source policy when the source cannot be
+  identified narrowly enough.
 - Create the persistent instance artifact.
 - Configure the corresponding systemd service instance.
 - Reload affected system services where required.
@@ -467,13 +463,13 @@ input-proxy run @file
 The long-running runtime process remains unprivileged under the dedicated
 service identity.
 
-Package configuration owns host-level service identity and physical-input group
-membership. Package-owned integration provides dedicated access to
-`/dev/uinput`.
+Package configuration owns the host-level service identity, its mandatory
+supplementary membership in the existing `input` group, and dedicated access to
+`/dev/uinput`. The dedicated `input-proxy` group remains the identity's primary
+group.
 
-Every Installed Instance owns its deterministic per-instance udev rule. The rule
-always provides virtual-output read permission and may additionally contain
-narrowly matched Physical Source permission or libinput-ignore remediation.
+An Installed Instance owns a deterministic per-instance udev rule only when it
+configures optional narrowly matched policy such as libinput-ignore.
 
 The deployment must not require:
 
@@ -504,8 +500,8 @@ input-proxy uninstall [INSTANCE_NAME]
 - Reload affected system services when required.
 - Report partial failure accurately rather than claiming transactional rollback.
 
-Multiple instances that refer to the same physical device may own duplicate,
-identical udev rules. This duplication is intentional: instance removal does not
+Multiple instances that configure the same physical-device policy may own
+duplicate, identical udev rules. This duplication is intentional: instance removal does not
 search for equivalent rules, share ownership, perform reference counting, or
 remove another instance's artifacts.
 

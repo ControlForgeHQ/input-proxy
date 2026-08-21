@@ -201,7 +201,7 @@ int main(void)
     create_artifacts(directory, false);
     expect(invoke(directory, &fixture, false, stdin, "Test-One", &output, &error)
         == EXIT_SUCCESS, "response-only partial installation uninstalls");
-    expect(fixture.reloads == 1 && strstr(output, "already inactive") != NULL &&
+    expect(fixture.reloads == 0 && strstr(output, "already inactive") != NULL &&
         strstr(output, "rule not present") != NULL, "report no-op teardown stages");
     free(output); free(error); output = error = NULL;
 

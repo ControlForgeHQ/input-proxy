@@ -38,7 +38,6 @@ void input_proxy_install_print_help(FILE *stream)
         "  --start-paused on|off            (default: off)\n\n"
         "Deployment choices:\n"
         "  --use-preferred-run-source yes|no\n"
-        "  --add-source-permission-rule yes|no\n"
         "  --add-libinput-ignore-rule yes|no\n"
         "  --help  Show this help and exit.\n\n",
         stream);
@@ -152,10 +151,6 @@ static bool parse_arguments(int argc, char *argv[],
         } else if (strcmp(option, "--use-preferred-run-source") == 0) {
             field = 7; if (!parse_yes_no(value, &enabled)) return false;
             choices->preferred_source = enabled ? INPUT_PROXY_PREFERRED_SOURCE_USE_PREFERRED : INPUT_PROXY_PREFERRED_SOURCE_RETAIN_SUPPLIED;
-        } else if (strcmp(option, "--add-source-permission-rule") == 0) {
-            if (choices->source_permission != INPUT_PROXY_REMEDIATION_UNRESOLVED || !parse_yes_no(value, &enabled)) return false;
-            choices->source_permission = enabled ? INPUT_PROXY_REMEDIATION_INSTALL : INPUT_PROXY_REMEDIATION_DO_NOT_INSTALL;
-            continue;
         } else if (strcmp(option, "--add-libinput-ignore-rule") == 0) {
             if (choices->libinput_ignore != INPUT_PROXY_REMEDIATION_UNRESOLVED || !parse_yes_no(value, &enabled)) return false;
             choices->libinput_ignore = enabled ? INPUT_PROXY_REMEDIATION_INSTALL : INPUT_PROXY_REMEDIATION_DO_NOT_INSTALL;
@@ -172,6 +167,7 @@ static enum input_proxy_install_service_identity_result service_environment(
 {
     struct passwd *account;
     struct group *group;
+    struct group *input_group;
     uid_t service_uid;
     gid_t service_gid;
     int count = 0;
@@ -190,6 +186,11 @@ static enum input_proxy_install_service_identity_result service_environment(
                           : INPUT_PROXY_INSTALL_SERVICE_IDENTITY_UNUSABLE;
     if (service_gid != group->gr_gid)
         return INPUT_PROXY_INSTALL_SERVICE_PRIMARY_GROUP_MISMATCH;
+    errno = 0;
+    input_group = getgrnam("input");
+    if (input_group == NULL)
+        return errno == 0 ? INPUT_PROXY_INSTALL_SERVICE_INPUT_GROUP_MISSING
+                          : INPUT_PROXY_INSTALL_SERVICE_IDENTITY_UNUSABLE;
     (void)getgrouplist(SERVICE_IDENTITY, service_gid, NULL, &count);
     if (count <= 0) count = 1;
     *groups = malloc((size_t)count * sizeof(**groups));
@@ -198,6 +199,16 @@ static enum input_proxy_install_service_identity_result service_environment(
     if (getgrouplist(SERVICE_IDENTITY, service_gid, *groups, &count) < 0) {
         free(*groups); *groups = NULL;
         return INPUT_PROXY_INSTALL_SERVICE_IDENTITY_UNUSABLE;
+    }
+    {
+        int index;
+        bool input_member = false;
+        for (index = 0; index < count; ++index)
+            if ((*groups)[index] == input_group->gr_gid) input_member = true;
+        if (!input_member) {
+            free(*groups); *groups = NULL;
+            return INPUT_PROXY_INSTALL_SERVICE_INPUT_MEMBERSHIP_MISSING;
+        }
     }
     *env = (struct input_proxy_deployment_environment) {
         .sysfs_input_path = "/sys/class/input", .device_input_path = "/dev/input",
@@ -217,6 +228,10 @@ static void report_service_identity_error(
         fprintf(error, "input-proxy: required service group '%s' is missing; install or repair the package first\n", SERVICE_IDENTITY);
     else if (result == INPUT_PROXY_INSTALL_SERVICE_PRIMARY_GROUP_MISMATCH)
         fprintf(error, "input-proxy: service user '%s' must have the dedicated '%s' group as its primary group; install or repair the package first\n", SERVICE_IDENTITY, SERVICE_IDENTITY);
+    else if (result == INPUT_PROXY_INSTALL_SERVICE_INPUT_GROUP_MISSING)
+        fprintf(error, "input-proxy: required system group 'input' is missing; install or repair package integration first\n");
+    else if (result == INPUT_PROXY_INSTALL_SERVICE_INPUT_MEMBERSHIP_MISSING)
+        fprintf(error, "input-proxy: service user '%s' must be a supplementary member of the 'input' group; install or repair package integration first\n", SERVICE_IDENTITY);
     else
         fprintf(error, "input-proxy: required service identity '%s' is unusable; install or repair the package first\n", SERVICE_IDENTITY);
 }
@@ -225,19 +240,7 @@ static void print_plan(const struct input_proxy_session_config *config,
     const struct input_proxy_deployment_readiness *readiness,
     const struct input_proxy_deployment_resolution *resolution, FILE *output)
 {
-    const char *source_permission_state;
     const char *libinput_ignore_state;
-
-    if (resolution->source_permission_action) {
-        source_permission_state = "yes";
-    } else if (readiness->source_accessible) {
-        source_permission_state = "not required";
-    } else if (readiness->source_permission_remediation ==
-               INPUT_PROXY_PERMISSION_REMEDIATION_AVAILABLE) {
-        source_permission_state = "no";
-    } else {
-        source_permission_state = "unavailable";
-    }
 
     if (resolution->libinput_ignore_action) {
         libinput_ignore_state = "yes";
@@ -257,15 +260,14 @@ static void print_plan(const struct input_proxy_session_config *config,
     fprintf(output, "  Activity timeout: %" PRIu64 " ms\n"
         "  Detection throttle: %" PRIu64 " ms\n"
         "  Running-motion activity: %s\n  Paused-motion activity: %s\n"
-        "  Initial paused policy: %s\n  Source-permission rule: %s\n"
-        "  Libinput-ignore rule: %s\n  Virtual-output permission rule: required\n"
+        "  Initial paused policy: %s\n"
+        "  Libinput-ignore rule: %s\n"
         "  /dev/uinput ready: %s\n"
         "  Application ready: %s\n",
         config->activity_timeout_ms, config->detection_throttle_ms,
         config->running_motion_activity ? "on" : "off",
         config->paused_motion_activity ? "on" : "off",
         config->start_paused ? "on" : "off",
-        source_permission_state,
         libinput_ignore_state,
         readiness->uinput_accessible ? "yes" : "no",
         resolution->application_ready ? "yes" : "no");
@@ -367,11 +369,6 @@ int input_proxy_install_command_with_environment(int argc, char *argv[],
         if (!prompt_yes_no("Use the Preferred run source?", &answer, command_environment)) goto cleanup_with_spacing;
         choices.preferred_source = answer ? INPUT_PROXY_PREFERRED_SOURCE_USE_PREFERRED : INPUT_PROXY_PREFERRED_SOURCE_RETAIN_SUPPLIED;
     }
-    if (!readiness->source_accessible && readiness->source_permission_remediation == INPUT_PROXY_PERMISSION_REMEDIATION_AVAILABLE && choices.source_permission == INPUT_PROXY_REMEDIATION_UNRESOLVED) {
-        fprintf(command_environment->output, "\nThe input-proxy service identity cannot currently read this source.\nA narrowly matched instance-owned udev rule can grant access to this Physical Source.\n\n");
-        if (!prompt_yes_no("Install the source-permission rule?", &answer, command_environment)) goto cleanup_with_spacing;
-        choices.source_permission = answer ? INPUT_PROXY_REMEDIATION_INSTALL : INPUT_PROXY_REMEDIATION_DO_NOT_INSTALL;
-    }
     if (readiness->libinput_ignore_rule_available && choices.libinput_ignore == INPUT_PROXY_REMEDIATION_UNRESOLVED) {
         fprintf(command_environment->output, "\nThis Physical Source may also be consumed directly by libinput.\ninput-proxy can install a narrowly matched instance-owned udev rule setting LIBINPUT_IGNORE_DEVICE=1.\n\n");
         if (!prompt_yes_no("Install the libinput-ignore rule?", &answer, command_environment)) goto cleanup_with_spacing;
@@ -386,13 +383,8 @@ int input_proxy_install_command_with_environment(int argc, char *argv[],
         command_environment->output);
     if (!resolution->application_ready) {
         if (!resolution->choices_resolved) fprintf(command_environment->error, "input-proxy: the installation plan has an unresolved required decision\n");
-        if (!readiness->source_accessible &&
-            readiness->source_permission_remediation == INPUT_PROXY_PERMISSION_REMEDIATION_AVAILABLE &&
-            !resolution->source_permission_action) {
-            fprintf(command_environment->error, "input-proxy: the service identity cannot read the Physical Source and required source-permission remediation was declined\n");
-        }
         if (readiness->blockers & INPUT_PROXY_DEPLOYMENT_BLOCKER_SOURCE) fprintf(command_environment->error, "input-proxy: Physical Source readiness failed\n");
-        if (readiness->blockers & INPUT_PROXY_DEPLOYMENT_BLOCKER_SOURCE_PERMISSION) fprintf(command_environment->error, "input-proxy: service identity cannot read the source and safe targeted remediation is unavailable\n");
+        if (readiness->blockers & INPUT_PROXY_DEPLOYMENT_BLOCKER_PACKAGE_INTEGRATION) fprintf(command_environment->error, "input-proxy: the service identity cannot read the Physical Source; ensure the input-proxy user is a supplementary member of the input group and repair package integration\n");
         if (readiness->blockers & INPUT_PROXY_DEPLOYMENT_BLOCKER_UINPUT) fprintf(command_environment->error, "input-proxy: /dev/uinput is not ready for the service identity; install or repair package integration\n");
         goto cleanup_with_spacing;
     }
@@ -435,14 +427,8 @@ int input_proxy_install_command_with_environment(int argc, char *argv[],
             fputs("failed to apply the udev rule to the Physical Source\n", command_environment->error); break;
         case INPUT_PROXY_INSTALLATION_ACTIVATION_UDEV_SETTLE_FAILED:
             fputs("udev processing did not settle\n", command_environment->error); break;
-        case INPUT_PROXY_INSTALLATION_ACTIVATION_PERMISSION_VERIFICATION_FAILED:
-            fputs("the service identity still cannot read the Physical Source\n", command_environment->error); break;
         case INPUT_PROXY_INSTALLATION_ACTIVATION_LIBINPUT_VERIFICATION_FAILED:
             fputs("LIBINPUT_IGNORE_DEVICE=1 was not observed\n", command_environment->error); break;
-        case INPUT_PROXY_INSTALLATION_ACTIVATION_VIRTUAL_OUTPUT_NOT_FOUND:
-            fputs("the Instance's virtual event device did not appear before the verification deadline\n", command_environment->error); break;
-        case INPUT_PROXY_INSTALLATION_ACTIVATION_VIRTUAL_PERMISSION_VERIFICATION_FAILED:
-            fputs("the service identity cannot read the Instance's virtual event device\n", command_environment->error); break;
         case INPUT_PROXY_INSTALLATION_ACTIVATION_ENABLE_FAILED:
             fputs("failed to enable the systemd service instance\n", command_environment->error); break;
         case INPUT_PROXY_INSTALLATION_ACTIVATION_START_FAILED:

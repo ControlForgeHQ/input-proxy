@@ -201,8 +201,6 @@ enum input_proxy_installation_plan_result input_proxy_installation_plan_assess(
     plan->preferred_source_path[0] = '\0';
     plan->readiness.supplied_source_path = plan->source_path;
     plan->readiness.selected_source_path = plan->source_path;
-    plan->readiness.source_permission_remediation =
-        INPUT_PROXY_PERMISSION_REMEDIATION_UNAVAILABLE;
     plan->readiness.libinput_status = INPUT_PROXY_LIBINPUT_STATUS_INDETERMINATE;
 
     if (deployment_stat(env, plan->source_path, &source_status) != 0 ||
@@ -235,16 +233,9 @@ enum input_proxy_installation_plan_result input_proxy_installation_plan_assess(
     narrow_match = input_proxy_rule_identity_is_narrow(&rule_identity);
     plan->readiness.source_accessible = identity_has_access(&source_status, env,
         S_IRUSR, S_IRGRP, S_IROTH);
-    if (plan->readiness.source_accessible) {
-        plan->readiness.source_permission_remediation =
-            INPUT_PROXY_PERMISSION_REMEDIATION_NOT_REQUIRED;
-    } else if (narrow_match) {
-        plan->readiness.source_permission_remediation =
-            INPUT_PROXY_PERMISSION_REMEDIATION_AVAILABLE;
-    } else {
+    if (!plan->readiness.source_accessible)
         plan->readiness.blockers |=
-            INPUT_PROXY_DEPLOYMENT_BLOCKER_SOURCE_PERMISSION;
-    }
+            INPUT_PROXY_DEPLOYMENT_BLOCKER_PACKAGE_INTEGRATION;
     plan->readiness.libinput_ignore_rule_available = narrow_match &&
         plan->readiness.libinput_status ==
             INPUT_PROXY_LIBINPUT_STATUS_NOT_IGNORED;
@@ -284,12 +275,10 @@ enum input_proxy_installation_plan_result input_proxy_installation_plan_resolve(
     const struct input_proxy_deployment_choices *choices)
 {
     struct input_proxy_deployment_resolution resolution = {0};
-    bool source_permission_resolved = true;
     bool libinput_ignore_resolved = true;
 
     if (plan == NULL || choices == NULL || !plan->readiness_available ||
         !preferred_source_choice_valid(choices->preferred_source) ||
-        !remediation_choice_valid(choices->source_permission) ||
         !remediation_choice_valid(choices->libinput_ignore)) {
         return INPUT_PROXY_INSTALLATION_PLAN_INVALID_CHOICES;
     }
@@ -308,19 +297,6 @@ enum input_proxy_installation_plan_result input_proxy_installation_plan_resolve(
         return INPUT_PROXY_INSTALLATION_PLAN_INVALID_CHOICES;
     }
 
-    if (plan->readiness.source_accessible) {
-        if (choices->source_permission == INPUT_PROXY_REMEDIATION_INSTALL)
-            return INPUT_PROXY_INSTALLATION_PLAN_INVALID_CHOICES;
-    } else if (plan->readiness.source_permission_remediation ==
-               INPUT_PROXY_PERMISSION_REMEDIATION_AVAILABLE) {
-        source_permission_resolved =
-            choices->source_permission != INPUT_PROXY_REMEDIATION_UNRESOLVED;
-        resolution.source_permission_action =
-            choices->source_permission == INPUT_PROXY_REMEDIATION_INSTALL;
-    } else if (choices->source_permission == INPUT_PROXY_REMEDIATION_INSTALL) {
-        return INPUT_PROXY_INSTALLATION_PLAN_INVALID_CHOICES;
-    }
-
     if (plan->readiness.libinput_status == INPUT_PROXY_LIBINPUT_STATUS_IGNORED) {
         if (choices->libinput_ignore == INPUT_PROXY_REMEDIATION_INSTALL)
             return INPUT_PROXY_INSTALLATION_PLAN_INVALID_CHOICES;
@@ -336,11 +312,9 @@ enum input_proxy_installation_plan_result input_proxy_installation_plan_resolve(
     resolution.choices_resolved =
         (!plan->readiness.preferred_source_differs ||
          choices->preferred_source != INPUT_PROXY_PREFERRED_SOURCE_UNRESOLVED) &&
-        source_permission_resolved && libinput_ignore_resolved;
+        libinput_ignore_resolved;
     resolution.application_ready = resolution.choices_resolved &&
-        plan->readiness.blockers == INPUT_PROXY_DEPLOYMENT_BLOCKER_NONE &&
-        (plan->readiness.source_accessible ||
-         resolution.source_permission_action);
+        plan->readiness.blockers == INPUT_PROXY_DEPLOYMENT_BLOCKER_NONE;
 
     plan->resolution = resolution;
     plan->resolution_available = true;
