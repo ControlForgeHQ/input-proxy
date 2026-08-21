@@ -251,9 +251,7 @@ int input_proxy_uninstall_command_with_environment(int argc, char *argv[],
     if (snprintf(unit, sizeof(unit), "input-proxy@%s.service", name) >= (int)sizeof(unit)) goto cleanup;
     ops = environment->operations == NULL ? &default_operations : environment->operations;
     if (ops->stop_service == NULL || ops->disable_service == NULL ||
-        ops->remove_file == NULL || ops->source_present == NULL ||
-        ops->reload_udev == NULL || ops->trigger_source == NULL ||
-        ops->settle_udev == NULL) goto cleanup;
+        ops->remove_file == NULL) goto cleanup;
 
     fprintf(environment->output, "Uninstalling Installed Instance '%s':\n", name);
     stop_result = ops->stop_service(unit, ops->userdata);
@@ -268,8 +266,13 @@ int input_proxy_uninstall_command_with_environment(int argc, char *argv[],
     rule_result = ops->remove_file(rule_path, ops->userdata);
     report_stage(environment->output, environment->error, "Udev rule removal", rule_result, "rule not present");
     failed |= rule_result == INPUT_PROXY_UNINSTALL_STAGE_FAILED;
-    if (rule_result != INPUT_PROXY_UNINSTALL_STAGE_FAILED) {
-        if (!ops->reload_udev(ops->userdata)) {
+    if (rule_result == INPUT_PROXY_UNINSTALL_STAGE_SUCCESS) {
+        if (ops->reload_udev == NULL || ops->source_present == NULL ||
+            ops->trigger_source == NULL || ops->settle_udev == NULL) {
+            fputs("input-proxy: Udev activation operations are unavailable\n",
+                environment->error);
+            failed = true;
+        } else if (!ops->reload_udev(ops->userdata)) {
             fputs("input-proxy: Udev rule reload failed\n", environment->error);
             failed = true;
         } else if (source != NULL && ops->source_present(source, ops->userdata)) {
@@ -285,7 +288,7 @@ int input_proxy_uninstall_command_with_environment(int argc, char *argv[],
         } else {
             fputs("  Udev activation: rules reloaded; Physical Source unavailable, no device retriggered\n", environment->output);
         }
-    } else {
+    } else if (rule_result == INPUT_PROXY_UNINSTALL_STAGE_NOT_REQUIRED) {
         fputs("  Udev activation: not required\n", environment->output);
     }
     if (failed) {

@@ -174,10 +174,8 @@ int main(void)
     readiness = input_proxy_installation_plan_readiness(plan);
     expect(readiness != NULL && readiness->physical_source &&
         readiness->source_accessible && readiness->uinput_accessible &&
-        readiness->blockers == INPUT_PROXY_DEPLOYMENT_BLOCKER_NONE &&
-        readiness->source_permission_remediation ==
-            INPUT_PROXY_PERMISSION_REMEDIATION_NOT_REQUIRED,
-        "service group access is ready without instance permission rule");
+        readiness->blockers == INPUT_PROXY_DEPLOYMENT_BLOCKER_NONE,
+        "service input-group access is ready");
     expect(readiness != NULL && readiness->preferred_source_path != NULL &&
         strcmp(readiness->preferred_source_path, alias) == 0 &&
         readiness->preferred_source_differs,
@@ -204,7 +202,6 @@ int main(void)
     config = input_proxy_installation_plan_config(plan);
     expect(resolution != NULL && resolution->choices_resolved &&
         resolution->application_ready && resolution->libinput_ignore_action &&
-        !resolution->source_permission_action &&
         strcmp(resolution->persistent_source_path, alias) == 0 &&
         strcmp(readiness->selected_source_path, alias) == 0 &&
         strcmp(config->source_path, alias) == 0,
@@ -282,31 +279,20 @@ int main(void)
         INPUT_PROXY_INSTALLATION_PLAN_SUCCESS, "assess missing source access");
     readiness = input_proxy_installation_plan_readiness(plan);
     expect(readiness != NULL && !readiness->source_accessible &&
-        readiness->source_permission_remediation ==
-            INPUT_PROXY_PERMISSION_REMEDIATION_AVAILABLE &&
-        (readiness->blockers & INPUT_PROXY_DEPLOYMENT_BLOCKER_SOURCE_PERMISSION) == 0,
-        "narrow match makes targeted source remediation available");
+        (readiness->blockers &
+            INPUT_PROXY_DEPLOYMENT_BLOCKER_PACKAGE_INTEGRATION) != 0,
+        "missing source access is a package-integration blocker");
     choices = (struct input_proxy_deployment_choices) {
         .preferred_source = INPUT_PROXY_PREFERRED_SOURCE_RETAIN_SUPPLIED,
-        .source_permission = INPUT_PROXY_REMEDIATION_INSTALL,
         .libinput_ignore = INPUT_PROXY_REMEDIATION_DO_NOT_INSTALL
     };
     expect(input_proxy_installation_plan_resolve(plan, &choices) ==
         INPUT_PROXY_INSTALLATION_PLAN_SUCCESS,
-        "resolve targeted source permission installation");
-    resolution = input_proxy_installation_plan_resolution(plan);
-    expect(resolution != NULL && resolution->application_ready &&
-        resolution->source_permission_action &&
-        !resolution->libinput_ignore_action,
-        "permission installation plans an independent instance-owned action");
-    choices.source_permission = INPUT_PROXY_REMEDIATION_DO_NOT_INSTALL;
-    expect(input_proxy_installation_plan_resolve(plan, &choices) ==
-        INPUT_PROXY_INSTALLATION_PLAN_SUCCESS,
-        "decline targeted source permission installation");
+        "resolve choices with missing package integration");
     resolution = input_proxy_installation_plan_resolution(plan);
     expect(resolution != NULL && resolution->choices_resolved &&
-        !resolution->application_ready && !resolution->source_permission_action,
-        "declining required permission remediation remains non-ready");
+        !resolution->application_ready,
+        "deployment choices cannot repair missing package integration");
     input_proxy_installation_plan_destroy(plan); plan = NULL;
 
     snprintf(path, sizeof(path), "%s/id/bustype", device_dir);
@@ -325,12 +311,10 @@ int main(void)
         "assess I2C source using kernel input identity");
     readiness = input_proxy_installation_plan_readiness(plan);
     expect(readiness != NULL && !readiness->source_accessible &&
-        readiness->source_permission_remediation ==
-            INPUT_PROXY_PERMISSION_REMEDIATION_AVAILABLE &&
         readiness->libinput_ignore_rule_available &&
         (readiness->blockers &
-            INPUT_PROXY_DEPLOYMENT_BLOCKER_SOURCE_PERMISSION) == 0,
-        "I2C bus/vendor/product plus ID_PATH supports both remediations");
+            INPUT_PROXY_DEPLOYMENT_BLOCKER_PACKAGE_INTEGRATION) != 0,
+        "I2C narrow identity supports ignore policy but not permission repair");
     input_proxy_installation_plan_destroy(plan); plan = NULL;
     snprintf(path, sizeof(path), "%s/id/bustype", device_dir);
     expect(write_text(path, "0003\n") == 0, "restore USB fixture bus");
@@ -348,24 +332,17 @@ int main(void)
         INPUT_PROXY_INSTALLATION_PLAN_SUCCESS, "assess unmatched source");
     readiness = input_proxy_installation_plan_readiness(plan);
     expect(readiness != NULL &&
-        readiness->source_permission_remediation ==
-            INPUT_PROXY_PERMISSION_REMEDIATION_UNAVAILABLE &&
-        (readiness->blockers & INPUT_PROXY_DEPLOYMENT_BLOCKER_SOURCE_PERMISSION) != 0 &&
+        (readiness->blockers &
+            INPUT_PROXY_DEPLOYMENT_BLOCKER_PACKAGE_INTEGRATION) != 0 &&
         !readiness->libinput_ignore_rule_available,
-        "missing narrow match blocks permission repair and ignore offer");
+        "missing source access blocks readiness independent of rule identity");
     choices = (struct input_proxy_deployment_choices) {
-        .preferred_source = INPUT_PROXY_PREFERRED_SOURCE_RETAIN_SUPPLIED,
-        .source_permission = INPUT_PROXY_REMEDIATION_INSTALL
+        .preferred_source = INPUT_PROXY_PREFERRED_SOURCE_RETAIN_SUPPLIED
     };
-    expect(input_proxy_installation_plan_resolve(plan, &choices) ==
-        INPUT_PROXY_INSTALLATION_PLAN_INVALID_CHOICES &&
-        input_proxy_installation_plan_resolution(plan) == NULL,
-        "choice cannot force unavailable permission remediation");
-    choices.source_permission = INPUT_PROXY_REMEDIATION_UNRESOLVED;
     expect(input_proxy_installation_plan_resolve(plan, &choices) ==
         INPUT_PROXY_INSTALLATION_PLAN_SUCCESS &&
         !input_proxy_installation_plan_resolution(plan)->application_ready,
-        "unavailable permission remediation leaves blocker intact");
+        "package integration blocker leaves installation non-ready");
     input_proxy_installation_plan_destroy(plan); plan = NULL;
 
     fixture.source_mode = 0640; fixture.uinput_mode = 0600;

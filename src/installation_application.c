@@ -39,52 +39,6 @@ static char *rule_path(const char *directory, const char *name)
     return path;
 }
 
-static char *render_rule(const char *instance_name,
-    const struct input_proxy_device_rule_identity *identity, bool permission,
-    bool ignore)
-{
-    char identity_match[512];
-    int virtual_size;
-    int source_size = 0;
-    char *content;
-
-    virtual_size = snprintf(NULL, 0,
-        "ACTION==\"add|change\", SUBSYSTEM==\"input\", KERNEL==\"event*\", "
-        "DEVPATH==\"/devices/virtual/input/*\", ATTRS{name}==\"%s\", "
-        "GROUP:=\"input-proxy\", MODE:=\"0640\"\n", instance_name);
-    if (virtual_size < 0) return NULL;
-    if (permission || ignore) {
-        if (!input_proxy_rule_identity_is_narrow(identity)) return NULL;
-        if (input_proxy_rule_identity_has_udev_identity(identity))
-            (void)snprintf(identity_match, sizeof(identity_match),
-                "ENV{ID_VENDOR_ID}==\"%s\", ENV{ID_MODEL_ID}==\"%s\"",
-                identity->udev_vendor, identity->udev_model);
-        else
-            (void)snprintf(identity_match, sizeof(identity_match),
-                "ATTRS{id/bustype}==\"%s\", ATTRS{id/vendor}==\"%s\", ATTRS{id/product}==\"%s\"",
-                identity->bus, identity->vendor, identity->product);
-        source_size = snprintf(NULL, 0,
-            "ACTION==\"add|change\", SUBSYSTEM==\"input\", KERNEL==\"event*\", "
-            "%s, ENV{ID_PATH}==\"%s\"%s%s\n", identity_match,
-            identity->path, permission ? ", GROUP:=\"input-proxy\", MODE:=\"0640\"" : "",
-            ignore ? ", ENV{LIBINPUT_IGNORE_DEVICE}=\"1\"" : "");
-        if (source_size < 0) return NULL;
-    }
-    content = malloc((size_t)virtual_size + (size_t)source_size + 1);
-    if (content == NULL) return NULL;
-    (void)snprintf(content, (size_t)virtual_size + 1,
-        "ACTION==\"add|change\", SUBSYSTEM==\"input\", KERNEL==\"event*\", "
-        "DEVPATH==\"/devices/virtual/input/*\", ATTRS{name}==\"%s\", "
-        "GROUP:=\"input-proxy\", MODE:=\"0640\"\n", instance_name);
-    if (source_size > 0)
-        (void)snprintf(content + virtual_size, (size_t)source_size + 1,
-            "ACTION==\"add|change\", SUBSYSTEM==\"input\", KERNEL==\"event*\", "
-            "%s, ENV{ID_PATH}==\"%s\"%s%s\n", identity_match, identity->path,
-            permission ? ", GROUP:=\"input-proxy\", MODE:=\"0640\"" : "",
-            ignore ? ", ENV{LIBINPUT_IGNORE_DEVICE}=\"1\"" : "");
-    return content;
-}
-
 static bool publish_rule(const char *directory, const char *final_path,
     const char *content, bool inject_failure)
 {
@@ -134,9 +88,14 @@ input_proxy_installation_plan_apply(const struct input_proxy_installation_plan *
     if (resolution == NULL || readiness == NULL || config == NULL || store == NULL ||
         !resolution->choices_resolved || !resolution->application_ready)
         return INPUT_PROXY_INSTALLATION_APPLICATION_INVALID_PLAN;
-    content = render_rule(config->instance_name, &readiness->rule_identity,
-        resolution->source_permission_action, resolution->libinput_ignore_action);
-    if (content == NULL) return INPUT_PROXY_INSTALLATION_APPLICATION_RULE_GENERATION_FAILED;
+    if (!resolution->libinput_ignore_action)
+        return input_proxy_installed_instance_create(store, config) ==
+            INPUT_PROXY_INSTALLED_INSTANCE_SUCCESS
+            ? INPUT_PROXY_INSTALLATION_APPLICATION_SUCCESS
+            : INPUT_PROXY_INSTALLATION_APPLICATION_RESPONSE_FAILED;
+    content = input_proxy_render_libinput_ignore_rule(&readiness->rule_identity);
+    if (content == NULL)
+        return INPUT_PROXY_INSTALLATION_APPLICATION_RULE_GENERATION_FAILED;
     final_rule = rule_path(directory, config->instance_name);
     if (final_rule == NULL) { free(content); return INPUT_PROXY_INSTALLATION_APPLICATION_RULE_GENERATION_FAILED; }
     if (lstat(final_rule, &(struct stat){0}) == 0 || errno != ENOENT) {

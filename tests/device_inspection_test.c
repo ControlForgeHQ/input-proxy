@@ -58,44 +58,66 @@ int main(void)
     }
 
     {
-        struct input_proxy_access_remediation access = {
+        struct input_proxy_device_rule_identity identity = {
+            .udev_vendor = "1234",
+            .udev_model = "5678",
+            .path = "platform-usb"
+        };
+        char *rule = input_proxy_render_libinput_ignore_rule(&identity);
+        if (rule == NULL || strstr(rule,
+                "ENV{ID_VENDOR_ID}==\"1234\", ENV{ID_MODEL_ID}==\"5678\"") == NULL ||
+            strstr(rule, "ENV{LIBINPUT_IGNORE_DEVICE}=\"1\"") == NULL) {
+            fprintf(stderr, "udev-identity rule rendering failed\n");
+            failures++;
+        }
+        free(rule);
+
+        identity.udev_vendor[0] = '\0';
+        identity.udev_model[0] = '\0';
+        snprintf(identity.path, sizeof(identity.path), "platform-i2c");
+        snprintf(identity.bus, sizeof(identity.bus), "0018");
+        snprintf(identity.vendor, sizeof(identity.vendor), "0416");
+        snprintf(identity.product, sizeof(identity.product), "038f");
+        rule = input_proxy_render_libinput_ignore_rule(&identity);
+        if (rule == NULL || strstr(rule,
+                "ATTRS{id/bustype}==\"0018\", ATTRS{id/vendor}==\"0416\", "
+                "ATTRS{id/product}==\"038f\"") == NULL ||
+            strstr(rule, "ENV{ID_PATH}==\"platform-i2c\"") == NULL) {
+            fprintf(stderr, "kernel-identity rule rendering failed\n");
+            failures++;
+        }
+        free(rule);
+    }
+
+    {
+        struct input_proxy_access_diagnostics access = {
             .source_ok = false,
-            .source_path = "/dev/input/event1",
-            .source_group = "input",
-            .source_group_readable = true,
-            .source_group_member = false,
             .uinput_exists = true,
-            .uinput_ok = false,
-            .uinput_group = "input",
-            .uinput_group_writable = true,
-            .uinput_group_member = false,
-            .uinput_module_loaded = true,
-            .input_group_available = true,
-            .user = "operator"
+            .uinput_ok = false
         };
         stream = open_memstream(&output, &output_size);
         if (stream == NULL) return 1;
-        input_proxy_print_access_remediation(stream, &access);
+        input_proxy_print_access_diagnostics(stream, &access);
         fclose(stream);
-        if (strstr(output, "Runtime accessibility remediation") == NULL ||
-            strstr(output, "sudo usermod -aG input operator") == NULL ||
-            strstr(output, "world") != NULL) {
-            fprintf(stderr, "unexpected group remediation:\n%s", output);
+        if (strstr(output, "Runtime accessibility diagnostics") == NULL ||
+            strstr(output, "standard\n    Linux 'input' group") == NULL ||
+            strstr(output, "package-owned\n    host integration") == NULL ||
+            strstr(output, "sudo ") != NULL || strstr(output, "chmod") != NULL ||
+            strstr(output, "chgrp") != NULL || strstr(output, "usermod") != NULL) {
+            fprintf(stderr, "unexpected access diagnostics:\n%s", output);
             failures++;
         }
         free(output); output = NULL; output_size = 0;
 
         access.source_ok = false;
-        access.source_group = NULL;
         access.uinput_ok = true;
         stream = open_memstream(&output, &output_size);
         if (stream == NULL) return 1;
-        input_proxy_print_access_remediation(stream, &access);
+        input_proxy_print_access_diagnostics(stream, &access);
         fclose(stream);
-        if (strstr(output, "WARNING: no safe permission change") == NULL ||
-            strstr(output, "ls -l -- '/dev/input/event1'") == NULL ||
-            strstr(output, "      id") == NULL ||
-            strstr(output, "chmod") != NULL || strstr(output, "chown") != NULL ||
+        if (strstr(output, "current user cannot read") == NULL ||
+            strstr(output, "Check package integration and current group membership") == NULL ||
+            strstr(output, "sudo ") != NULL ||
             strstr(output, "\033[") != NULL) {
             fprintf(stderr, "unexpected source diagnostic guidance:\n%s", output);
             failures++;
@@ -105,16 +127,14 @@ int main(void)
         access.source_ok = true;
         access.uinput_exists = true;
         access.uinput_ok = false;
-        access.uinput_group = "root";
-        access.uinput_group_writable = false;
-        access.uinput_group_member = false;
         stream = open_memstream(&output, &output_size);
         if (stream == NULL) return 1;
-        input_proxy_print_access_remediation(stream, &access);
+        input_proxy_print_access_diagnostics(stream, &access);
         fclose(stream);
-        if (strstr(output, "KERNEL==\"uinput\", GROUP=\"input\", MODE=\"0660\"") == NULL ||
-            strstr(output, "0666") != NULL) {
-            fprintf(stderr, "unexpected uinput permission remediation:\n%s", output);
+        if (strstr(output, "cannot open /dev/uinput for writing") == NULL ||
+            strstr(output, "package-owned") == NULL ||
+            strstr(output, "Suggested") != NULL) {
+            fprintf(stderr, "unexpected uinput access diagnostics:\n%s", output);
             failures++;
         }
         free(output); output = NULL; output_size = 0;
@@ -122,13 +142,14 @@ int main(void)
         access.source_ok = true;
         access.uinput_exists = false;
         access.uinput_ok = false;
-        access.uinput_module_loaded = false;
         stream = open_memstream(&output, &output_size);
         if (stream == NULL) return 1;
-        input_proxy_print_access_remediation(stream, &access);
+        input_proxy_print_access_diagnostics(stream, &access);
         fclose(stream);
-        if (strstr(output, "sudo modprobe uinput") == NULL) {
-            fprintf(stderr, "unexpected missing-uinput remediation:\n%s", output);
+        if (strstr(output, "/dev/uinput is unavailable") == NULL ||
+            strstr(output, "Check package integration") == NULL ||
+            strstr(output, "modprobe") != NULL) {
+            fprintf(stderr, "unexpected missing-uinput diagnostics:\n%s", output);
             failures++;
         }
         free(output); output = NULL; output_size = 0;
@@ -138,7 +159,7 @@ int main(void)
         access.uinput_ok = true;
         stream = open_memstream(&output, &output_size);
         if (stream == NULL) return 1;
-        input_proxy_print_access_remediation(stream, &access);
+        input_proxy_print_access_diagnostics(stream, &access);
         fclose(stream);
         if (output_size != 0) {
             fprintf(stderr, "unexpected successful-access remediation:\n%s", output);
@@ -225,7 +246,7 @@ int main(void)
         strstr(output, "(not applied)") != NULL ||
         strstr(output, "(not run)") != NULL ||
         strstr(output, "NOT READY: runtime access issues must be resolved.") == NULL ||
-        strstr(output, "Runtime accessibility remediation") == NULL ||
+        strstr(output, "Runtime accessibility diagnostics") == NULL ||
         strstr(output, "Libinput remediation") == NULL ||
         strstr(output, "Associated proxy instances\n") == NULL ||
         strstr(output, "Associated proxy instances:\n") != NULL ||
@@ -236,8 +257,8 @@ int main(void)
         strstr(output, by_id_path) == NULL ||
         strstr(output, "Unrelated") != NULL ||
         strstr(output, "Proxy readiness") >
-            strstr(output, "Runtime accessibility remediation") ||
-        strstr(output, "Runtime accessibility remediation") >
+            strstr(output, "Runtime accessibility diagnostics") ||
+        strstr(output, "Runtime accessibility diagnostics") >
             strstr(output, "Libinput remediation") ||
         strstr(output, "Suggested input-proxy run command") != NULL ||
         strstr(output, "(BLOCKER)") != NULL ||
@@ -251,6 +272,39 @@ int main(void)
     }
     free(output); free(error);
     output = NULL; error = NULL; output_size = 0; error_size = 0;
+    snprintf(path, sizeof(path), "%s/device/id/vendor", event);
+    failures += write_text(path, "0416\n");
+    snprintf(path, sizeof(path), "%s/device/id/product", event);
+    failures += write_text(path, "038f\n");
+    snprintf(path, sizeof(path), "%s/c1:3", udev);
+    failures += write_text(path, "E:ID_INPUT=1\nE:ID_PATH=platform-i2c\n");
+    snprintf(path, sizeof(path), "%s/event7", root);
+    stream = open_memstream(&output, &output_size);
+    error_stream = open_memstream(&error, &error_size);
+    if (failures || stream == NULL || error_stream == NULL) return 1;
+    result = input_proxy_inspect_device(stream, error_stream, path, sysfs, root,
+                                        "/dev/null", udev, &empty_snapshot);
+    fclose(stream); fclose(error_stream);
+    if (result != INPUT_PROXY_SUCCESS ||
+        strstr(output, "ATTRS{id/bustype}==\"0003\"") == NULL ||
+        strstr(output, "ATTRS{id/vendor}==\"0416\"") == NULL ||
+        strstr(output, "ATTRS{id/product}==\"038f\"") == NULL ||
+        strstr(output, "ENV{ID_PATH}==\"platform-i2c\"") == NULL ||
+        strstr(output, "ENV{LIBINPUT_IGNORE_DEVICE}=\"1\"") == NULL ||
+        error[0] != '\0') {
+        fprintf(stderr, "inspection did not render the kernel-identity rule:\n%s%s",
+                output, error);
+        failures++;
+    }
+    free(output); free(error);
+    output = NULL; error = NULL; output_size = 0; error_size = 0;
+    snprintf(path, sizeof(path), "%s/device/id/vendor", event);
+    if (unlink(path) != 0) failures++;
+    snprintf(path, sizeof(path), "%s/device/id/product", event);
+    if (unlink(path) != 0) failures++;
+    snprintf(path, sizeof(path), "%s/c1:3", udev);
+    failures += write_text(path, "E:ID_INPUT=1\n");
+    snprintf(path, sizeof(path), "%s/event7", root);
     stream = open_memstream(&output, &output_size);
     error_stream = open_memstream(&error, &error_size);
     if (stream == NULL || error_stream == NULL) return 1;

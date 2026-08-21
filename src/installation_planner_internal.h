@@ -52,13 +52,11 @@ enum input_proxy_remediation_choice {
 
 struct input_proxy_deployment_choices {
     enum input_proxy_preferred_source_choice preferred_source;
-    enum input_proxy_remediation_choice source_permission;
     enum input_proxy_remediation_choice libinput_ignore;
 };
 
 struct input_proxy_deployment_resolution {
     const char *persistent_source_path;
-    bool source_permission_action;
     bool libinput_ignore_action;
     bool choices_resolved;
     bool application_ready;
