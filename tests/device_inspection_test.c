@@ -1,6 +1,7 @@
 #define _XOPEN_SOURCE 700
 
 #include "device_inspection_internal.h"
+#include "deployment_readiness_internal.h"
 #include "runtime_discovery_internal.h"
 
 #include <ftw.h>
@@ -91,17 +92,20 @@ int main(void)
 
     {
         struct input_proxy_access_diagnostics access = {
-            .source_ok = false,
+            .current_source_ok = false,
             .uinput_exists = true,
-            .uinput_ok = false
+            .current_uinput_ok = false,
+            .service_identity_result = INPUT_PROXY_INSTALL_SERVICE_IDENTITY_VALID,
+            .service_source_ok = true,
+            .service_uinput_ok = true
         };
         stream = open_memstream(&output, &output_size);
         if (stream == NULL) return 1;
         input_proxy_print_access_diagnostics(stream, &access);
         fclose(stream);
         if (strstr(output, "Runtime accessibility diagnostics") == NULL ||
-            strstr(output, "standard\n    Linux 'input' group") == NULL ||
-            strstr(output, "package-owned\n    host integration") == NULL ||
+            strstr(output, "Current-user access") == NULL ||
+            strstr(output, "does not imply that\n    Installed Instances are unavailable") == NULL ||
             strstr(output, "sudo ") != NULL || strstr(output, "chmod") != NULL ||
             strstr(output, "chgrp") != NULL || strstr(output, "usermod") != NULL) {
             fprintf(stderr, "unexpected access diagnostics:\n%s", output);
@@ -109,14 +113,14 @@ int main(void)
         }
         free(output); output = NULL; output_size = 0;
 
-        access.source_ok = false;
-        access.uinput_ok = true;
+        access.current_source_ok = false;
+        access.current_uinput_ok = true;
         stream = open_memstream(&output, &output_size);
         if (stream == NULL) return 1;
         input_proxy_print_access_diagnostics(stream, &access);
         fclose(stream);
         if (strstr(output, "current user cannot read") == NULL ||
-            strstr(output, "Check package integration and current group membership") == NULL ||
+            strstr(output, "manual input-proxy run execution") == NULL ||
             strstr(output, "sudo ") != NULL ||
             strstr(output, "\033[") != NULL) {
             fprintf(stderr, "unexpected source diagnostic guidance:\n%s", output);
@@ -124,39 +128,39 @@ int main(void)
         }
         free(output); output = NULL; output_size = 0;
 
-        access.source_ok = true;
+        access.current_source_ok = true;
         access.uinput_exists = true;
-        access.uinput_ok = false;
+        access.current_uinput_ok = false;
         stream = open_memstream(&output, &output_size);
         if (stream == NULL) return 1;
         input_proxy_print_access_diagnostics(stream, &access);
         fclose(stream);
-        if (strstr(output, "cannot open /dev/uinput for writing") == NULL ||
-            strstr(output, "package-owned") == NULL ||
+        if (strstr(output, "not writable by the current user") == NULL ||
+            strstr(output, "Installed Instances are unavailable") == NULL ||
             strstr(output, "Suggested") != NULL) {
             fprintf(stderr, "unexpected uinput access diagnostics:\n%s", output);
             failures++;
         }
         free(output); output = NULL; output_size = 0;
 
-        access.source_ok = true;
+        access.current_source_ok = true;
         access.uinput_exists = false;
-        access.uinput_ok = false;
+        access.current_uinput_ok = false;
         stream = open_memstream(&output, &output_size);
         if (stream == NULL) return 1;
         input_proxy_print_access_diagnostics(stream, &access);
         fclose(stream);
         if (strstr(output, "/dev/uinput is unavailable") == NULL ||
-            strstr(output, "Check package integration") == NULL ||
+            strstr(output, "manual input-proxy run execution") == NULL ||
             strstr(output, "modprobe") != NULL) {
             fprintf(stderr, "unexpected missing-uinput diagnostics:\n%s", output);
             failures++;
         }
         free(output); output = NULL; output_size = 0;
 
-        access.source_ok = true;
+        access.current_source_ok = true;
         access.uinput_exists = true;
-        access.uinput_ok = true;
+        access.current_uinput_ok = true;
         stream = open_memstream(&output, &output_size);
         if (stream == NULL) return 1;
         input_proxy_print_access_diagnostics(stream, &access);
@@ -166,6 +170,97 @@ int main(void)
             failures++;
         }
         free(output); output = NULL; output_size = 0;
+
+        {
+            const enum input_proxy_install_service_identity_result unavailable[] = {
+                INPUT_PROXY_INSTALL_SERVICE_USER_MISSING,
+                INPUT_PROXY_INSTALL_SERVICE_GROUP_MISSING,
+                INPUT_PROXY_INSTALL_SERVICE_PRIMARY_GROUP_MISMATCH,
+                INPUT_PROXY_INSTALL_SERVICE_INPUT_GROUP_MISSING,
+                INPUT_PROXY_INSTALL_SERVICE_INPUT_MEMBERSHIP_MISSING,
+                INPUT_PROXY_INSTALL_SERVICE_IDENTITY_UNUSABLE
+            };
+            size_t unavailable_index;
+            access.current_source_ok = true;
+            access.current_uinput_ok = true;
+            access.service_source_ok = false;
+            access.service_uinput_ok = false;
+            for (unavailable_index = 0;
+                 unavailable_index < sizeof(unavailable) / sizeof(unavailable[0]);
+                 ++unavailable_index) {
+                access.service_identity_result = unavailable[unavailable_index];
+                stream = open_memstream(&output, &output_size);
+                if (stream == NULL) return 1;
+                input_proxy_print_access_diagnostics(stream, &access);
+                fclose(stream);
+                if (strstr(output, "Service-identity access") == NULL ||
+                    strstr(output, "supplementary input-group membership") == NULL ||
+                    strstr(output, "Check package integration") == NULL ||
+                    strstr(output, "Current-user access") != NULL) {
+                    fprintf(stderr, "unexpected unavailable-service diagnostics:\n%s",
+                            output);
+                    failures++;
+                }
+                free(output); output = NULL; output_size = 0;
+            }
+        }
+
+        access.service_identity_result = INPUT_PROXY_INSTALL_SERVICE_IDENTITY_VALID;
+        access.service_source_ok = false;
+        access.service_uinput_ok = false;
+        stream = open_memstream(&output, &output_size);
+        if (stream == NULL) return 1;
+        input_proxy_print_access_diagnostics(stream, &access);
+        fclose(stream);
+        if (strstr(output, "cannot read this input device") == NULL ||
+            strstr(output, "cannot open /dev/uinput for writing") == NULL ||
+            strstr(output, "package-owned") == NULL) {
+            fprintf(stderr, "unexpected broken-service diagnostics:\n%s", output);
+            failures++;
+        }
+        free(output); output = NULL; output_size = 0;
+
+        access.service_source_ok = true;
+        access.service_uinput_ok = true;
+    }
+
+    {
+        const gid_t supplementary_groups[] = {44, 46};
+        struct input_proxy_deployment_environment service = {
+            .service_uid = 1001,
+            .service_gid = 1001,
+            .service_groups = supplementary_groups,
+            .service_group_count = 2
+        };
+        struct stat permission = {
+            .st_uid = 0,
+            .st_gid = 46,
+            .st_mode = S_IFCHR | 0660
+        };
+        if (!input_proxy_deployment_identity_has_access(
+                &permission, &service, S_IRUSR, S_IRGRP, S_IROTH) ||
+            !input_proxy_deployment_identity_has_access(
+                &permission, &service, S_IWUSR, S_IWGRP, S_IWOTH)) {
+            fprintf(stderr, "supplementary-group access calculation failed\n");
+            failures++;
+        }
+        permission.st_gid = 47;
+        if (input_proxy_deployment_identity_has_access(
+                &permission, &service, S_IRUSR, S_IRGRP, S_IROTH) ||
+            input_proxy_deployment_identity_has_access(
+                &permission, &service, S_IWUSR, S_IWGRP, S_IWOTH)) {
+            fprintf(stderr, "unrelated-group access calculation failed\n");
+            failures++;
+        }
+        permission.st_uid = service.service_uid;
+        permission.st_mode = S_IFCHR | 0400;
+        if (!input_proxy_deployment_identity_has_access(
+                &permission, &service, S_IRUSR, S_IRGRP, S_IROTH) ||
+            input_proxy_deployment_identity_has_access(
+                &permission, &service, S_IWUSR, S_IWGRP, S_IWOTH)) {
+            fprintf(stderr, "owner access calculation failed\n");
+            failures++;
+        }
     }
 
     if (root == NULL) return 1;
@@ -239,14 +334,18 @@ int main(void)
         strstr(output, "Fixture Keyboard") == NULL ||
         strstr(output, "Libinput ignored:      No") == NULL ||
         strstr(output, "Bus:                   USB") == NULL ||
-        strstr(output, "Source readable:       No\n") == NULL ||
+        strstr(output, "Current user\n") == NULL ||
+        strstr(output, "Source readable:       Yes\n") == NULL ||
+        strstr(output, "Service identity\n") == NULL ||
+        strstr(output, "Available:             Yes\n") == NULL ||
         strstr(output, "/dev/uinput writable:  Yes") == NULL ||
         strstr(output, "No udev rule suggested") == NULL ||
         strstr(output, "Suggested udev rule") != NULL ||
         strstr(output, "(not applied)") != NULL ||
         strstr(output, "(not run)") != NULL ||
-        strstr(output, "NOT READY: runtime access issues must be resolved.") == NULL ||
-        strstr(output, "Runtime accessibility diagnostics") == NULL ||
+        strstr(output, "Manual run:            READY WITH WARNINGS") == NULL ||
+        strstr(output, "Installed Instance:    READY WITH WARNINGS") == NULL ||
+        strstr(output, "Runtime accessibility diagnostics") != NULL ||
         strstr(output, "Libinput remediation") == NULL ||
         strstr(output, "Associated proxy instances\n") == NULL ||
         strstr(output, "Associated proxy instances:\n") != NULL ||
@@ -257,10 +356,9 @@ int main(void)
         strstr(output, by_id_path) == NULL ||
         strstr(output, "Unrelated") != NULL ||
         strstr(output, "Proxy readiness") >
-            strstr(output, "Runtime accessibility diagnostics") ||
-        strstr(output, "Runtime accessibility diagnostics") >
             strstr(output, "Libinput remediation") ||
-        strstr(output, "Suggested input-proxy run command") != NULL ||
+        strstr(output, "Suggested manual command") != NULL ||
+        strstr(output, "Suggested installation command") == NULL ||
         strstr(output, "(BLOCKER)") != NULL ||
         strstr(output, "input-proxy run \\\n") != NULL ||
         strstr(output, "\033[") != NULL || output_size < 2 ||
@@ -315,8 +413,7 @@ int main(void)
     if (result != INPUT_PROXY_SUCCESS ||
         strstr(output, "/dev/uinput exists:    No") == NULL ||
         strstr(output, "/dev/uinput writable:  Unavailable") == NULL ||
-        strstr(output, "/dev/uinput writable:  No") != NULL ||
-        strstr(output, "Suggested input-proxy run command") != NULL ||
+        strstr(output, "Suggested manual command") != NULL ||
         strstr(output, "Runtime instance information unavailable: system "
             "D-Bus could not be queried.") == NULL ||
         error[0] != '\0') {

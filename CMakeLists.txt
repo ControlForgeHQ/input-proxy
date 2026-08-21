@@ -37,6 +37,7 @@ add_executable(
     src/runtime_control.c
     src/runtime_discovery.c
     src/runtime_policy.c
+    src/service_identity.c
     src/result.c
     src/source_device.c
     src/virtual_device.c
@@ -87,6 +88,7 @@ if(BUILD_TESTING)
         src/device_discovery.c
         src/libinput_status.c
         src/runtime_discovery.c
+        src/service_identity.c
     )
     target_include_directories(
         device-inspection-test
@@ -223,6 +225,7 @@ if(BUILD_TESTING)
         src/libinput_status.c
         src/runtime_discovery.c
         src/runtime_policy.c
+        src/service_identity.c
         src/result.c
     )
     target_include_directories(
@@ -250,6 +253,7 @@ if(BUILD_TESTING)
         src/libinput_status.c
         src/runtime_discovery.c
         src/result.c
+        src/service_identity.c
     )
     target_include_directories(install-command-test PRIVATE
         ${PROJECT_SOURCE_DIR}/include ${PROJECT_SOURCE_DIR}/src)

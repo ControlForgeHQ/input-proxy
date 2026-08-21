@@ -7,6 +7,7 @@
 #include "device_discovery_internal.h"
 #include "device_inspection_internal.h"
 #include "libinput_status_internal.h"
+#include "service_identity_internal.h"
 
 #include <limits.h>
 #include <stdlib.h>
@@ -143,31 +144,6 @@ const struct input_proxy_session_config *input_proxy_installation_plan_config(
     return plan == NULL ? NULL : &plan->config;
 }
 
-static bool group_matches(const struct input_proxy_deployment_environment *env,
-                          gid_t group)
-{
-    size_t index;
-
-    if (env->service_gid == group) return true;
-    for (index = 0; index < env->service_group_count; ++index) {
-        if (env->service_groups[index] == group) return true;
-    }
-    return false;
-}
-
-static bool identity_has_access(const struct stat *status,
-                                const struct input_proxy_deployment_environment *env,
-                                mode_t owner_bit, mode_t group_bit,
-                                mode_t other_bit)
-{
-    if (env->service_uid == 0) return true;
-    if (env->service_uid == status->st_uid)
-        return (status->st_mode & owner_bit) != 0;
-    if (group_matches(env, status->st_gid))
-        return (status->st_mode & group_bit) != 0;
-    return (status->st_mode & other_bit) != 0;
-}
-
 static int deployment_stat(const struct input_proxy_deployment_environment *env,
                            const char *path, struct stat *status)
 {
@@ -231,7 +207,7 @@ enum input_proxy_installation_plan_result input_proxy_installation_plan_assess(
     input_proxy_rule_identity_add_kernel_identity(&rule_identity, &identity);
     plan->readiness.rule_identity = rule_identity;
     narrow_match = input_proxy_rule_identity_is_narrow(&rule_identity);
-    plan->readiness.source_accessible = identity_has_access(&source_status, env,
+    plan->readiness.source_accessible = input_proxy_deployment_identity_has_access(&source_status, env,
         S_IRUSR, S_IRGRP, S_IROTH);
     if (!plan->readiness.source_accessible)
         plan->readiness.blockers |=
@@ -243,7 +219,8 @@ enum input_proxy_installation_plan_result input_proxy_installation_plan_assess(
     plan->readiness.uinput_accessible =
         deployment_stat(env, env->uinput_path, &uinput_status) == 0 &&
         S_ISCHR(uinput_status.st_mode) &&
-        identity_has_access(&uinput_status, env, S_IWUSR, S_IWGRP, S_IWOTH);
+        input_proxy_deployment_identity_has_access(&uinput_status, env,
+            S_IWUSR, S_IWGRP, S_IWOTH);
     if (!plan->readiness.uinput_accessible)
         plan->readiness.blockers |= INPUT_PROXY_DEPLOYMENT_BLOCKER_UINPUT;
     plan->readiness_available = true;

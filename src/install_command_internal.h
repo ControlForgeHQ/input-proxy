@@ -7,16 +7,7 @@
 
 #include "deployment_readiness_internal.h"
 #include "installation_activation_internal.h"
-
-enum input_proxy_install_service_identity_result {
-    INPUT_PROXY_INSTALL_SERVICE_IDENTITY_VALID = 0,
-    INPUT_PROXY_INSTALL_SERVICE_USER_MISSING,
-    INPUT_PROXY_INSTALL_SERVICE_GROUP_MISSING,
-    INPUT_PROXY_INSTALL_SERVICE_PRIMARY_GROUP_MISMATCH,
-    INPUT_PROXY_INSTALL_SERVICE_INPUT_GROUP_MISSING,
-    INPUT_PROXY_INSTALL_SERVICE_INPUT_MEMBERSHIP_MISSING,
-    INPUT_PROXY_INSTALL_SERVICE_IDENTITY_UNUSABLE
-};
+#include "service_identity_internal.h"
 
 typedef enum input_proxy_install_service_identity_result
 (*input_proxy_install_service_identity_check_fn)(void *userdata);

@@ -807,6 +807,14 @@ The one-process-per-source model remains unchanged.
 
 Device inspection provides detailed information about one candidate source.
 
+Runtime accessibility and readiness are reported independently for manual
+execution by the effective caller and persistent execution by the dedicated
+`input-proxy` service identity. Service-identity assessment uses the same uid,
+primary-group, supplementary-group, and filesystem-access model as deployment
+planning. Missing package identity integration is an inspectable persistent
+execution blocker and does not prevent the read-only inspection from
+completing.
+
 It may inspect:
 
 - evdev identity;

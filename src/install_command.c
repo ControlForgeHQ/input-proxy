@@ -9,9 +9,7 @@
 #include "runtime_policy_internal.h"
 
 #include <errno.h>
-#include <grp.h>
 #include <inttypes.h>
-#include <pwd.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -162,63 +160,6 @@ static bool parse_arguments(int argc, char *argv[],
     return true;
 }
 
-static enum input_proxy_install_service_identity_result service_environment(
-    struct input_proxy_deployment_environment *env, gid_t **groups)
-{
-    struct passwd *account;
-    struct group *group;
-    struct group *input_group;
-    uid_t service_uid;
-    gid_t service_gid;
-    int count = 0;
-
-    errno = 0;
-    account = getpwnam(SERVICE_IDENTITY);
-    if (account == NULL)
-        return errno == 0 ? INPUT_PROXY_INSTALL_SERVICE_USER_MISSING
-                          : INPUT_PROXY_INSTALL_SERVICE_IDENTITY_UNUSABLE;
-    service_uid = account->pw_uid;
-    service_gid = account->pw_gid;
-    errno = 0;
-    group = getgrnam(SERVICE_IDENTITY);
-    if (group == NULL)
-        return errno == 0 ? INPUT_PROXY_INSTALL_SERVICE_GROUP_MISSING
-                          : INPUT_PROXY_INSTALL_SERVICE_IDENTITY_UNUSABLE;
-    if (service_gid != group->gr_gid)
-        return INPUT_PROXY_INSTALL_SERVICE_PRIMARY_GROUP_MISMATCH;
-    errno = 0;
-    input_group = getgrnam("input");
-    if (input_group == NULL)
-        return errno == 0 ? INPUT_PROXY_INSTALL_SERVICE_INPUT_GROUP_MISSING
-                          : INPUT_PROXY_INSTALL_SERVICE_IDENTITY_UNUSABLE;
-    (void)getgrouplist(SERVICE_IDENTITY, service_gid, NULL, &count);
-    if (count <= 0) count = 1;
-    *groups = malloc((size_t)count * sizeof(**groups));
-    if (*groups == NULL)
-        return INPUT_PROXY_INSTALL_SERVICE_IDENTITY_UNUSABLE;
-    if (getgrouplist(SERVICE_IDENTITY, service_gid, *groups, &count) < 0) {
-        free(*groups); *groups = NULL;
-        return INPUT_PROXY_INSTALL_SERVICE_IDENTITY_UNUSABLE;
-    }
-    {
-        int index;
-        bool input_member = false;
-        for (index = 0; index < count; ++index)
-            if ((*groups)[index] == input_group->gr_gid) input_member = true;
-        if (!input_member) {
-            free(*groups); *groups = NULL;
-            return INPUT_PROXY_INSTALL_SERVICE_INPUT_MEMBERSHIP_MISSING;
-        }
-    }
-    *env = (struct input_proxy_deployment_environment) {
-        .sysfs_input_path = "/sys/class/input", .device_input_path = "/dev/input",
-        .uinput_path = "/dev/uinput", .udev_data_path = "/run/udev/data",
-        .service_uid = service_uid, .service_gid = service_gid,
-        .service_groups = *groups, .service_group_count = (size_t)count
-    };
-    return INPUT_PROXY_INSTALL_SERVICE_IDENTITY_VALID;
-}
-
 static void report_service_identity_error(
     enum input_proxy_install_service_identity_result result, FILE *error)
 {
@@ -345,7 +286,8 @@ int input_proxy_install_command_with_environment(int argc, char *argv[],
     if (result != INPUT_PROXY_INSTALLATION_PLAN_SUCCESS) { report_plan_error(result, request.instance_name, command_environment->error); goto cleanup_with_spacing; }
     deployment = command_environment->deployment;
     if (deployment == NULL) {
-        identity_result = service_environment(&resolved_deployment, &groups);
+        identity_result = input_proxy_service_environment_resolve(
+            &resolved_deployment, &groups);
         if (identity_result != INPUT_PROXY_INSTALL_SERVICE_IDENTITY_VALID) {
             report_service_identity_error(identity_result,
                 command_environment->error);
