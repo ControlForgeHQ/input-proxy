@@ -12,6 +12,7 @@
 
 struct input_proxy_runtime_snapshot;
 struct input_proxy_device_identity;
+struct input_proxy_installed_instance_store;
 
 struct input_proxy_device_rule_identity {
     char udev_vendor[32];
@@ -72,7 +73,8 @@ void input_proxy_print_runtime_associations(
     FILE *stream,
     const struct input_proxy_runtime_snapshot *snapshot,
     const char *event_node,
-    const char *preferred_source
+    const char *preferred_source,
+    const struct input_proxy_installed_instance_store *installed_instances
 );
 
 enum input_proxy_result input_proxy_inspect_device(
@@ -96,7 +98,8 @@ enum input_proxy_result input_proxy_inspect_device_with_service_environment(
     const char *udev_data_path,
     const struct input_proxy_runtime_snapshot *runtime_snapshot,
     enum input_proxy_install_service_identity_result service_identity_result,
-    const struct input_proxy_deployment_environment *service_environment
+    const struct input_proxy_deployment_environment *service_environment,
+    const struct input_proxy_installed_instance_store *installed_instances
 );
 
 #endif

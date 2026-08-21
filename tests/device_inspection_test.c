@@ -2,6 +2,7 @@
 
 #include "device_inspection_internal.h"
 #include "deployment_readiness_internal.h"
+#include "installed_instance_internal.h"
 #include "runtime_discovery_internal.h"
 
 #include <ftw.h>
@@ -48,6 +49,7 @@ int main(void)
         .available = true
     };
     int failures = 0;
+    struct input_proxy_installed_instance_store *installed_instances = NULL;
 
     if (!input_proxy_should_suggest_run(true, true, 0) ||
         input_proxy_should_suggest_run(true, true, 1) ||
@@ -105,7 +107,7 @@ int main(void)
         fclose(stream);
         if (strstr(output, "Runtime accessibility diagnostics") == NULL ||
             strstr(output, "Current-user access") == NULL ||
-            strstr(output, "does not imply that\n    Installed Instances are unavailable") == NULL ||
+            strstr(output, "does not imply") != NULL ||
             strstr(output, "sudo ") != NULL || strstr(output, "chmod") != NULL ||
             strstr(output, "chgrp") != NULL || strstr(output, "usermod") != NULL) {
             fprintf(stderr, "unexpected access diagnostics:\n%s", output);
@@ -120,7 +122,7 @@ int main(void)
         input_proxy_print_access_diagnostics(stream, &access);
         fclose(stream);
         if (strstr(output, "current user cannot read") == NULL ||
-            strstr(output, "manual input-proxy run execution") == NULL ||
+            strstr(output, "manual input-proxy run execution") != NULL ||
             strstr(output, "sudo ") != NULL ||
             strstr(output, "\033[") != NULL) {
             fprintf(stderr, "unexpected source diagnostic guidance:\n%s", output);
@@ -136,7 +138,7 @@ int main(void)
         input_proxy_print_access_diagnostics(stream, &access);
         fclose(stream);
         if (strstr(output, "not writable by the current user") == NULL ||
-            strstr(output, "Installed Instances are unavailable") == NULL ||
+            strstr(output, "Installed Instances are unavailable") != NULL ||
             strstr(output, "Suggested") != NULL) {
             fprintf(stderr, "unexpected uinput access diagnostics:\n%s", output);
             failures++;
@@ -151,7 +153,7 @@ int main(void)
         input_proxy_print_access_diagnostics(stream, &access);
         fclose(stream);
         if (strstr(output, "/dev/uinput is unavailable") == NULL ||
-            strstr(output, "manual input-proxy run execution") == NULL ||
+            strstr(output, "manual input-proxy run execution") != NULL ||
             strstr(output, "modprobe") != NULL) {
             fprintf(stderr, "unexpected missing-uinput diagnostics:\n%s", output);
             failures++;
@@ -227,6 +229,7 @@ int main(void)
     {
         const gid_t supplementary_groups[] = {44, 46};
         struct input_proxy_deployment_environment service = {
+            .service_name = "input-proxy",
             .service_uid = 1001,
             .service_gid = 1001,
             .service_groups = supplementary_groups,
@@ -307,14 +310,33 @@ int main(void)
         .instance_name = "Unrelated",
         .source_path = "/dev/input/unrelated"
     };
+    if (input_proxy_installed_instance_store_create_for_directory(
+            &installed_instances, root) !=
+        INPUT_PROXY_INSTALLED_INSTANCE_SUCCESS) return 1;
+    snprintf(path, sizeof(path), "%s/EventSource.args", root);
+    failures += write_text(path, "fixture\n");
+    snprintf(path, sizeof(path), "%s/event7", root);
 
     stream = open_memstream(&output, &output_size);
     if (stream == NULL) return 1;
     input_proxy_print_runtime_associations(
-        stream, &empty_snapshot, path, by_id_path);
+        stream, &empty_snapshot, path, by_id_path, installed_instances);
     fclose(stream);
     if (output[0] != '\0') {
         fprintf(stderr, "no-match runtime association output was not silent\n");
+        failures++;
+    }
+    free(output); output = NULL; output_size = 0;
+
+    stream = open_memstream(&output, &output_size);
+    if (stream == NULL) return 1;
+    input_proxy_print_runtime_associations(
+        stream, &runtime_snapshot, path, by_id_path, installed_instances);
+    fclose(stream);
+    if (strstr(output, "EventSource [Installed] [") == NULL ||
+        strstr(output, "PersistentSource [Direct-run] [") == NULL ||
+        strstr(output, "Unrelated") != NULL || strstr(output, "\n\n\n") != NULL) {
+        fprintf(stderr, "unexpected classified runtime associations:\n%s", output);
         failures++;
     }
     free(output); output = NULL; output_size = 0;
@@ -334,9 +356,9 @@ int main(void)
         strstr(output, "Fixture Keyboard") == NULL ||
         strstr(output, "Libinput ignored:      No") == NULL ||
         strstr(output, "Bus:                   USB") == NULL ||
-        strstr(output, "Current user\n") == NULL ||
+        strstr(output, "Current user [") == NULL ||
         strstr(output, "Source readable:       Yes\n") == NULL ||
-        strstr(output, "Service identity\n") == NULL ||
+        strstr(output, "Service identity [input-proxy]\n") == NULL ||
         strstr(output, "Available:             Yes\n") == NULL ||
         strstr(output, "/dev/uinput writable:  Yes") == NULL ||
         strstr(output, "No udev rule suggested") == NULL ||
@@ -350,20 +372,19 @@ int main(void)
         strstr(output, "Associated proxy instances\n") == NULL ||
         strstr(output, "Associated proxy instances:\n") != NULL ||
         strstr(output, "Running input-proxy instances") != NULL ||
-        strstr(output, "  EventSource [") == NULL ||
+        strstr(output, "  EventSource [Direct-run] [") == NULL ||
         strstr(output, path) == NULL ||
-        strstr(output, "  PersistentSource [") == NULL ||
+        strstr(output, "  PersistentSource [Direct-run] [") == NULL ||
         strstr(output, by_id_path) == NULL ||
         strstr(output, "Unrelated") != NULL ||
         strstr(output, "Proxy readiness") >
             strstr(output, "Libinput remediation") ||
         strstr(output, "Suggested manual command") != NULL ||
-        strstr(output, "Suggested installation command") == NULL ||
+        strstr(output, "Suggested installation command") != NULL ||
         strstr(output, "(BLOCKER)") != NULL ||
         strstr(output, "input-proxy run \\\n") != NULL ||
-        strstr(output, "\033[") != NULL || output_size < 2 ||
-        strcmp(output + output_size - 2, "\n\n") != 0 ||
-        (output_size >= 3 && strcmp(output + output_size - 3, "\n\n\n") == 0) ||
+        strstr(output, "\033[") != NULL || output_size < 1 ||
+        output[output_size - 1] != '\n' || strstr(output, "\n\n\n") != NULL ||
         error[0] != '\0') {
         fprintf(stderr, "unexpected inspection result:\n%s%s", output, error);
         failures++;
@@ -389,6 +410,9 @@ int main(void)
         strstr(output, "ATTRS{id/product}==\"038f\"") == NULL ||
         strstr(output, "ENV{ID_PATH}==\"platform-i2c\"") == NULL ||
         strstr(output, "ENV{LIBINPUT_IGNORE_DEVICE}=\"1\"") == NULL ||
+        strstr(output, "Suggested manual command") == NULL ||
+        strstr(output, "Suggested installation command") == NULL ||
+        strstr(output, "\n\n\n") != NULL ||
         error[0] != '\0') {
         fprintf(stderr, "inspection did not render the kernel-identity rule:\n%s%s",
                 output, error);
@@ -414,6 +438,7 @@ int main(void)
         strstr(output, "/dev/uinput exists:    No") == NULL ||
         strstr(output, "/dev/uinput writable:  Unavailable") == NULL ||
         strstr(output, "Suggested manual command") != NULL ||
+        strstr(output, "\n\n\n") != NULL ||
         strstr(output, "Runtime instance information unavailable: system "
             "D-Bus could not be queried.") == NULL ||
         error[0] != '\0') {
@@ -439,8 +464,8 @@ int main(void)
                 strstr(output, "Event node:") == NULL ||
                 strstr(output, path) == NULL ||
                 strstr(output, "Associated proxy instances\n") == NULL ||
-                strstr(output, "  EventSource [") == NULL ||
-                strstr(output, "  PersistentSource [") == NULL ||
+                strstr(output, "  EventSource [Direct-run] [") == NULL ||
+                strstr(output, "  PersistentSource [Direct-run] [") == NULL ||
                 strstr(output, "Unrelated") != NULL || error[0] != '\0') {
                 fprintf(stderr, "unexpected alias inspection result:\n%s%s",
                         output, error);
@@ -480,12 +505,16 @@ int main(void)
     fclose(stream); fclose(error_stream);
     if (result != INPUT_PROXY_SUCCESS ||
         strstr(output, "Libinput ignored:      Yes") == NULL ||
-        strstr(output, "Libinput remediation") != NULL || error[0] != '\0') {
+        strstr(output, "Libinput remediation") != NULL ||
+        strstr(output, "Suggested manual command") == NULL ||
+        strstr(output, "Suggested installation command") == NULL ||
+        strstr(output, "\n\n\n") != NULL || error[0] != '\0') {
         fprintf(stderr, "unexpected ignored inspection result:\n%s%s", output,
                 error);
         failures++;
     }
     free(output); free(error);
+    input_proxy_installed_instance_store_destroy(installed_instances);
     if (nftw(root, remove_entry, 16, FTW_DEPTH | FTW_PHYS) != 0) failures++;
     return failures == 0 ? 0 : 1;
 }

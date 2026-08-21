@@ -91,6 +91,7 @@ input_proxy_service_environment_resolve(
         return INPUT_PROXY_INSTALL_SERVICE_INPUT_MEMBERSHIP_MISSING;
     }
     *environment = (struct input_proxy_deployment_environment) {
+        .service_name = SERVICE_IDENTITY,
         .sysfs_input_path = "/sys/class/input",
         .device_input_path = "/dev/input",
         .uinput_path = "/dev/uinput",

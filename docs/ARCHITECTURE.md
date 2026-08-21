@@ -1260,7 +1260,9 @@ When D-Bus is available, inspection additionally discovers running
 source.
 
 Multiple running instances may refer to the same physical source and MUST be
-reported when present.
+reported when present. Inspection classifies each associated runtime as an
+Installed Instance when its Instance Name exists in the authoritative response
+artifact store, and as a direct run otherwise.
 
 If D-Bus is available and no matching runtime instances exist, inspection
 SHOULD remain silent rather than emitting a "none found" section.

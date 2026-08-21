@@ -24,6 +24,7 @@ enum input_proxy_deployment_blocker {
 };
 
 struct input_proxy_deployment_environment {
+    const char *service_name;
     const char *sysfs_input_path;
     const char *device_input_path;
     const char *uinput_path;

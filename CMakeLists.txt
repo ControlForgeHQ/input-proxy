@@ -86,8 +86,11 @@ if(BUILD_TESTING)
         tests/device_inspection_test.c
         src/device_inspection.c
         src/device_discovery.c
+        src/installed_instance.c
+        src/instance_name.c
         src/libinput_status.c
         src/runtime_discovery.c
+        src/result.c
         src/service_identity.c
     )
     target_include_directories(

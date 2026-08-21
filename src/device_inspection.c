@@ -6,6 +6,7 @@
 #include "libinput_status_internal.h"
 #include "device_discovery_internal.h"
 #include "runtime_discovery_internal.h"
+#include "installed_instance_internal.h"
 
 #include <libevdev/libevdev.h>
 
@@ -13,7 +14,9 @@
 #include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <inttypes.h>
 #include <limits.h>
+#include <pwd.h>
 #include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -337,34 +340,32 @@ char *input_proxy_render_libinput_ignore_rule(
 void input_proxy_print_access_diagnostics(
     FILE *stream, const struct input_proxy_access_diagnostics *access)
 {
+    const bool current_failure = access != NULL &&
+        (!access->current_source_ok || !access->current_uinput_ok);
+    const bool service_failure = access != NULL &&
+        (access->service_identity_result !=
+            INPUT_PROXY_INSTALL_SERVICE_IDENTITY_VALID ||
+         !access->service_source_ok || !access->service_uinput_ok);
+
     if (stream == NULL || access == NULL ||
-        (access->current_source_ok && access->current_uinput_ok &&
-         access->service_identity_result == INPUT_PROXY_INSTALL_SERVICE_IDENTITY_VALID &&
-         access->service_source_ok && access->service_uinput_ok))
+        (!current_failure && !service_failure))
         return;
 
     print_heading(stream, "Runtime accessibility diagnostics");
     fputc('\n', stream);
-    if (!access->current_source_ok || !access->current_uinput_ok) {
+    if (current_failure) {
         print_heading(stream, "  Current-user access");
     }
     if (!access->current_source_ok) {
-        fputs("    The current user cannot read this input device.\n"
-            "\n"
-            "    This prevents manual input-proxy run execution but does not imply that\n"
-            "    Installed Instances are unavailable.\n", stream);
+        fputs("    The current user cannot read this input device.\n", stream);
     }
     if (!access->current_source_ok && !access->current_uinput_ok) fputc('\n', stream);
     if (!access->current_uinput_ok) {
         fputs(access->uinput_exists
             ? "    /dev/uinput is not writable by the current user.\n"
             : "    /dev/uinput is unavailable.\n", stream);
-        fputs(
-            "\n"
-            "    This prevents manual input-proxy run execution but does not imply that\n"
-            "    Installed Instances are unavailable.\n", stream);
     }
-    if (!access->current_source_ok || !access->current_uinput_ok) fputc('\n', stream);
+    if (current_failure && service_failure) fputc('\n', stream);
 
     if (access->service_identity_result != INPUT_PROXY_INSTALL_SERVICE_IDENTITY_VALID) {
         print_heading(stream, "  Service-identity access");
@@ -386,7 +387,6 @@ void input_proxy_print_access_diagnostics(
               "    host integration.\n\n"
               "    Check package integration.\n", stream);
     }
-    fputc('\n', stream);
 }
 
 bool input_proxy_should_suggest_run(
@@ -402,7 +402,8 @@ void input_proxy_print_runtime_associations(
     FILE *stream,
     const struct input_proxy_runtime_snapshot *snapshot,
     const char *event_node,
-    const char *preferred_source)
+    const char *preferred_source,
+    const struct input_proxy_installed_instance_store *installed_instances)
 {
     size_t index;
     bool heading_printed = false;
@@ -412,7 +413,7 @@ void input_proxy_print_runtime_associations(
     }
     if (!snapshot->available) {
         fputs("Runtime instance information unavailable: system D-Bus could "
-            "not be queried.\n\n", stream);
+            "not be queried.\n", stream);
         return;
     }
     for (index = 0; index < snapshot->record_count; ++index) {
@@ -424,13 +425,39 @@ void input_proxy_print_runtime_associations(
             print_heading(stream, "Associated proxy instances");
             heading_printed = true;
         }
-        fprintf(stream, "  %s [%s]\n",
-            snapshot->records[index].instance_name,
-            snapshot->records[index].source_path);
+        {
+            bool installed = false;
+            if (installed_instances != NULL)
+                (void)input_proxy_installed_instance_exists(
+                    installed_instances,
+                    snapshot->records[index].instance_name,
+                    &installed);
+            fprintf(stream, "  %s [%s] [%s]\n",
+                snapshot->records[index].instance_name,
+                installed ? "Installed" : "Direct-run",
+                snapshot->records[index].source_path);
+        }
     }
-    if (heading_printed) {
-        fputc('\n', stream);
+}
+
+static void resolve_effective_user(char *identity, size_t identity_size)
+{
+    const uid_t uid = geteuid();
+    struct passwd account;
+    struct passwd *resolved = NULL;
+    long buffer_size = sysconf(_SC_GETPW_R_SIZE_MAX);
+    char *buffer;
+
+    if (buffer_size < 0) buffer_size = 16384;
+    buffer = malloc((size_t)buffer_size);
+    if (buffer != NULL &&
+        getpwuid_r(uid, &account, buffer, (size_t)buffer_size, &resolved) == 0 &&
+        resolved != NULL && resolved->pw_name != NULL) {
+        (void)snprintf(identity, identity_size, "%s", resolved->pw_name);
+    } else {
+        (void)snprintf(identity, identity_size, "%ju", (uintmax_t)uid);
     }
+    free(buffer);
 }
 
 struct inspection_udev_properties {
@@ -456,7 +483,8 @@ enum input_proxy_result input_proxy_inspect_device_with_service_environment(
     const char *udev_data_path,
     const struct input_proxy_runtime_snapshot *runtime_snapshot,
     enum input_proxy_install_service_identity_result service_identity_result,
-    const struct input_proxy_deployment_environment *service_environment)
+    const struct input_proxy_deployment_environment *service_environment,
+    const struct input_proxy_installed_instance_store *installed_instances)
 {
     char event_node[PATH_MAX];
     char sysfs_path[PATH_MAX];
@@ -477,6 +505,9 @@ enum input_proxy_result input_proxy_inspect_device_with_service_environment(
     struct input_proxy_access_diagnostics access_diagnostics;
     struct input_proxy_device_rule_identity rule_identity = {0};
     size_t associated_instance_count;
+    char current_user[256];
+    char access_heading[320];
+    const char *service_name = "input-proxy";
 
     if (stream == NULL || error_stream == NULL || device_path == NULL ||
         sysfs_input_path == NULL || uinput_path == NULL || udev_data_path == NULL)
@@ -500,6 +531,9 @@ enum input_proxy_result input_proxy_inspect_device_with_service_environment(
         return INPUT_PROXY_ERROR_INVALID_ARGUMENT;
     }
     input_proxy_rule_identity_add_kernel_identity(&rule_identity, &identity);
+    resolve_effective_user(current_user, sizeof(current_user));
+    if (service_environment != NULL && service_environment->service_name != NULL)
+        service_name = service_environment->service_name;
 
     source_fd = open(device_path, O_RDONLY | O_NONBLOCK | O_CLOEXEC);
     if (source_fd >= 0) {
@@ -574,7 +608,9 @@ enum input_proxy_result input_proxy_inspect_device_with_service_environment(
     fputc('\n', stream);
     print_heading(stream, "Runtime accessibility");
     fputc('\n', stream);
-    print_heading(stream, "  Current user");
+    (void)snprintf(access_heading, sizeof(access_heading),
+        "  Current user [%s]", current_user);
+    print_heading(stream, access_heading);
     fprintf(stream, "    %-22s %s", "Source readable:",
             semantic_status(stream, source_ok ? "Yes" : "No",
                             source_ok ? "32" : "31"));
@@ -592,7 +628,9 @@ enum input_proxy_result input_proxy_inspect_device_with_service_environment(
                 semantic_status(stream, uinput_ok ? "Yes" : "No",
                                 uinput_ok ? "32" : "31"));
     fputc('\n', stream);
-    print_heading(stream, "  Service identity");
+    (void)snprintf(access_heading, sizeof(access_heading),
+        "  Service identity [%s]", service_name);
+    print_heading(stream, access_heading);
     fprintf(stream, "    %-22s %s\n", "Available:",
         semantic_status(stream,
             service_identity_result == INPUT_PROXY_INSTALL_SERVICE_IDENTITY_VALID
@@ -684,16 +722,18 @@ enum input_proxy_result input_proxy_inspect_device_with_service_environment(
                 persistent_path[0] != '\0' ? persistent_path : device_path);
     }
     if (service_identity_result == INPUT_PROXY_INSTALL_SERVICE_IDENTITY_VALID &&
-        service_source_ok && service_uinput_ok) {
+        service_source_ok && service_uinput_ok && associated_instance_count == 0) {
         fputc('\n', stream);
         print_heading(stream, "Suggested installation command");
         fprintf(stream, "  sudo input-proxy install --source %s --name YOUR_INSTANCE_NAME\n",
                 persistent_path[0] != '\0' ? persistent_path : device_path);
     }
-    fputc('\n', stream);
-
-    input_proxy_print_runtime_associations(stream, runtime_snapshot,
-        event_node, persistent_path);
+    if (runtime_snapshot != NULL &&
+        (!runtime_snapshot->available || associated_instance_count > 0)) {
+        fputc('\n', stream);
+        input_proxy_print_runtime_associations(stream, runtime_snapshot,
+            event_node, persistent_path, installed_instances);
+    }
 
     if (device != NULL) libevdev_free(device);
     if (source_fd >= 0) close(source_fd);
@@ -708,16 +748,21 @@ enum input_proxy_result input_proxy_inspect_device(
     const struct input_proxy_runtime_snapshot *runtime_snapshot)
 {
     struct input_proxy_deployment_environment service_environment;
+    struct input_proxy_installed_instance_store *installed_instances = NULL;
     gid_t *groups = NULL;
     enum input_proxy_install_service_identity_result identity_result =
         input_proxy_service_environment_resolve(&service_environment, &groups);
-    enum input_proxy_result result =
-        input_proxy_inspect_device_with_service_environment(
+    enum input_proxy_result result;
+
+    (void)input_proxy_installed_instance_store_create(&installed_instances);
+    result = input_proxy_inspect_device_with_service_environment(
             stream, error_stream, device_path, sysfs_input_path,
             device_input_path, uinput_path, udev_data_path, runtime_snapshot,
             identity_result,
             identity_result == INPUT_PROXY_INSTALL_SERVICE_IDENTITY_VALID
-                ? &service_environment : NULL);
+                ? &service_environment : NULL,
+            installed_instances);
+    input_proxy_installed_instance_store_destroy(installed_instances);
     free(groups);
     return result;
 }
