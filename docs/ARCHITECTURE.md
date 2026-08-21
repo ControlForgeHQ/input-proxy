@@ -1290,6 +1290,18 @@ one independent D-Bus runtime endpoint
 
 A systemd service instance supervises exactly one `input-proxy` process.
 
+The package-owned template runs the process with:
+
+```text
+User=input-proxy
+Group=input-proxy
+```
+
+Its restart policy MUST permit automatic recovery from transient process
+failures while avoiding rapid failure loops and journal flooding. Exact restart
+delays and start-limit values are packaging implementation choices that require
+validation on the officially validated deployment target.
+
 The service instance uses the same validated Instance Name as the runtime and
 D-Bus endpoint. Process lifetime remains owned by systemd or another launcher,
 not by D-Bus.
@@ -1336,6 +1348,9 @@ one logical virtual input device.
 ## Deployment architecture
 
 Version 0.4 distinguishes package lifecycle from Installed Instance lifecycle.
+Its officially validated deployment target is Raspberry Pi OS 64-bit Lite
+(Trixie). Other environments may work, but are not currently claimed as
+officially validated or tested deployment targets.
 
 ### Package lifecycle
 
@@ -1345,12 +1360,50 @@ Debian package installation prepares the host to run proxy instances. It owns:
 - the dedicated service identity;
 - the systemd template;
 - dedicated `/dev/uinput` access;
+- persistent availability of the `uinput` kernel module before Installed
+  Instances are expected to start;
 - D-Bus policy and service metadata;
 - the location used for persistent instance artifacts;
 - mandatory supplementary membership of the service identity in the existing
   `input` group.
 
 Package installation creates, enables, and starts zero proxy instances.
+
+The service identity is the dedicated `input-proxy` user with the dedicated
+`input-proxy` primary group. Its supplementary membership in the standard
+`input` group is mandatory package integration, not an operator choice.
+
+Physical and virtual evdev nodes retain the platform's normal ownership and
+mode. On the validated target, the expected policy is `root:input 0660`.
+Package integration MUST NOT replace this policy, assign evdev nodes to the
+`input-proxy` group, or otherwise remove normal `input`-group access. The
+standard `input` group grants the service identity permission to consume evdev
+input; it does not grant permission to create virtual input through
+`/dev/uinput`.
+
+Access to `/dev/uinput` is a separate package-owned policy. Its required
+effective ownership and mode are `root:input-proxy 0660`, supplied by the
+expected package-owned rule:
+
+```udev
+KERNEL=="uinput", SUBSYSTEM=="misc", GROUP:="input-proxy", MODE:="0660"
+```
+
+The final `GROUP:=` and `MODE:=` assignments intentionally prevent later
+generic udev policy from silently replacing the package-required access. The
+dedicated `input-proxy` group grants permission to create and write virtual
+input through `/dev/uinput`; `/dev/uinput` access MUST NOT be granted to the
+broader `input` group.
+
+The package MUST also request the `uinput` kernel module persistently and ensure
+that it is available before Installed Instances are expected to start. Correct
+`/dev/uinput` filesystem permissions alone do not establish this host
+invariant. The packaging implementation selects the standard platform mechanism
+appropriate to the validated target.
+
+Package integration owns installation of the system-bus policy and metadata
+required by the D-Bus authorization contract in `docs/DBUS_INTERFACE.md`; it
+does not redefine that public interface.
 
 Instance installation validates that both parts of the package-owned service
 identity exist, that the dedicated group is the service user's primary group,
@@ -1491,6 +1544,7 @@ An Installed Instance owns:
 A per-instance udev rule currently configures only
 `LIBINPUT_IGNORE_DEVICE=1`. Physical Source entries must use a sufficiently
 narrow device match. Instances without optional udev policy own no rule file.
+Per-instance rules MUST NOT alter evdev filesystem ownership or permissions.
 
 Multiple Installed Instances may configure the same physical-source policy and
 therefore own duplicate, identical udev rules. This duplication is intentional.

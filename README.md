@@ -230,8 +230,8 @@ observed system state supports a safe recommendation. It can also detect when a
 physical device remains visible to libinput and duplicate physical and proxied
 input is likely.
 
-`input-proxy` diagnoses and advises. It does not automatically modify
-permissions, install udev rules, or change system configuration.
+`inspect` diagnoses and advises. It does not modify permissions, install udev
+rules, or change system configuration.
 
 ---
 
